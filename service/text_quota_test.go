@@ -1061,3 +1061,30 @@ func TestAppendToolSurchargeLogInfoWritesOnlyStructuredFields(t *testing.T) {
 	assert.NotContains(t, other, "image_generation_call")
 	assert.NotContains(t, other, "image_generation_call_price")
 }
+
+func TestCalculateTextQuotaSummaryImageResolutionAppliesSpecialGroupRatio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	priceData := hosttypes.PriceData{
+		ModelPrice:          0.05,
+		UsePrice:            true,
+		ImageResolutionTier: "2K",
+		GroupRatioInfo: hosttypes.GroupRatioInfo{
+			GroupRatio:        0.4,
+			GroupSpecialRatio: 0.4,
+			HasSpecialRatio:   true,
+		},
+	}
+	priceData.AddOtherRatio("n", 3)
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gemini-image",
+		PriceData:       priceData,
+		StartTime:       time.Now(),
+	}
+	usage := &dto.Usage{PromptTokens: 1, TotalTokens: 1}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+	expectedQuota, err := common.QuotaFromFloatStrict(0.05 * common.QuotaPerUnit * 0.4 * 3)
+	require.NoError(t, err)
+	require.Equal(t, expectedQuota, summary.Quota)
+}
