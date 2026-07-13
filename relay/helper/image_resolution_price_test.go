@@ -13,6 +13,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHasModelBillingConfigAcceptsImageResolutionPrice(t *testing.T) {
+	const modelName = "image-resolution-only-billing-test-model"
+	saved := ratio_setting.ImageResolutionPrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateImageResolutionPriceByJSONString(saved))
+	})
+
+	require.False(t, HasModelBillingConfig(modelName))
+	require.NoError(t, ratio_setting.UpdateImageResolutionPriceByJSONString(`{
+		"image-resolution-only-billing-test-model": {
+			"1K": 0.02,
+			"2K": 0.05,
+			"4K": 0.1
+		}
+	}`))
+	require.True(t, HasModelBillingConfig(modelName))
+}
+
 func TestModelPriceHelperUsesImageResolutionPrice(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	saved := ratio_setting.ImageResolutionPrice2JSONString()
