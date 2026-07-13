@@ -31,7 +31,13 @@ import {
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
 import { isTokenBasedModel } from '../lib/model-helpers'
-import { formatPrice, formatRequestPrice } from '../lib/price'
+import {
+  formatImageResolutionPrice,
+  formatPrice,
+  formatRequestPrice,
+  hasImageResolutionPricing,
+  IMAGE_RESOLUTION_TIERS,
+} from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -55,6 +61,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const usdExchangeRate = props.usdExchangeRate ?? 1
   const showRechargePrice = props.showRechargePrice ?? false
   const isTokenBased = isTokenBasedModel(props.model)
+  const isImageResolutionPricing = hasImageResolutionPricing(props.model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
   const groups = props.model.enable_groups || []
@@ -127,6 +134,29 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         </span>
       )
     }
+  } else if (isImageResolutionPricing) {
+    priceSummary = (
+      <>
+        {IMAGE_RESOLUTION_TIERS.map((tier) => (
+          <span key={tier} className='text-muted-foreground whitespace-nowrap'>
+            {tier}{' '}
+            <span className='text-foreground font-mono font-semibold'>
+              {formatImageResolutionPrice(
+                props.model,
+                tier,
+                showRechargePrice,
+                priceRate,
+                usdExchangeRate,
+                props.selectedGroup
+              )}
+            </span>
+          </span>
+        ))}
+        <span className='text-muted-foreground/60 whitespace-nowrap'>
+          / {t('Image')}
+        </span>
+      </>
+    )
   } else if (isTokenBased) {
     priceSummary = (
       <>
@@ -263,9 +293,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               {item}
             </span>
           ))}
-          <span className='text-muted-foreground/50 text-xs'>
-            {tokenUnitLabel}
-          </span>
+          {isTokenBased && (
+            <span className='text-muted-foreground/50 text-xs'>
+              {tokenUnitLabel}
+            </span>
+          )}
           {hiddenCount > 0 && (
             <span className='text-muted-foreground/40 text-xs'>
               +{hiddenCount}

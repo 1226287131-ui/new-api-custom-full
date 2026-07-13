@@ -36,8 +36,11 @@ import {
 import { parseTags } from '../lib/filters'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import {
+  formatImageResolutionPrice,
   formatPrice,
   formatRequestPrice,
+  hasImageResolutionPricing,
+  IMAGE_RESOLUTION_TIERS,
   stripTrailingZeros,
 } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
@@ -174,6 +177,37 @@ export function usePricingColumns(
           )
         }
 
+        if (hasImageResolutionPricing(model)) {
+          return (
+            <div className='max-w-full min-w-0'>
+              <div className='grid grid-cols-3 gap-x-3'>
+                {IMAGE_RESOLUTION_TIERS.map((tier) => (
+                  <div key={tier} className='min-w-0'>
+                    <div className='text-muted-foreground/60 text-[10px] font-medium'>
+                      {tier}
+                    </div>
+                    <div className='truncate font-mono text-sm tabular-nums'>
+                      {stripTrailingZeros(
+                        formatImageResolutionPrice(
+                          model,
+                          tier,
+                          showRechargePrice,
+                          priceRate,
+                          usdExchangeRate,
+                          selectedGroup
+                        )
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className='text-muted-foreground/50 mt-0.5 text-[10px]'>
+                / {t('Image')}
+              </div>
+            </div>
+          )
+        }
+
         const isTokenBased = isTokenBasedModel(model)
 
         if (isTokenBased) {
@@ -233,7 +267,7 @@ export function usePricingColumns(
           </div>
         )
       },
-      size: 180,
+      size: 230,
       enableSorting: false,
     },
 
