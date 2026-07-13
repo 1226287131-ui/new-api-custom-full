@@ -11,8 +11,10 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
 
@@ -101,13 +103,15 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		},
 	}
 
-	// Set imageSize when quality parameter is specified
-	// Map quality parameter to imageSize (only supported by Standard and Ultra models)
-	// quality values: auto, high, medium, low (for gpt-image-1), hd, standard (for dall-e-3)
-	// imageSize values: 1K (default), 2K
-	// https://ai.google.dev/gemini-api/docs/imagen
-	// https://platform.openai.com/docs/api-reference/images/create
-	if request.Quality != "" {
+	if _, enabled := ratio_setting.GetImageResolutionPrice(info.OriginModelName); enabled {
+		imageSize, err := helper.ClassifyImageResolution(request.Size)
+		if err != nil {
+			return nil, err
+		}
+		geminiRequest.Parameters.ImageSize = imageSize
+	} else if request.Quality != "" {
+		// Preserve the legacy quality-to-resolution mapping for models that do
+		// not use explicit resolution pricing.
 		imageSize := "1K" // default
 		switch request.Quality {
 		case "hd", "high":

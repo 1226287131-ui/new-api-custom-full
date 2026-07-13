@@ -463,6 +463,9 @@ func GeminiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	// each image has fixed 258 tokens
 	const imageTokens = 258
 	generatedImages := len(openAIResponse.Data)
+	if info != nil && info.PriceData.UsePrice && generatedImages > 0 && generatedImages <= dto.MaxImageN {
+		info.PriceData.AddOtherRatio("n", float64(generatedImages))
+	}
 
 	usage := &dto.Usage{
 		PromptTokens:     imageTokens * generatedImages, // each generated image has fixed 258 tokens
