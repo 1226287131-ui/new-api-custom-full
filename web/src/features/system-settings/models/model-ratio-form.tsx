@@ -276,6 +276,8 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               onChange={(value) =>
                 handleFieldChange('ImageResolutionPrice', value)
               }
+              onSave={handleSave}
+              isSaving={isSaving}
             />
             <ModelRatioVisualEditor
               ref={visualEditorRef}
