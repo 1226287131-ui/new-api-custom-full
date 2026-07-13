@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Save, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -88,6 +88,8 @@ function ResolutionPriceInput(props: {
 export function ImageResolutionPricingEditor(props: {
   value: string
   onChange: (value: string) => void
+  onSave: () => void | Promise<void>
+  isSaving: boolean
 }) {
   const { t } = useTranslation()
   const [newModel, setNewModel] = useState('')
@@ -125,9 +127,20 @@ export function ImageResolutionPricingEditor(props: {
 
   return (
     <section className='space-y-3' aria-labelledby='image-resolution-pricing'>
-      <h3 id='image-resolution-pricing' className='text-sm font-medium'>
-        {t('Image resolution pricing')}
-      </h3>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <h3 id='image-resolution-pricing' className='text-sm font-medium'>
+          {t('Image resolution pricing')}
+        </h3>
+        <Button
+          type='button'
+          size='sm'
+          onClick={props.onSave}
+          disabled={props.isSaving}
+        >
+          <Save data-icon='inline-start' />
+          {props.isSaving ? t('Saving...') : t('Save changes')}
+        </Button>
+      </div>
 
       <div className='grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]'>
         <Input
