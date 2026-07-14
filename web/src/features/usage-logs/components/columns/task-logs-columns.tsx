@@ -246,9 +246,14 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           log.action === TASK_ACTIONS.REMIX_GENERATE
         const isSuccess = status === TASK_STATUS.SUCCESS
         const isNewAPIVideo = log.platform === TASK_PLATFORMS.NEW_API_VIDEO
+        const hasResultUrl = Boolean(log.result_url?.trim())
         const hasLegacyVideoUrl = failReason?.startsWith('http')
 
-        if (isSuccess && isVideoTask && (isNewAPIVideo || hasLegacyVideoUrl)) {
+        if (
+          isSuccess &&
+          isVideoTask &&
+          (isNewAPIVideo || hasResultUrl || hasLegacyVideoUrl)
+        ) {
           const encodedTaskId = encodeURIComponent(log.task_id)
           const videoUrl = isNewAPIVideo
             ? `/video-cache/${encodedTaskId}.mp4`
