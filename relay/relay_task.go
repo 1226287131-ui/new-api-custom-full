@@ -548,6 +548,16 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	taskData := task.Data
+	resultURL := task.GetResultURL()
+	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeNewAPIVideo)) {
+		localVideoURL := ""
+		if task.Status == model.TaskStatusSuccess {
+			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+		}
+		taskData = service.SanitizeNewAPIVideoTaskData(task.Data, task.TaskID, task.GetUpstreamTaskID(), localVideoURL)
+		resultURL = localVideoURL
+	}
 	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
@@ -561,13 +571,13 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Action:     task.Action,
 		Status:     string(task.Status),
 		FailReason: task.FailReason,
-		ResultURL:  task.GetResultURL(),
+		ResultURL:  resultURL,
 		SubmitTime: task.SubmitTime,
 		StartTime:  task.StartTime,
 		FinishTime: task.FinishTime,
 		Progress:   task.Progress,
 		Properties: task.Properties,
 		Username:   task.Username,
-		Data:       task.Data,
+		Data:       taskData,
 	}
 }
