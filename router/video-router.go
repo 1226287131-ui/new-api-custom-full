@@ -8,6 +8,17 @@ import (
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	// Public share URL for cached NewAPI videos. The random task ID is the
+	// capability; no API token is required for this route.
+	publicVideoRouter := router.Group("")
+	publicVideoRouter.Use(middleware.RouteTag("relay"))
+	{
+		publicVideoRouter.GET("/video-cache/:file_name", controller.PublicVideoProxy)
+		publicVideoRouter.HEAD("/video-cache/:file_name", controller.PublicVideoProxy)
+		publicVideoRouter.GET("/video-input-cache/:file_name", controller.PublicVideoInput)
+		publicVideoRouter.HEAD("/video-input-cache/:file_name", controller.PublicVideoInput)
+	}
+
 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
 	videoProxyRouter := router.Group("/v1")
 	videoProxyRouter.Use(middleware.RouteTag("relay"))
