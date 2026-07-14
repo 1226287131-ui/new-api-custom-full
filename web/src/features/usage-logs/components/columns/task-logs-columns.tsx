@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { Music } from 'lucide-react'
+import { ExternalLink, Music } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -28,7 +28,7 @@ import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
+import { TASK_ACTIONS, TASK_PLATFORMS, TASK_STATUS } from '../../constants'
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
 import type { TaskLog } from '../../types'
 import {
@@ -245,18 +245,24 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
           log.action === TASK_ACTIONS.REMIX_GENERATE
         const isSuccess = status === TASK_STATUS.SUCCESS
-        const isUrl = failReason?.startsWith('http')
+        const isNewAPIVideo = log.platform === TASK_PLATFORMS.NEW_API_VIDEO
+        const hasLegacyVideoUrl = failReason?.startsWith('http')
 
-        if (isSuccess && isVideoTask && isUrl) {
-          const videoUrl = `/v1/videos/${log.task_id}/content`
+        if (isSuccess && isVideoTask && (isNewAPIVideo || hasLegacyVideoUrl)) {
+          const encodedTaskId = encodeURIComponent(log.task_id)
+          const videoUrl = isNewAPIVideo
+            ? `/video-cache/${encodedTaskId}.mp4`
+            : `/v1/videos/${encodedTaskId}/content`
           return (
             <a
               href={videoUrl}
               target='_blank'
               rel='noopener noreferrer'
-              className='text-foreground text-xs hover:underline'
+              title={t('View video')}
+              className='text-foreground inline-flex items-center gap-1 text-xs hover:underline'
             >
-              {t('Click to preview video')}
+              <ExternalLink aria-hidden='true' className='size-3' />
+              <span>{t('View video')}</span>
             </a>
           )
         }
