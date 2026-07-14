@@ -35,6 +35,8 @@ tiered expression > image resolution > fixed model price > token ratio
   `/data/video-input-cache` for JSON-only upstreams.
 - Downloads completed upstream videos into `/data/video-cache` before marking
   the task successful, preventing upstream result URLs from being exposed.
+- Redacts upstream URLs and provider task IDs at submission, polling, storage,
+  and task-response boundaries.
 - Publishes cached results as `/video-cache/{task_id}.mp4` with `HEAD` and HTTP
   Range support.
 - Removes completed video files after 48 hours and input images after 12 hours.

@@ -497,7 +497,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if videoResultReady {
 		localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
 	}
-	task.Data = redactVideoResponseBody(responseBody, localVideoURL, ch.Type == constant.ChannelTypeNewAPIVideo)
+	if ch.Type == constant.ChannelTypeNewAPIVideo {
+		task.Data = SanitizeNewAPIVideoTaskData(responseBody, task.TaskID, task.GetUpstreamTaskID(), localVideoURL)
+	} else {
+		task.Data = redactVideoResponseBody(responseBody, localVideoURL, false)
+	}
 
 	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
 
@@ -650,12 +654,34 @@ func redactVideoResponseBody(body []byte, localVideoURL string, hideVideoURLs bo
 	return b
 }
 
+// SanitizeNewAPIVideoTaskData keeps provider response details useful without
+// exposing provider URLs or the provider's task identifier through TaskDto.Data.
+func SanitizeNewAPIVideoTaskData(body []byte, publicTaskID, upstreamTaskID, localVideoURL string) []byte {
+	redacted := redactVideoResponseBody(body, localVideoURL, true)
+	var m map[string]any
+	if err := common.Unmarshal(redacted, &m); err != nil {
+		return []byte(`{}`)
+	}
+
+	replaceVideoTaskIdentifiers(m, publicTaskID, 0)
+	replaceSensitiveVideoStrings(m, publicTaskID, upstreamTaskID, localVideoURL)
+	b, err := common.Marshal(m)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return b
+}
+
+func isVideoURLField(key string) bool {
+	normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(key))
+	return normalized == "url" || strings.HasSuffix(normalized, "url")
+}
+
 func removeVideoResultURLs(node any) {
 	switch value := node.(type) {
 	case map[string]any:
 		for key, child := range value {
-			normalizedKey := strings.ToLower(key)
-			if normalizedKey == "url" || normalizedKey == "video_url" || normalizedKey == "result_url" {
+			if isVideoURLField(key) {
 				delete(value, key)
 				continue
 			}
@@ -741,8 +767,7 @@ func replaceVideoResultURLs(node any, replacement string) {
 	switch value := node.(type) {
 	case map[string]any:
 		for key, child := range value {
-			normalizedKey := strings.ToLower(key)
-			if normalizedKey == "url" || normalizedKey == "video_url" || normalizedKey == "result_url" {
+			if isVideoURLField(key) {
 				if _, ok := child.(string); ok {
 					value[key] = replacement
 					continue
@@ -753,6 +778,75 @@ func replaceVideoResultURLs(node any, replacement string) {
 	case []any:
 		for _, child := range value {
 			replaceVideoResultURLs(child, replacement)
+		}
+	}
+}
+
+func replaceVideoTaskIdentifiers(node any, publicTaskID string, depth int) {
+	if publicTaskID == "" {
+		return
+	}
+	switch value := node.(type) {
+	case map[string]any:
+		for key, child := range value {
+			normalizedKey := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(key))
+			switch normalizedKey {
+			case "upstreamtaskid", "upstreamid":
+				delete(value, key)
+				continue
+			case "taskid":
+				if _, ok := child.(string); ok {
+					value[key] = publicTaskID
+					continue
+				}
+			case "id":
+				if depth <= 1 {
+					if _, ok := child.(string); ok {
+						value[key] = publicTaskID
+						continue
+					}
+				}
+			}
+			replaceVideoTaskIdentifiers(child, publicTaskID, depth+1)
+		}
+	case []any:
+		for _, child := range value {
+			replaceVideoTaskIdentifiers(child, publicTaskID, depth+1)
+		}
+	}
+}
+
+func replaceSensitiveVideoStrings(node any, publicTaskID, upstreamTaskID, localVideoURL string) {
+	switch value := node.(type) {
+	case map[string]any:
+		for key, child := range value {
+			s, ok := child.(string)
+			if ok {
+				if upstreamTaskID != "" && upstreamTaskID != publicTaskID {
+					s = strings.ReplaceAll(s, upstreamTaskID, publicTaskID)
+				}
+				if (strings.Contains(s, "http://") || strings.Contains(s, "https://")) && s != localVideoURL {
+					s = "[redacted]"
+				}
+				value[key] = s
+				continue
+			}
+			replaceSensitiveVideoStrings(child, publicTaskID, upstreamTaskID, localVideoURL)
+		}
+	case []any:
+		for i, child := range value {
+			s, ok := child.(string)
+			if ok {
+				if upstreamTaskID != "" && upstreamTaskID != publicTaskID {
+					s = strings.ReplaceAll(s, upstreamTaskID, publicTaskID)
+				}
+				if (strings.Contains(s, "http://") || strings.Contains(s, "https://")) && s != localVideoURL {
+					s = "[redacted]"
+				}
+				value[i] = s
+				continue
+			}
+			replaceSensitiveVideoStrings(child, publicTaskID, upstreamTaskID, localVideoURL)
 		}
 	}
 }

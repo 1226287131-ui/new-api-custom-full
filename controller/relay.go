@@ -599,7 +599,11 @@ func RelayTask(c *gin.Context) {
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 		}
 		task.Quota = result.Quota
-		task.Data = result.TaskData
+		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo {
+			task.Data = service.SanitizeNewAPIVideoTaskData(result.TaskData, task.TaskID, result.UpstreamTaskID, "")
+		} else {
+			task.Data = result.TaskData
+		}
 		task.Action = relayInfo.Action
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())

@@ -51,6 +51,47 @@ func TestRedactVideoResponseBodyHidesPendingURLs(t *testing.T) {
 	assert.Empty(t, ExtractVideoResultURL(redacted))
 }
 
+func TestSanitizeNewAPIVideoTaskDataHidesProviderIdentity(t *testing.T) {
+	const (
+		publicTaskID   = "task_public"
+		upstreamTaskID = "provider_task_123"
+		publicURL      = "https://api.example/video-cache/task_public.mp4"
+	)
+	body := []byte(`{
+		"id":"provider_task_123",
+		"task_id":"provider_task_123",
+		"upstream_task_id":"provider_task_123",
+		"status":"SUCCESS",
+		"message":"download from https://upstream.example/private/provider_task_123",
+		"data":{
+			"id":"provider_task_123",
+			"taskId":"provider_task_123",
+			"downloadUrl":"https://upstream.example/video.mp4",
+			"asset":{"id":"asset_456"}
+		}
+	}`)
+
+	sanitized := SanitizeNewAPIVideoTaskData(body, publicTaskID, upstreamTaskID, publicURL)
+	text := string(sanitized)
+	assert.NotContains(t, text, "upstream.example")
+	assert.NotContains(t, text, upstreamTaskID)
+	assert.NotContains(t, text, "upstream_task_id")
+	assert.Contains(t, text, publicTaskID)
+	assert.Contains(t, text, publicURL)
+	assert.Contains(t, text, "asset_456")
+}
+
+func TestSanitizeNewAPIVideoTaskDataHidesPendingProviderData(t *testing.T) {
+	body := []byte(`{"task_id":"provider_task_123","url":"https://upstream.example/video.mp4"}`)
+
+	sanitized := SanitizeNewAPIVideoTaskData(body, "task_public", "provider_task_123", "")
+	assert.JSONEq(t, `{"task_id":"task_public"}`, string(sanitized))
+}
+
+func TestSanitizeNewAPIVideoTaskDataRejectsInvalidJSON(t *testing.T) {
+	assert.JSONEq(t, `{}`, string(SanitizeNewAPIVideoTaskData([]byte(`not-json`), "task_public", "provider", "")))
+}
+
 func TestCleanupVideoCacheRemovesOnlyExpiredFiles(t *testing.T) {
 	cacheDir := t.TempDir()
 	t.Setenv("VIDEO_CACHE_DIR", cacheDir)
