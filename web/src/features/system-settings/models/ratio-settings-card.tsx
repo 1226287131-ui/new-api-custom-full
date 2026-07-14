@@ -112,6 +112,7 @@ const createModelSchema = (t: Translate) =>
     CreateCacheRatio: createJsonStringField(t),
     CompletionRatio: createJsonStringField(t),
     ImageRatio: createJsonStringField(t),
+    ImageResolutionPrice: createJsonStringField(t),
     AudioRatio: createJsonStringField(t),
     AudioCompletionRatio: createJsonStringField(t),
     ExposeRatioEnabled: z.boolean(),
@@ -188,6 +189,9 @@ export function RatioSettingsCard({
     CreateCacheRatio: normalizeJsonString(modelDefaults.CreateCacheRatio),
     CompletionRatio: normalizeJsonString(modelDefaults.CompletionRatio),
     ImageRatio: normalizeJsonString(modelDefaults.ImageRatio),
+    ImageResolutionPrice: normalizeJsonString(
+      modelDefaults.ImageResolutionPrice
+    ),
     AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
     AudioCompletionRatio: normalizeJsonString(
       modelDefaults.AudioCompletionRatio
@@ -226,6 +230,9 @@ export function RatioSettingsCard({
       CreateCacheRatio: formatJsonForTextarea(modelDefaults.CreateCacheRatio),
       CompletionRatio: formatJsonForTextarea(modelDefaults.CompletionRatio),
       ImageRatio: formatJsonForTextarea(modelDefaults.ImageRatio),
+      ImageResolutionPrice: formatJsonForTextarea(
+        modelDefaults.ImageResolutionPrice
+      ),
       AudioRatio: formatJsonForTextarea(modelDefaults.AudioRatio),
       AudioCompletionRatio: formatJsonForTextarea(
         modelDefaults.AudioCompletionRatio
@@ -259,6 +266,9 @@ export function RatioSettingsCard({
       CreateCacheRatio: normalizeJsonString(modelDefaults.CreateCacheRatio),
       CompletionRatio: normalizeJsonString(modelDefaults.CompletionRatio),
       ImageRatio: normalizeJsonString(modelDefaults.ImageRatio),
+      ImageResolutionPrice: normalizeJsonString(
+        modelDefaults.ImageResolutionPrice
+      ),
       AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
       AudioCompletionRatio: normalizeJsonString(
         modelDefaults.AudioCompletionRatio
@@ -277,6 +287,9 @@ export function RatioSettingsCard({
       CreateCacheRatio: formatJsonForTextarea(modelDefaults.CreateCacheRatio),
       CompletionRatio: formatJsonForTextarea(modelDefaults.CompletionRatio),
       ImageRatio: formatJsonForTextarea(modelDefaults.ImageRatio),
+      ImageResolutionPrice: formatJsonForTextarea(
+        modelDefaults.ImageResolutionPrice
+      ),
       AudioRatio: formatJsonForTextarea(modelDefaults.AudioRatio),
       AudioCompletionRatio: formatJsonForTextarea(
         modelDefaults.AudioCompletionRatio
@@ -322,6 +335,7 @@ export function RatioSettingsCard({
         CreateCacheRatio: normalizeJsonString(values.CreateCacheRatio),
         CompletionRatio: normalizeJsonString(values.CompletionRatio),
         ImageRatio: normalizeJsonString(values.ImageRatio),
+        ImageResolutionPrice: normalizeJsonString(values.ImageResolutionPrice),
         AudioRatio: normalizeJsonString(values.AudioRatio),
         AudioCompletionRatio: normalizeJsonString(values.AudioCompletionRatio),
         ExposeRatioEnabled: values.ExposeRatioEnabled,

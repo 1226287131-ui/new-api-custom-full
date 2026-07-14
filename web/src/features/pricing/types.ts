@@ -27,6 +27,10 @@ export type PricingVendor = {
   description?: string
 }
 
+export type ImageResolutionTier = '1K' | '2K' | '4K'
+
+export type ImageResolutionPrices = Record<ImageResolutionTier, number>
+
 export type PricingModel = {
   id: number
   model_name: string
@@ -54,6 +58,8 @@ export type PricingModel = {
   billing_mode?: string
   /** Raw expression describing dynamic / tiered billing */
   billing_expr?: string
+  /** Absolute USD price per generated image for each resolution tier. */
+  image_resolution_prices?: ImageResolutionPrices
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
   /**

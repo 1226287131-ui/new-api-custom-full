@@ -308,6 +308,7 @@ export function ModelMutateDrawer({
       CacheRatio: '',
       CompletionRatio: '',
       ImageRatio: '',
+      ImageResolutionPrice: '{}',
       AudioRatio: '',
       AudioCompletionRatio: '',
       ExposeRatioEnabled: false,

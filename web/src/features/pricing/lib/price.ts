@@ -19,12 +19,43 @@ For commercial licensing, please contact support@quantumnous.com
 import { formatCurrencyFromUSD } from '@/lib/currency'
 
 import { QUOTA_TYPE_VALUES, TOKEN_UNIT_DIVISORS } from '../constants'
-import type { PricingModel, TokenUnit, PriceType } from '../types'
+import type {
+  ImageResolutionPrices,
+  ImageResolutionTier,
+  PricingModel,
+  TokenUnit,
+  PriceType,
+} from '../types'
 import { getConfiguredGroupRatio, getDisplayGroupRatio } from './model-helpers'
 
 // ----------------------------------------------------------------------------
 // Price Calculation Utilities
 // ----------------------------------------------------------------------------
+
+export const IMAGE_RESOLUTION_TIERS = [
+  '1K',
+  '2K',
+  '4K',
+] as const satisfies readonly ImageResolutionTier[]
+
+type ImageResolutionPricingModel = PricingModel & {
+  billing_mode: 'image_resolution'
+  image_resolution_prices: ImageResolutionPrices
+}
+
+export function hasImageResolutionPricing(
+  model: PricingModel
+): model is ImageResolutionPricingModel {
+  const prices = model.image_resolution_prices
+  return (
+    model.billing_mode === 'image_resolution' &&
+    prices !== undefined &&
+    IMAGE_RESOLUTION_TIERS.every((tier) => {
+      const price = prices[tier]
+      return typeof price === 'number' && Number.isFinite(price) && price >= 0
+    })
+  )
+}
 
 /**
  * Strip trailing zeros from formatted price string while preserving currency symbols
@@ -136,6 +167,70 @@ function applyRechargeRate(
 ): number {
   if (!showWithRecharge) return price
   return (price * priceRate) / usdExchangeRate
+}
+
+function formatImageResolutionPriceValue(
+  model: ImageResolutionPricingModel,
+  tier: ImageResolutionTier,
+  ratio: number,
+  showWithRecharge: boolean,
+  priceRate: number,
+  usdExchangeRate: number
+): string {
+  let priceInUSD = model.image_resolution_prices[tier] * ratio
+  priceInUSD = applyRechargeRate(
+    priceInUSD,
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+
+  return formatCurrencyFromUSD(priceInUSD, {
+    digitsLarge: 4,
+    digitsSmall: 6,
+    abbreviate: false,
+  })
+}
+
+export function formatImageResolutionPrice(
+  model: PricingModel,
+  tier: ImageResolutionTier,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  selectedGroup?: string
+): string {
+  if (!hasImageResolutionPricing(model)) return '-'
+
+  return formatImageResolutionPriceValue(
+    model,
+    tier,
+    getDisplayGroupRatio(model, selectedGroup),
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+}
+
+export function formatImageResolutionGroupPrice(
+  model: PricingModel,
+  tier: ImageResolutionTier,
+  group: string,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  groupRatio: Record<string, number>
+): string {
+  if (!hasImageResolutionPricing(model)) return '-'
+
+  return formatImageResolutionPriceValue(
+    model,
+    tier,
+    getConfiguredGroupRatio(groupRatio, group),
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
 }
 
 /**

@@ -51,6 +51,15 @@ func (m *RWMap[K, V]) AddAll(other map[K]V) {
 	}
 }
 
+func (m *RWMap[K, V]) ReplaceAll(other map[K]V) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.data = make(map[K]V, len(other))
+	for k, v := range other {
+		m.data[k] = v
+	}
+}
+
 func (m *RWMap[K, V]) Clear() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
