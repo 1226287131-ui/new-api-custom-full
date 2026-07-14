@@ -56,8 +56,13 @@ const (
 	ChannelTypeReplicate      = 56
 	ChannelTypeCodex          = 57
 	ChannelTypeAdvancedCustom = 58
-	ChannelTypeSub2API        = 59
-	ChannelTypeNewAPI         = 60
+	ChannelTypeNewAPIVideo    = 59
+	ChannelTypeOpenAIVideo    = 60
+	// Keep the existing custom video IDs stable. Upstream introduced these
+	// channel types later using 59 and 60, so the upstream-only types use the
+	// next available IDs here.
+	ChannelTypeSub2API        = 61
+	ChannelTypeNewAPI         = 62
 	ChannelTypeDummy          // this one is only for count, do not add any channel after this
 
 )
@@ -124,6 +129,8 @@ var ChannelBaseURLs = []string{
 	"",                                          //58
 	"",                                          //59
 	"",                                          //60
+	"",                                          //61
+	"",                                          //62
 }
 
 var ChannelTypeNames = map[int]string{
@@ -182,6 +189,8 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeReplicate:      "Replicate",
 	ChannelTypeCodex:          "ChatGPT Subscription (Codex)",
 	ChannelTypeAdvancedCustom: "Advanced Custom",
+	ChannelTypeNewAPIVideo:    "NewAPI Video",
+	ChannelTypeOpenAIVideo:    "Openai Video",
 	ChannelTypeSub2API:        "Sub2API",
 	ChannelTypeNewAPI:         "New API",
 }

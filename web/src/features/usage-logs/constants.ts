@@ -209,6 +209,7 @@ export const TASK_PLATFORMS = {
   RUNWAY: 'runway',
   LUMA: 'luma',
   VIGGLE: 'viggle',
+  NEW_API_VIDEO: '59',
 } as const
 
 // ============================================================================
