@@ -42,6 +42,7 @@ import {
   SettingsSwitchContent,
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
+import { ImageResolutionPricingEditor } from './image-resolution-pricing-editor'
 import {
   ModelRatioVisualEditor,
   type ModelRatioVisualEditorHandle,
@@ -54,6 +55,7 @@ type ModelFormValues = {
   CreateCacheRatio: string
   CompletionRatio: string
   ImageRatio: string
+  ImageResolutionPrice: string
   AudioRatio: string
   AudioCompletionRatio: string
   ExposeRatioEnabled: boolean
@@ -78,6 +80,7 @@ type ModelJsonFieldName =
   | 'CreateCacheRatio'
   | 'CompletionRatio'
   | 'ImageRatio'
+  | 'ImageResolutionPrice'
   | 'AudioRatio'
   | 'AudioCompletionRatio'
 
@@ -118,6 +121,11 @@ const modelJsonFields: Array<{
     name: 'ImageRatio',
     labelKey: 'Image ratio',
     descriptionKey: 'Configure per-model ratio for image inputs or outputs.',
+  },
+  {
+    name: 'ImageResolutionPrice',
+    labelKey: 'Image resolution pricing',
+    descriptionKey: 'JSON map of model to 1K, 2K and 4K image prices.',
   },
   {
     name: 'AudioRatio',
@@ -260,6 +268,14 @@ export const ModelRatioForm = memo(function ModelRatioForm({
       <Form {...form}>
         {editMode === 'visual' ? (
           <div className='space-y-6'>
+            <ImageResolutionPricingEditor
+              value={form.watch('ImageResolutionPrice')}
+              onChange={(value) =>
+                handleFieldChange('ImageResolutionPrice', value)
+              }
+              onSave={handleSave}
+              isSaving={isSaving}
+            />
             <ModelRatioVisualEditor
               ref={visualEditorRef}
               savedModelPrice={savedValues.ModelPrice}

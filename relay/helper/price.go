@@ -70,6 +70,9 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
+	if meta == nil {
+		meta = &types.TokenCountMeta{}
+	}
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
@@ -77,6 +80,31 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	// Check if this model uses tiered_expr billing
 	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
 		return modelPriceHelperTiered(c, info, promptTokens, meta, groupRatioInfo)
+	}
+
+	imageResolutionTier := ""
+	_, useImageResolutionPrice := ratio_setting.GetImageResolutionPrice(info.OriginModelName)
+	if useImageResolutionPrice {
+		requestInput, err := ResolveIncomingBillingExprRequestInput(c, info)
+		if err != nil {
+			return types.PriceData{}, err
+		}
+		resolutionBilling, err := resolveImageResolutionBilling(requestInput, meta)
+		if err != nil {
+			return types.PriceData{}, err
+		}
+		resolutionPrices, _ := ratio_setting.GetImageResolutionPrice(info.OriginModelName)
+		selectedPrice, ok := resolutionPrices.PriceForTier(resolutionBilling.Tier)
+		if !ok {
+			return types.PriceData{}, fmt.Errorf("model %s has no %s image price", info.OriginModelName, resolutionBilling.Tier)
+		}
+		modelPrice = selectedPrice
+		usePrice = true
+		imageResolutionTier = resolutionBilling.Tier
+		if meta.BillingRatios == nil {
+			meta.BillingRatios = make(map[string]float64)
+		}
+		meta.BillingRatios["n"] = resolutionBilling.Count
 	}
 
 	var preConsumedQuota int
@@ -123,7 +151,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		}
 		preConsumedQuota = quota
 	} else {
-		if meta.ImagePriceRatio != 0 {
+		if !useImageResolutionPrice && meta.ImagePriceRatio != 0 {
 			modelPrice = modelPrice * meta.ImagePriceRatio
 		}
 	}
@@ -156,6 +184,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		UsePrice:             usePrice,
 		CacheRatio:           cacheRatio,
 		ImageRatio:           imageRatio,
+		ImageResolutionTier:  imageResolutionTier,
 		AudioRatio:           audioRatio,
 		AudioCompletionRatio: audioCompletionRatio,
 		CacheCreationRatio:   cacheCreationRatio,
@@ -252,6 +281,9 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 }
 
 func HasModelBillingConfig(modelName string) bool {
+	if _, ok := ratio_setting.GetImageResolutionPrice(modelName); ok {
+		return true
+	}
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true
 	}
