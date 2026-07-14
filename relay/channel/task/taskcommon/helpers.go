@@ -66,6 +66,11 @@ func BuildProxyURL(taskID string) string {
 	return fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, taskID)
 }
 
+// BuildPublicVideoURL constructs a shareable public URL for cached NewAPI videos.
+func BuildPublicVideoURL(taskID string) string {
+	return fmt.Sprintf("%s/video-cache/%s.mp4", system_setting.ServerAddress, taskID)
+}
+
 // Status-to-progress mapping constants for polling updates.
 const (
 	ProgressSubmitted  = "10%"

@@ -579,6 +579,12 @@ func RelayTask(c *gin.Context) {
 		service.LogTaskConsumption(c, relayInfo)
 
 		task := model.InitTask(result.Platform, relayInfo)
+		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo {
+			if request, requestErr := relaycommon.GetTaskRequest(c); requestErr == nil {
+				task.Properties.VideoSeconds = request.Seconds
+				task.Properties.VideoSize = request.Size
+			}
+		}
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId

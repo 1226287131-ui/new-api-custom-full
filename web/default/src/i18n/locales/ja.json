@@ -5011,6 +5011,7 @@
     "View the complete error message and details": "エラーメッセージと詳細を表示",
     "View the complete prompt and its English translation": "プロンプト全文と英語訳を表示",
     "View the generated image": "生成された画像を表示",
+    "View video": "動画を見る",
     "View your topup transaction records and payment history": "チャージ取引記録と支払い履歴を表示",
     "Viewed channel key {{name}} (ID: {{id}})": "チャネルキー {{name}} を表示しました（ID: {{id}}）",
     "Violation Code": "違反コード",

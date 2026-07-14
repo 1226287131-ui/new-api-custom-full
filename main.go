@@ -129,6 +129,11 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
+	// Keep completed NewAPI video results on the server and remove them after 48 hours.
+	service.StartVideoCacheCleanup()
+	// Sora multipart reference images are exposed to JSON-only upstreams for 12 hours.
+	service.StartVideoInputCacheCleanup()
+
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
 	service.StartSystemInstanceReporter()

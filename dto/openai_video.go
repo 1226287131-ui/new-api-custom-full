@@ -28,6 +28,7 @@ type OpenAIVideo struct {
 	RemixedFromVideoID string            `json:"remixed_from_video_id,omitempty"`
 	Error              *OpenAIVideoError `json:"error,omitempty"`
 	Metadata           map[string]any    `json:"metadata,omitempty"`
+	ResultURL          string            `json:"result_url,omitempty"`
 }
 
 func (m *OpenAIVideo) SetProgressStr(progress string) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -482,7 +483,21 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}
 
-	task.Data = redactVideoResponseBody(responseBody)
+	// Some NewAPI-compatible upstreams put the completed video URL only in
+	// data.result.data[].url instead of the normalized task result fields.
+	if ch.Type == constant.ChannelTypeNewAPIVideo && taskResult.Url == "" {
+		taskResult.Url = ExtractVideoResultURL(responseBody)
+	}
+	if ch.Type == constant.ChannelTypeNewAPIVideo {
+		taskResult.Url = ResolveVideoResultURL(baseURL, taskResult.Url)
+	}
+
+	localVideoURL := ""
+	videoResultReady := ch.Type == constant.ChannelTypeNewAPIVideo && taskResult.Status == model.TaskStatusSuccess
+	if videoResultReady {
+		localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+	}
+	task.Data = redactVideoResponseBody(responseBody, localVideoURL, ch.Type == constant.ChannelTypeNewAPIVideo)
 
 	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
 
@@ -533,11 +548,24 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		} else if taskResult.Url != "" {
-			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
-			task.PrivateData.ResultURL = taskResult.Url
+			if ch.Type == constant.ChannelTypeNewAPIVideo {
+				// Keep the upstream URL private and expose only the local public URL.
+				task.PrivateData.UpstreamResultURL = taskResult.Url
+				task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+				if _, cacheErr := CacheRemoteVideo(ctx, task.TaskID, taskResult.Url, proxy, key); cacheErr != nil {
+					logger.LogError(ctx, fmt.Sprintf("Failed to cache video task %s locally: %s", task.TaskID, cacheErr.Error()))
+				}
+			} else {
+				// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
+				task.PrivateData.ResultURL = taskResult.Url
+			}
 		} else {
 			// No URL from adaptor — construct proxy URL using public task ID
-			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+			if ch.Type == constant.ChannelTypeNewAPIVideo {
+				task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+			} else {
+				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+			}
 		}
 		shouldSettle = true
 	case model.TaskStatusFailure:
@@ -591,7 +619,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	return nil
 }
 
-func redactVideoResponseBody(body []byte) []byte {
+func redactVideoResponseBody(body []byte, localVideoURL string, hideVideoURLs bool) []byte {
 	var m map[string]any
 	if err := common.Unmarshal(body, &m); err != nil {
 		return body
@@ -610,11 +638,123 @@ func redactVideoResponseBody(body []byte) []byte {
 			}
 		}
 	}
+	if localVideoURL != "" {
+		replaceVideoResultURLs(m, localVideoURL)
+	} else if hideVideoURLs {
+		removeVideoResultURLs(m)
+	}
 	b, err := common.Marshal(m)
 	if err != nil {
 		return body
 	}
 	return b
+}
+
+func removeVideoResultURLs(node any) {
+	switch value := node.(type) {
+	case map[string]any:
+		for key, child := range value {
+			normalizedKey := strings.ToLower(key)
+			if normalizedKey == "url" || normalizedKey == "video_url" || normalizedKey == "result_url" {
+				delete(value, key)
+				continue
+			}
+			removeVideoResultURLs(child)
+		}
+	case []any:
+		for _, child := range value {
+			removeVideoResultURLs(child)
+		}
+	}
+}
+
+func ExtractVideoResultURL(body []byte) string {
+	var root any
+	if err := common.Unmarshal(body, &root); err != nil {
+		return ""
+	}
+	return findVideoResultURL(root)
+}
+
+// ResolveVideoResultURL converts provider-relative video paths into absolute URLs.
+// NewAPI-compatible providers commonly return paths such as /api/v1/gen/cached/...
+func ResolveVideoResultURL(baseURL, resultURL string) string {
+	resultURL = strings.TrimSpace(resultURL)
+	if resultURL == "" {
+		return ""
+	}
+
+	parsedResult, err := url.Parse(resultURL)
+	if err != nil || parsedResult.IsAbs() {
+		return resultURL
+	}
+
+	parsedBase, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || !parsedBase.IsAbs() || parsedBase.Host == "" {
+		return resultURL
+	}
+	return parsedBase.ResolveReference(parsedResult).String()
+}
+
+func findVideoResultURL(node any) string {
+	switch value := node.(type) {
+	case map[string]any:
+		for _, key := range []string{"result_url", "video_url", "url"} {
+			if candidate, ok := value[key].(string); ok && strings.TrimSpace(candidate) != "" {
+				return strings.TrimSpace(candidate)
+			}
+		}
+		visited := make(map[string]struct{}, 4)
+		for _, key := range []string{"result", "output", "data", "video"} {
+			child, ok := value[key]
+			if !ok {
+				continue
+			}
+			visited[key] = struct{}{}
+			if candidate := findVideoResultURL(child); candidate != "" {
+				return candidate
+			}
+		}
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			if _, ok := visited[key]; !ok {
+				keys = append(keys, key)
+			}
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if candidate := findVideoResultURL(value[key]); candidate != "" {
+				return candidate
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if candidate := findVideoResultURL(child); candidate != "" {
+				return candidate
+			}
+		}
+	}
+	return ""
+}
+
+func replaceVideoResultURLs(node any, replacement string) {
+	switch value := node.(type) {
+	case map[string]any:
+		for key, child := range value {
+			normalizedKey := strings.ToLower(key)
+			if normalizedKey == "url" || normalizedKey == "video_url" || normalizedKey == "result_url" {
+				if _, ok := child.(string); ok {
+					value[key] = replacement
+					continue
+				}
+			}
+			replaceVideoResultURLs(child, replacement)
+		}
+	case []any:
+		for _, child := range value {
+			replaceVideoResultURLs(child, replacement)
+		}
+	}
 }
 
 func truncateBase64(s string) string {
