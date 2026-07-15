@@ -161,6 +161,9 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 				return newAPIErrorFromParamOverride(err)
 			}
 		}
+		if billingErr := validateOutboundImageBilling(jsonData, info); billingErr != nil {
+			return billingErr
+		}
 
 		logger.LogDebug(c, "Gemini request body: %s", jsonData)
 

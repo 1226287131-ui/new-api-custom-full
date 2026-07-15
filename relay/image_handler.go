@@ -75,6 +75,9 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 					return newAPIErrorFromParamOverride(err)
 				}
 			}
+			if billingErr := validateOutboundImageBilling(jsonData, info); billingErr != nil {
+				return billingErr
+			}
 
 			logger.LogDebug(c, "image request body: %s", jsonData)
 			body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)

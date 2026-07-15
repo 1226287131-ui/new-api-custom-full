@@ -172,6 +172,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 				return newAPIErrorFromParamOverride(err)
 			}
 		}
+		if billingErr := validateOutboundImageBilling(jsonData, info); billingErr != nil {
+			return billingErr
+		}
 
 		logger.LogDebug(c, "text request body: %s", jsonData)
 
