@@ -53,7 +53,7 @@ func TestModelPriceHelperUsesImageResolutionPrice(t *testing.T) {
 		UserGroup:       "vip",
 		UsingGroup:      "image",
 		BillingRequestInput: &billingexpr.RequestInput{
-			Body: []byte(`{"size":"2048x2048","quality":"high","n":3}`),
+			Body: []byte(`{"size":"2160x3840","quality":"high","n":3}`),
 		},
 	}
 	meta := &types.TokenCountMeta{
@@ -64,14 +64,14 @@ func TestModelPriceHelperUsesImageResolutionPrice(t *testing.T) {
 	priceData, err := ModelPriceHelper(ctx, info, 0, meta)
 	require.NoError(t, err)
 	require.True(t, priceData.UsePrice)
-	require.Equal(t, 0.05, priceData.ModelPrice)
-	require.Equal(t, ratio_setting.ImageResolutionTier2K, priceData.ImageResolutionTier)
+	require.Equal(t, 0.1, priceData.ModelPrice)
+	require.Equal(t, ratio_setting.ImageResolutionTier4K, priceData.ImageResolutionTier)
 	require.Equal(t, 3.0, priceData.OtherRatios()["n"])
 	require.True(t, priceData.GroupRatioInfo.HasSpecialRatio)
 	require.Equal(t, 0.4, priceData.GroupRatioInfo.GroupSpecialRatio)
 	require.Equal(t, 0.4, priceData.GroupRatioInfo.GroupRatio)
 
-	expectedQuota, err := common.QuotaFromFloatStrict(0.05 * common.QuotaPerUnit * 0.4 * 3)
+	expectedQuota, err := common.QuotaFromFloatStrict(0.1 * common.QuotaPerUnit * 0.4 * 3)
 	require.NoError(t, err)
 	require.Equal(t, expectedQuota, priceData.QuotaToPreConsume)
 	require.Equal(t, priceData, info.PriceData)
