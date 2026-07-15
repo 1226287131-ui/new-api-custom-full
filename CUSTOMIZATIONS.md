@@ -16,6 +16,14 @@ The original project metadata, notices, and license files are preserved.
 - Adds per-model `1K`, `2K`, and `4K` prices through the
   `ImageResolutionPrice` system option.
 - Recognizes OpenAI-style and Gemini-native image resolution fields.
+- Classifies decimal megapixel boundaries so standard `1920x1080` and
+  `3840x2160` dimensions enter the advertised `2K` and `4K` tiers.
+- Normalizes resolution and image-count aliases across top-level,
+  `parameters`, `generationConfig`, `input`, and `extra_body` payloads.
+- Rejects conflicting or invalid billing parameters instead of silently
+  selecting a cheaper tier.
+- Revalidates the converted outbound payload against the frozen pre-consume
+  tier and count, including channel parameter overrides.
 - Applies image count and the effective group or special user multiplier.
 - Shows all resolution prices in the admin editor and public pricing views.
 - Treats resolution-priced models as billable in OpenAI and Gemini model

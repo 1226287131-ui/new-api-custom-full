@@ -66,6 +66,7 @@ func TestModelPriceHelperUsesImageResolutionPrice(t *testing.T) {
 	require.True(t, priceData.UsePrice)
 	require.Equal(t, 0.1, priceData.ModelPrice)
 	require.Equal(t, ratio_setting.ImageResolutionTier4K, priceData.ImageResolutionTier)
+	require.Equal(t, float64(3), priceData.ImageGenerationCount)
 	require.Equal(t, 3.0, priceData.OtherRatios()["n"])
 	require.True(t, priceData.GroupRatioInfo.HasSpecialRatio)
 	require.Equal(t, 0.4, priceData.GroupRatioInfo.GroupSpecialRatio)

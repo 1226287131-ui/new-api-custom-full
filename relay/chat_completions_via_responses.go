@@ -87,6 +87,9 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 			return nil, newAPIErrorFromParamOverride(err)
 		}
 	}
+	if billingErr := validateOutboundImageBilling(chatJSON, info); billingErr != nil {
+		return nil, billingErr
+	}
 
 	var overriddenChatReq dto.GeneralOpenAIRequest
 	if err := common.Unmarshal(chatJSON, &overriddenChatReq); err != nil {
@@ -126,6 +129,9 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	if billingErr := validateOutboundImageBilling(jsonData, info); billingErr != nil {
+		return nil, billingErr
 	}
 
 	body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)

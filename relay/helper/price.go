@@ -84,6 +84,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	}
 
 	imageResolutionTier := ""
+	imageGenerationCount := float64(0)
 	_, useImageResolutionPrice := ratio_setting.GetImageResolutionPrice(info.OriginModelName)
 	if useImageResolutionPrice {
 		requestInput, err := ResolveIncomingBillingExprRequestInput(c, info)
@@ -102,6 +103,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		modelPrice = selectedPrice
 		usePrice = true
 		imageResolutionTier = resolutionBilling.Tier
+		imageGenerationCount = resolutionBilling.Count
 		if meta.BillingRatios == nil {
 			meta.BillingRatios = make(map[string]float64)
 		}
@@ -186,6 +188,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		CacheRatio:           cacheRatio,
 		ImageRatio:           imageRatio,
 		ImageResolutionTier:  imageResolutionTier,
+		ImageGenerationCount: imageGenerationCount,
 		AudioRatio:           audioRatio,
 		AudioCompletionRatio: audioCompletionRatio,
 		CacheCreationRatio:   cacheCreationRatio,
