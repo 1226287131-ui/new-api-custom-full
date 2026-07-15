@@ -37,6 +37,30 @@ func TestResolveImageResolutionBilling(t *testing.T) {
 			wantCount: 1,
 		},
 		{
+			name:      "standard 2K landscape dimensions",
+			body:      `{"size":"1920x1080"}`,
+			wantTier:  ratio_setting.ImageResolutionTier2K,
+			wantCount: 1,
+		},
+		{
+			name:      "standard 2K portrait dimensions",
+			body:      `{"size":"1080x1920"}`,
+			wantTier:  ratio_setting.ImageResolutionTier2K,
+			wantCount: 1,
+		},
+		{
+			name:      "standard 4K landscape dimensions",
+			body:      `{"size":"3840x2160"}`,
+			wantTier:  ratio_setting.ImageResolutionTier4K,
+			wantCount: 1,
+		},
+		{
+			name:      "standard 4K portrait dimensions",
+			body:      `{"size":"2160x3840"}`,
+			wantTier:  ratio_setting.ImageResolutionTier4K,
+			wantCount: 1,
+		},
+		{
 			name:      "Gemini camel case image size",
 			body:      `{"generationConfig":{"imageConfig":{"imageSize":"4K"},"candidateCount":2}}`,
 			wantTier:  ratio_setting.ImageResolutionTier4K,

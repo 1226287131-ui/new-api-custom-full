@@ -14,7 +14,12 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const maxImageResolutionDimension = 16384
+const (
+	maxImageResolutionDimension = 16384
+	imageResolution2KMinPixels  = 2_000_000
+	imageResolution4KMinPixels  = 8_000_000
+	imageResolution4KMaxPixels  = 20 * 1024 * 1024
+)
 
 var (
 	imageDimensionsPattern  = regexp.MustCompile(`^\s*(\d+)\s*[xX]\s*(\d+)\s*$`)
@@ -85,11 +90,13 @@ func ClassifyImageResolution(raw string) (string, error) {
 
 	pixels := width * height
 	switch {
-	case pixels <= 2*1024*1024:
+	// Decimal megapixel boundaries keep standard 1920x1080 and 3840x2160
+	// dimensions in their advertised 2K and 4K billing tiers.
+	case pixels < imageResolution2KMinPixels:
 		return ratio_setting.ImageResolutionTier1K, nil
-	case pixels <= 8*1024*1024:
+	case pixels < imageResolution4KMinPixels:
 		return ratio_setting.ImageResolutionTier2K, nil
-	case pixels <= 20*1024*1024:
+	case pixels <= imageResolution4KMaxPixels:
 		return ratio_setting.ImageResolutionTier4K, nil
 	default:
 		return "", fmt.Errorf("image resolution %q exceeds the supported 4K tier", raw)
