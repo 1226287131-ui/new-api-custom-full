@@ -98,12 +98,7 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 
 		// response related routes
-		httpRouter.POST("/responses", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIResponses)
-		})
-		httpRouter.POST("/responses/compact", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
-		})
+		registerResponsesRoutes(httpRouter)
 
 		// image related routes
 		httpRouter.POST("/edits", func(c *gin.Context) {
@@ -165,6 +160,18 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.DELETE("/models/:model", controller.RelayNotImplemented)
 	}
 
+	// Some OpenAI-compatible clients append "responses" to a host-only base
+	// URL. Keep those requests on the authenticated relay path instead of
+	// letting the frontend SPA return HTML with status 200.
+	responsesCompatibilityRouter := router.Group("")
+	responsesCompatibilityRouter.Use(middleware.RouteTag("relay"))
+	responsesCompatibilityRouter.Use(canonicalizeResponsesCompatibilityPath)
+	responsesCompatibilityRouter.Use(middleware.SystemPerformanceCheck())
+	responsesCompatibilityRouter.Use(middleware.TokenAuth())
+	responsesCompatibilityRouter.Use(middleware.ModelRequestRateLimit())
+	responsesCompatibilityRouter.Use(middleware.Distribute())
+	registerResponsesRoutes(responsesCompatibilityRouter)
+
 	relayMjRouter := router.Group("/mj")
 	relayMjRouter.Use(middleware.RouteTag("relay"))
 	relayMjRouter.Use(middleware.SystemPerformanceCheck())
@@ -198,6 +205,23 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Relay(c, types.RelayFormatGemini)
 		})
 	}
+}
+
+func canonicalizeResponsesCompatibilityPath(c *gin.Context) {
+	switch c.Request.URL.Path {
+	case "/responses", "/responses/compact":
+		c.Request.URL.Path = "/v1" + c.Request.URL.Path
+	}
+	c.Next()
+}
+
+func registerResponsesRoutes(router *gin.RouterGroup) {
+	router.POST("/responses", func(c *gin.Context) {
+		controller.Relay(c, types.RelayFormatOpenAIResponses)
+	})
+	router.POST("/responses/compact", func(c *gin.Context) {
+		controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
+	})
 }
 
 func registerMjRouterGroup(relayMjRouter *gin.RouterGroup) {
