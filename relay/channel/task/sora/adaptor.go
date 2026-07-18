@@ -296,6 +296,12 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	taskResult := relaycommon.TaskInfo{
 		Code: 0,
 	}
+	if reason := service.VideoResultURLFailureReason(service.ExtractVideoResultURL(respBody)); reason != "" {
+		taskResult.Status = model.TaskStatusFailure
+		taskResult.Reason = reason
+		taskResult.Progress = taskcommon.ProgressComplete
+		return &taskResult, nil
+	}
 
 	switch resTask.Status {
 	case "queued", "pending":

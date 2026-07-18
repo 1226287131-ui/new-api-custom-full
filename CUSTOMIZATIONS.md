@@ -56,6 +56,7 @@ Optional environment variables:
 | `VIDEO_CACHE_DIR` | `/data/video-cache` | Completed MP4 storage |
 | `VIDEO_CACHE_MAX_MB` | `1024` | Maximum cached MP4 size |
 | `VIDEO_CACHE_DOWNLOAD_TIMEOUT_SECONDS` | `600` | Upstream download timeout |
+| `TASK_TERMINAL_ERROR_TIMEOUT_MINUTES` | `30` | Maximum age for contradictory upstream terminal-error responses before failing the task; negative disables this safeguard |
 | `VIDEO_INPUT_CACHE_DIR` | `/data/video-input-cache` | Reference-image storage |
 | `VIDEO_INPUT_CACHE_MAX_MB` | `20` | Maximum reference-image size |
 | `VIDEO_INPUT_CACHE_PUBLIC_BASE_URL` | system server address | Public input URL base |
@@ -74,6 +75,7 @@ docker build -f Dockerfile.custom -t newapi-custom:full .
 ```bash
 go test ./relay/helper ./relay/channel/gemini ./setting/ratio_setting
 go test ./relay/channel/task/newapivideo ./service ./model
+go test ./relay/channel/task/sora
 
 cd web/default
 bun run typecheck

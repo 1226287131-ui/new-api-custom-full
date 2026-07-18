@@ -496,3 +496,22 @@ func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
 	assert.Equal(t, initialQuota+modernTaskQuota, getUserQuota(t, userID))
 	assert.Equal(t, int64(1), countLogs(t))
 }
+
+func TestTaskTerminalErrorExpiredUsesConfiguredTimeout(t *testing.T) {
+	previousTimeout := constant.TaskTerminalErrorTimeoutMinutes
+	constant.TaskTerminalErrorTimeoutMinutes = 30
+	t.Cleanup(func() { constant.TaskTerminalErrorTimeoutMinutes = previousTimeout })
+
+	now := time.Now().Unix()
+	assert.False(t, taskTerminalErrorExpired(&model.Task{SubmitTime: now - 29*60}, now))
+	assert.True(t, taskTerminalErrorExpired(&model.Task{SubmitTime: now - 30*60}, now))
+}
+
+func TestTaskTerminalErrorExpiredCanBeDisabled(t *testing.T) {
+	previousTimeout := constant.TaskTerminalErrorTimeoutMinutes
+	constant.TaskTerminalErrorTimeoutMinutes = -1
+	t.Cleanup(func() { constant.TaskTerminalErrorTimeoutMinutes = previousTimeout })
+
+	now := time.Now().Unix()
+	assert.False(t, taskTerminalErrorExpired(&model.Task{SubmitTime: now - 24*60*60}, now))
+}
