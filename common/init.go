@@ -159,6 +159,9 @@ func initConstantEnv() {
 	constant.TaskQueryLimit = GetEnvOrDefault("TASK_QUERY_LIMIT", 1000)
 	// 异步任务超时时间（分钟），超过此时间未完成的任务将被标记为失败并退款。0 表示禁用。
 	constant.TaskTimeoutMinutes = GetEnvOrDefault("TASK_TIMEOUT_MINUTES", 1440)
+	// Conflicting upstream responses (for example, running + generation_failed)
+	// get a short recovery window before the task is failed and refunded.
+	constant.TaskTerminalErrorTimeoutMinutes = GetEnvOrDefault("TASK_TERMINAL_ERROR_TIMEOUT_MINUTES", 30)
 
 	soraPatchStr := GetEnvOrDefaultString("TASK_PRICE_PATCH", "")
 	if soraPatchStr != "" {

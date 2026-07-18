@@ -281,10 +281,24 @@ func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error
 	if result.Url == "" {
 		result.Url = firstString(data, "result_url", "video_url", "url")
 	}
+	errorCode := videoErrorCode(raw, data)
+	terminalError := isTerminalVideoErrorCode(errorCode)
+	if invalidResultReason := service.VideoResultURLFailureReason(result.Url); invalidResultReason != "" {
+		result.Status = model.TaskStatusFailure
+		result.Reason = invalidResultReason
+		result.Progress = "100%"
+		return result, nil
+	}
 
 	switch status {
 	case "SUCCESS", "SUCCEEDED", "COMPLETED":
-		result.Status = model.TaskStatusSuccess
+		if terminalError && result.Url == "" {
+			result.Status = model.TaskStatusInProgress
+			result.TerminalError = true
+			result.Reason = terminalVideoErrorReason(errorCode)
+		} else {
+			result.Status = model.TaskStatusSuccess
+		}
 		if result.Progress == "" {
 			result.Progress = "100%"
 		}
@@ -297,13 +311,26 @@ func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error
 		if result.Progress == "" {
 			result.Progress = "100%"
 		}
-	case "QUEUED", "NOT_START", "SUBMITTED":
+	case "QUEUED", "PENDING", "NOT_START", "SUBMITTED", "CREATED":
 		result.Status = model.TaskStatusQueued
 		if result.Progress == "" {
 			result.Progress = "10%"
 		}
+	case "RUNNING", "PROCESSING", "IN_PROGRESS":
+		result.Status = model.TaskStatusInProgress
+		if terminalError {
+			result.TerminalError = true
+			result.Reason = terminalVideoErrorReason(errorCode)
+		}
+		if result.Progress == "" {
+			result.Progress = "50%"
+		}
 	default:
 		result.Status = model.TaskStatusInProgress
+		if terminalError {
+			result.TerminalError = true
+			result.Reason = terminalVideoErrorReason(errorCode)
+		}
 		if result.Progress == "" {
 			result.Progress = "50%"
 		}
@@ -533,8 +560,11 @@ func progressString(raw, data map[string]interface{}) string {
 
 func errorMessage(raw, data map[string]interface{}) string {
 	for _, values := range []map[string]interface{}{raw, data} {
-		if message := firstString(values, "message", "error"); message != "" {
+		if message := firstString(values, "message"); message != "" {
 			return message
+		}
+		if message, ok := values["error"].(string); ok && strings.TrimSpace(message) != "" {
+			return strings.TrimSpace(message)
 		}
 		if errValue, ok := values["error"].(map[string]interface{}); ok {
 			if message := firstString(errValue, "message", "detail"); message != "" {
@@ -543,4 +573,34 @@ func errorMessage(raw, data map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+func videoErrorCode(raw, data map[string]interface{}) string {
+	for _, values := range []map[string]interface{}{raw, data} {
+		if errValue, ok := values["error"].(map[string]interface{}); ok {
+			if code := firstString(errValue, "code", "type"); code != "" {
+				return strings.ToLower(strings.TrimSpace(code))
+			}
+		}
+		if code := firstString(values, "error_code"); code != "" {
+			return strings.ToLower(strings.TrimSpace(code))
+		}
+	}
+	return ""
+}
+
+func isTerminalVideoErrorCode(code string) bool {
+	switch code {
+	case "generation_failed", "video_generation_failed", "moderation_failed", "content_policy_violation", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+func terminalVideoErrorReason(code string) string {
+	if code == "" {
+		return "upstream reported a terminal error without a usable video result"
+	}
+	return "upstream reported " + code + " without a usable video result"
 }

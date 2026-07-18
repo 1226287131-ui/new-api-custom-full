@@ -331,3 +331,22 @@ func TestUpdateVideoTasksMixedChannelSleepSettings(t *testing.T) {
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.ElementsMatch(t, []string{"upstream_sleepy_1", "upstream_fast_1", "upstream_fast_2"}, adaptor.fetchedTaskIDs())
 }
+
+func TestTaskTerminalErrorExpiredUsesConfiguredTimeout(t *testing.T) {
+	previousTimeout := constant.TaskTerminalErrorTimeoutMinutes
+	constant.TaskTerminalErrorTimeoutMinutes = 30
+	t.Cleanup(func() { constant.TaskTerminalErrorTimeoutMinutes = previousTimeout })
+
+	now := time.Now().Unix()
+	assert.False(t, taskTerminalErrorExpired(&model.Task{SubmitTime: now - 29*60}, now))
+	assert.True(t, taskTerminalErrorExpired(&model.Task{SubmitTime: now - 30*60}, now))
+}
+
+func TestTaskTerminalErrorExpiredCanBeDisabled(t *testing.T) {
+	previousTimeout := constant.TaskTerminalErrorTimeoutMinutes
+	constant.TaskTerminalErrorTimeoutMinutes = -1
+	t.Cleanup(func() { constant.TaskTerminalErrorTimeoutMinutes = previousTimeout })
+
+	now := time.Now().Unix()
+	assert.False(t, taskTerminalErrorExpired(&model.Task{SubmitTime: now - 24*60*60}, now))
+}

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +34,29 @@ func TestResolveVideoResultURL(t *testing.T) {
 		ResolveVideoResultURL("https://upstream.example", "https://cdn.example/video.mp4"),
 	)
 	assert.Equal(t, "/api/video.mp4", ResolveVideoResultURL("not-a-url", "/api/video.mp4"))
+}
+
+func TestVideoResultURLFailureReason(t *testing.T) {
+	assert.Equal(t,
+		"upstream video generation returned no final video URL",
+		VideoResultURLFailureReason("https://upstream.example/Video%20generation%20returned%20no%20final%20video%20URL"),
+	)
+	assert.Empty(t, VideoResultURLFailureReason("https://upstream.example/video/result"))
+}
+
+func TestNormalizeNewAPIVideoTaskResultPromotesUsableURL(t *testing.T) {
+	result := &relaycommon.TaskInfo{
+		Status:        model.TaskStatusInProgress,
+		Url:           "/api/video.mp4",
+		TerminalError: true,
+	}
+
+	normalizeNewAPIVideoTaskResult("https://upstream.example", result)
+
+	assert.Equal(t, model.TaskStatusSuccess, result.Status)
+	assert.Equal(t, "100%", result.Progress)
+	assert.Equal(t, "https://upstream.example/api/video.mp4", result.Url)
+	assert.False(t, result.TerminalError)
 }
 
 func TestRedactVideoResponseBodyReplacesUpstreamURLs(t *testing.T) {

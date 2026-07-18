@@ -81,6 +81,54 @@ func TestParseTaskResultSupportsNewAPIResponse(t *testing.T) {
 	assert.Equal(t, "https://upstream.example/video.mp4", result.Url)
 }
 
+func TestParseTaskResultMarksConflictingGenerationFailureForGracePeriod(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	result, err := adaptor.ParseTaskResult([]byte(`{
+		"status": "running",
+		"progress": 90,
+		"error": {
+			"code": "generation_failed",
+			"message": "upstream is still generating"
+		}
+	}`))
+
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusInProgress, result.Status)
+	assert.Equal(t, "90%", result.Progress)
+	assert.True(t, result.TerminalError)
+	assert.Equal(t, "upstream reported generation_failed without a usable video result", result.Reason)
+}
+
+func TestParseTaskResultExtractsStructuredFailureMessage(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	result, err := adaptor.ParseTaskResult([]byte(`{
+		"status": "failed",
+		"error": {
+			"code": "generation_failed",
+			"message": "provider rejected the request"
+		}
+	}`))
+
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailure, result.Status)
+	assert.Equal(t, "provider rejected the request", result.Reason)
+	assert.Equal(t, "100%", result.Progress)
+}
+
+func TestParseTaskResultRejectsFailureTextDisguisedAsURL(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	result, err := adaptor.ParseTaskResult([]byte(`{
+		"status": "running",
+		"progress": 100,
+		"url": "https://upstream.example/Video%20generation%20returned%20no%20final%20video%20URL"
+	}`))
+
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailure, result.Status)
+	assert.Equal(t, "upstream video generation returned no final video URL", result.Reason)
+	assert.Equal(t, "100%", result.Progress)
+}
+
 func TestBuildRequestBodyMapsSoraDurationsAndSizes(t *testing.T) {
 	tests := []struct {
 		name             string

@@ -466,6 +466,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
 
 	snap := task.Snapshot()
+	now := time.Now().Unix()
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
@@ -489,7 +490,15 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskResult.Url = ExtractVideoResultURL(responseBody)
 	}
 	if ch.Type == constant.ChannelTypeNewAPIVideo {
-		taskResult.Url = ResolveVideoResultURL(baseURL, taskResult.Url)
+		normalizeNewAPIVideoTaskResult(baseURL, taskResult)
+	}
+	if taskResult.TerminalError && taskResult.Status != model.TaskStatusSuccess && taskResult.Status != model.TaskStatusFailure && taskTerminalErrorExpired(task, now) {
+		logger.LogWarn(ctx, fmt.Sprintf("Task %s exceeded terminal error timeout: %s", task.TaskID, taskResult.Reason))
+		taskResult.Status = model.TaskStatusFailure
+		taskResult.Progress = taskcommon.ProgressComplete
+		if strings.TrimSpace(taskResult.Reason) == "" {
+			taskResult.Reason = "upstream reported a terminal error without a usable video result"
+		}
 	}
 
 	localVideoURL := ""
@@ -505,7 +514,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
 
-	now := time.Now().Unix()
 	if taskResult.Status == "" {
 		//taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
 		errorResult := &dto.GeneralErrorResponse{}
@@ -720,6 +728,56 @@ func ResolveVideoResultURL(baseURL, resultURL string) string {
 		return resultURL
 	}
 	return parsedBase.ResolveReference(parsedResult).String()
+}
+
+// VideoResultURLFailureReason recognizes provider error text disguised as a URL.
+func VideoResultURLFailureReason(resultURL string) string {
+	decoded := strings.TrimSpace(resultURL)
+	if decoded == "" {
+		return ""
+	}
+	for i := 0; i < 2; i++ {
+		next, err := url.PathUnescape(decoded)
+		if err != nil || next == decoded {
+			break
+		}
+		decoded = next
+	}
+	normalized := strings.ToLower(strings.ReplaceAll(decoded, "+", " "))
+	if strings.Contains(normalized, "video generation returned no final video url") {
+		return "upstream video generation returned no final video URL"
+	}
+	return ""
+}
+
+func normalizeNewAPIVideoTaskResult(baseURL string, taskResult *relaycommon.TaskInfo) {
+	taskResult.Url = ResolveVideoResultURL(baseURL, taskResult.Url)
+	if reason := VideoResultURLFailureReason(taskResult.Url); reason != "" {
+		taskResult.Status = model.TaskStatusFailure
+		taskResult.Progress = taskcommon.ProgressComplete
+		taskResult.Reason = reason
+		return
+	}
+	if taskResult.Url != "" && taskResult.Status != model.TaskStatusFailure {
+		taskResult.Status = model.TaskStatusSuccess
+		taskResult.Progress = taskcommon.ProgressComplete
+		taskResult.TerminalError = false
+	}
+}
+
+func taskTerminalErrorExpired(task *model.Task, now int64) bool {
+	timeoutMinutes := constant.TaskTerminalErrorTimeoutMinutes
+	if timeoutMinutes < 0 {
+		return false
+	}
+	if timeoutMinutes == 0 {
+		return true
+	}
+	startedAt := task.SubmitTime
+	if startedAt <= 0 {
+		startedAt = task.CreatedAt
+	}
+	return startedAt > 0 && now >= startedAt+int64(timeoutMinutes)*60
 }
 
 func findVideoResultURL(node any) string {
