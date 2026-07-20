@@ -1,6 +1,6 @@
 # Custom Feature Set
 
-This repository combines two independently tested extensions on top of
+This repository combines three independently tested extensions on top of
 QuantumNous/new-api commit `7c28993f6bd9e92616f3f578212577f8b7c40b45`.
 The original project metadata, notices, and license files are preserved.
 
@@ -61,6 +61,26 @@ Optional environment variables:
 | `VIDEO_INPUT_CACHE_MAX_MB` | `20` | Maximum reference-image size |
 | `VIDEO_INPUT_CACHE_PUBLIC_BASE_URL` | system server address | Public input URL base |
 
+## Openai Video multi-reference relay
+
+- Adds the independent `Openai Video` channel type `60` without changing the
+  existing Sora, NewAPI Video, or DoubaoVideo adaptors.
+- Submits JSON requests to the upstream `POST /v1/videos` endpoint and polls
+  tasks through `GET /v1/videos/{task_id}`.
+- Preserves ordered `images`, `videos`, and `audios` URL arrays for
+  multi-reference Seedance-style generation requests.
+- Accepts native `duration`, `ratio`, and `resolution` fields while translating
+  OpenAI/Sora aliases such as `seconds`, `size`, and `input_reference`.
+- Supports channel model mapping, for example from a downstream
+  `seedance-2.0` model name to the provider's deployment name.
+- Keeps provider task IDs and result URLs private. Completed videos are exposed
+  through the authenticated local `/v1/videos/{task_id}/content` proxy and are
+  streamed without storing the completed video on the server.
+- Stores the selected multi-key credential with the private task state so
+  polling and same-origin content fetches use the key that created the task.
+- Does not forward the provider Bearer credential to cross-origin CDN result
+  URLs.
+
 ## Build
 
 The upstream `Dockerfile` remains unchanged. `Dockerfile.custom` uses locked
@@ -75,7 +95,7 @@ docker build -f Dockerfile.custom -t newapi-custom:full .
 ```bash
 go test ./relay/helper ./relay/channel/gemini ./setting/ratio_setting
 go test ./relay/channel/task/newapivideo ./service ./model
-go test ./relay/channel/task/sora
+go test ./relay/channel/task/openaivideo ./relay/channel/task/newapivideo ./relay/channel/task/sora
 
 cd web/default
 bun run typecheck

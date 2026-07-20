@@ -489,7 +489,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if ch.Type == constant.ChannelTypeNewAPIVideo && taskResult.Url == "" {
 		taskResult.Url = ExtractVideoResultURL(responseBody)
 	}
-	if ch.Type == constant.ChannelTypeNewAPIVideo {
+	if ch.Type == constant.ChannelTypeNewAPIVideo || ch.Type == constant.ChannelTypeOpenAIVideo {
 		normalizeNewAPIVideoTaskResult(baseURL, taskResult)
 	}
 	if taskResult.TerminalError && taskResult.Status != model.TaskStatusSuccess && taskResult.Status != model.TaskStatusFailure && taskTerminalErrorExpired(task, now) {
@@ -506,7 +506,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if videoResultReady {
 		localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
 	}
-	if ch.Type == constant.ChannelTypeNewAPIVideo {
+	if ch.Type == constant.ChannelTypeNewAPIVideo || ch.Type == constant.ChannelTypeOpenAIVideo {
 		task.Data = SanitizeNewAPIVideoTaskData(responseBody, task.TaskID, task.GetUpstreamTaskID(), localVideoURL)
 	} else {
 		task.Data = redactVideoResponseBody(responseBody, localVideoURL, false)
@@ -560,7 +560,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		} else if taskResult.Url != "" {
-			if ch.Type == constant.ChannelTypeNewAPIVideo {
+			if ch.Type == constant.ChannelTypeOpenAIVideo {
+				task.PrivateData.UpstreamResultURL = taskResult.Url
+				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+			} else if ch.Type == constant.ChannelTypeNewAPIVideo {
 				// Keep the upstream URL private and expose only the local public URL.
 				task.PrivateData.UpstreamResultURL = taskResult.Url
 				task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
@@ -575,6 +578,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			// No URL from adaptor — construct proxy URL using public task ID
 			if ch.Type == constant.ChannelTypeNewAPIVideo {
 				task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+			} else if ch.Type == constant.ChannelTypeOpenAIVideo {
+				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 			} else {
 				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 			}

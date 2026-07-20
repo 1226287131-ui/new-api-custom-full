@@ -144,6 +144,16 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by this channel',
     },
   },
+  60: {
+    id: 60,
+    name: CHANNEL_TYPES[60],
+    icon: 'openai',
+    hints: {
+      baseUrl: 'Openai Video upstream base URL',
+      key: 'Bearer API key',
+      models: 'seedance-2.0 or an upstream model mapping',
+    },
+  },
 }
 
 /**

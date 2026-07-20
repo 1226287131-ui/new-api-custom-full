@@ -550,10 +550,15 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	taskData := task.Data
 	resultURL := task.GetResultURL()
-	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeNewAPIVideo)) {
+	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeNewAPIVideo)) ||
+		task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAIVideo)) {
 		localVideoURL := ""
 		if task.Status == model.TaskStatusSuccess {
-			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+			if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeNewAPIVideo)) {
+				localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+			} else {
+				localVideoURL = taskcommon.BuildProxyURL(task.TaskID)
+			}
 		}
 		taskData = service.SanitizeNewAPIVideoTaskData(task.Data, task.TaskID, task.GetUpstreamTaskID(), localVideoURL)
 		resultURL = localVideoURL

@@ -193,6 +193,20 @@ func videoProxy(c *gin.Context, public bool) {
 	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
+	case constant.ChannelTypeOpenAIVideo:
+		videoURL = strings.TrimSpace(task.PrivateData.UpstreamResultURL)
+		useContentEndpoint := videoURL == ""
+		if videoURL == "" {
+			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+		}
+		videoURL = service.ResolveVideoResultURL(baseURL, videoURL)
+		if useContentEndpoint || videoURLUsesUpstreamOrigin(baseURL, videoURL) {
+			apiKey := strings.TrimSpace(task.PrivateData.Key)
+			if apiKey == "" {
+				apiKey = strings.TrimSpace(channel.Key)
+			}
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
 	case constant.ChannelTypeNewAPIVideo:
 		videoURL = strings.TrimSpace(task.PrivateData.UpstreamResultURL)
 	default:
@@ -261,6 +275,15 @@ func videoProxy(c *gin.Context, public bool) {
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
+}
+
+func videoURLUsesUpstreamOrigin(baseURL, videoURL string) bool {
+	base, baseErr := url.Parse(strings.TrimSpace(baseURL))
+	video, videoErr := url.Parse(strings.TrimSpace(videoURL))
+	if baseErr != nil || videoErr != nil || !base.IsAbs() || !video.IsAbs() {
+		return false
+	}
+	return strings.EqualFold(base.Scheme, video.Scheme) && strings.EqualFold(base.Host, video.Host)
 }
 
 func serveCachedVideo(c *gin.Context, cachedPath string) error {

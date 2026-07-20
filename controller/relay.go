@@ -579,11 +579,14 @@ func RelayTask(c *gin.Context) {
 		service.LogTaskConsumption(c, relayInfo)
 
 		task := model.InitTask(result.Platform, relayInfo)
-		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo {
+		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo || relayInfo.ChannelType == constant.ChannelTypeOpenAIVideo {
 			if request, requestErr := relaycommon.GetTaskRequest(c); requestErr == nil {
 				task.Properties.VideoSeconds = request.Seconds
 				task.Properties.VideoSize = request.Size
 			}
+		}
+		if relayInfo.ChannelType == constant.ChannelTypeOpenAIVideo {
+			task.PrivateData.Key = relayInfo.ApiKey
 		}
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		task.PrivateData.BillingSource = relayInfo.BillingSource
@@ -599,7 +602,7 @@ func RelayTask(c *gin.Context) {
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 		}
 		task.Quota = result.Quota
-		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo {
+		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo || relayInfo.ChannelType == constant.ChannelTypeOpenAIVideo {
 			task.Data = service.SanitizeNewAPIVideoTaskData(result.TaskData, task.TaskID, result.UpstreamTaskID, "")
 		} else {
 			task.Data = result.TaskData
