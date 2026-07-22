@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,24 +47,43 @@ func CachedVideoPath(taskID string) (string, bool) {
 	return path, true
 }
 
-// CacheRemoteVideo downloads a completed video to the local cache.
-func CacheRemoteVideo(ctx context.Context, taskID, remoteURL, proxy, apiKey string) (string, error) {
+// VideoCacheSource describes one authenticated or inline video source.
+// Exactly one of URL and DataURL should normally be set.
+type VideoCacheSource struct {
+	URL     string
+	DataURL string
+	Headers http.Header
+	Proxy   string
+}
+
+// CacheVideoSource stores a remote or data URL video in the local cache.
+func CacheVideoSource(ctx context.Context, taskID string, source VideoCacheSource) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if cachedPath, ok := CachedVideoPath(taskID); ok {
 		return cachedPath, nil
 	}
 
-	remoteURL = strings.TrimSpace(remoteURL)
+	if strings.TrimSpace(source.DataURL) != "" {
+		return cacheVideoDataURL(taskID, source.DataURL)
+	}
+
+	remoteURL := strings.TrimSpace(source.URL)
 	if remoteURL == "" {
 		return "", fmt.Errorf("video cache source URL is empty")
+	}
+	if strings.HasPrefix(strings.ToLower(remoteURL), "data:") {
+		return cacheVideoDataURL(taskID, remoteURL)
 	}
 	if err := ValidateSSRFProtectedFetchURL(remoteURL); err != nil {
 		return "", fmt.Errorf("video cache URL blocked: %w", err)
 	}
 
 	client := GetSSRFProtectedHTTPClient()
-	if strings.TrimSpace(proxy) != "" {
+	if strings.TrimSpace(source.Proxy) != "" {
 		var err error
-		client, err = GetHttpClientWithProxy(proxy)
+		client, err = GetHttpClientWithProxy(source.Proxy)
 		if err != nil {
 			return "", fmt.Errorf("create video cache proxy client: %w", err)
 		}
@@ -78,8 +98,10 @@ func CacheRemoteVideo(ctx context.Context, taskID, remoteURL, proxy, apiKey stri
 		return "", fmt.Errorf("create video cache request: %w", err)
 	}
 	req.Header.Set("Accept", "video/*,application/octet-stream;q=0.9,*/*;q=0.1")
-	if strings.TrimSpace(apiKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	for key, values := range source.Headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
 	}
 
 	resp, err := client.Do(req)
@@ -91,7 +113,59 @@ func CacheRemoteVideo(ctx context.Context, taskID, remoteURL, proxy, apiKey stri
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return "", fmt.Errorf("video cache upstream returned status %d", resp.StatusCode)
 	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	if contentType == "application/json" || contentType == "text/html" || contentType == "text/plain" {
+		return "", fmt.Errorf("video cache upstream returned non-video content type %s", contentType)
+	}
 
+	return cacheVideoReader(taskID, resp.Body)
+}
+
+// CacheRemoteVideo downloads a completed video to the local cache using a
+// Bearer token. It is kept for existing callers and simple OpenAI-compatible
+// providers.
+func CacheRemoteVideo(ctx context.Context, taskID, remoteURL, proxy, apiKey string) (string, error) {
+	headers := make(http.Header)
+	if strings.TrimSpace(apiKey) != "" {
+		headers.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	}
+	return CacheVideoSource(ctx, taskID, VideoCacheSource{
+		URL:     remoteURL,
+		Headers: headers,
+		Proxy:   proxy,
+	})
+}
+
+// CacheRemoteVideoWithHeaders downloads a completed video with provider-
+// specific headers such as x-goog-api-key or Token authentication.
+func CacheRemoteVideoWithHeaders(ctx context.Context, taskID, remoteURL, proxy string, headers http.Header) (string, error) {
+	return CacheVideoSource(ctx, taskID, VideoCacheSource{
+		URL:     remoteURL,
+		Headers: headers,
+		Proxy:   proxy,
+	})
+}
+
+// CacheVideoDataURL decodes an inline base64 video into the local cache.
+func CacheVideoDataURL(_ context.Context, taskID, dataURL string) (string, error) {
+	return cacheVideoDataURL(taskID, dataURL)
+}
+
+func cacheVideoDataURL(taskID, dataURL string) (string, error) {
+	parts := strings.SplitN(strings.TrimSpace(dataURL), ",", 2)
+	if len(parts) != 2 || !strings.HasPrefix(strings.ToLower(parts[0]), "data:") || !strings.Contains(strings.ToLower(parts[0]), ";base64") {
+		return "", fmt.Errorf("invalid base64 video data URL")
+	}
+
+	payload := strings.TrimSpace(parts[1])
+	decoder := base64.StdEncoding
+	if !strings.Contains(payload, "=") && len(payload)%4 != 0 {
+		decoder = base64.RawStdEncoding
+	}
+	return cacheVideoReader(taskID, base64.NewDecoder(decoder, strings.NewReader(payload)))
+}
+
+func cacheVideoReader(taskID string, reader io.Reader) (string, error) {
 	maxMB := common.GetEnvOrDefault("VIDEO_CACHE_MAX_MB", 1024)
 	if maxMB <= 0 {
 		maxMB = 1024
@@ -116,7 +190,7 @@ func CacheRemoteVideo(ctx context.Context, taskID, remoteURL, proxy, apiKey stri
 		}
 	}()
 
-	written, err := io.Copy(tmp, io.LimitReader(resp.Body, maxBytes+1))
+	written, err := io.Copy(tmp, io.LimitReader(reader, maxBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("write video cache: %w", err)
 	}
@@ -158,11 +232,15 @@ func CleanupVideoCache() (int, error) {
 		if entry.IsDir() {
 			continue
 		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".mp4") && !strings.HasPrefix(name, ".video-cache-") {
+			continue
+		}
 		info, err := entry.Info()
 		if err != nil || !info.Mode().IsRegular() || info.ModTime().After(cutoff) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(videoCacheDir(), entry.Name())); err != nil {
+		if err := os.Remove(filepath.Join(videoCacheDir(), name)); err != nil {
 			return removed, err
 		}
 		removed++

@@ -317,7 +317,7 @@ func TestDoResponseUsesPublicTaskIDForNestedUpstreamTask(t *testing.T) {
 	assert.Equal(t, "1280x720", video.Size)
 }
 
-func TestConvertToOpenAIVideoUsesAuthenticatedProxyURL(t *testing.T) {
+func TestConvertToOpenAIVideoReturnsPublicCacheURL(t *testing.T) {
 	previousServerAddress := system_setting.ServerAddress
 	system_setting.ServerAddress = "https://api.example"
 	t.Cleanup(func() { system_setting.ServerAddress = previousServerAddress })
@@ -340,7 +340,7 @@ func TestConvertToOpenAIVideoUsesAuthenticatedProxyURL(t *testing.T) {
 	var video dto.OpenAIVideo
 	require.NoError(t, common.Unmarshal(body, &video))
 	assert.Equal(t, dto.VideoStatusCompleted, video.Status)
-	assert.Equal(t, "https://api.example/v1/videos/task_public/content", video.ResultURL)
+	assert.Equal(t, "https://api.example/video-cache/task_public.mp4", video.ResultURL)
 	assert.Equal(t, video.ResultURL, video.Metadata["url"])
 }
 

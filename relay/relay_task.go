@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -408,6 +409,20 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		return
 	}
 
+	if originTask.Status == model.TaskStatusSuccess && !service.VideoCacheExpired(originTask) {
+		if channelModel, channelErr := model.CacheGetChannel(originTask.ChannelId); channelErr == nil && constant.IsVideoTaskChannelType(channelModel.Type) {
+			if _, cacheErr := service.CacheVideoTask(c.Request.Context(), originTask, channelModel); cacheErr != nil {
+				logger.LogError(c, fmt.Sprintf("Failed to cache video task %s during fetch: %s", originTask.TaskID, cacheErr.Error()))
+			} else {
+				service.MarkVideoTaskCached(originTask)
+				originTask.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(originTask.TaskID)
+				if updateErr := originTask.Update(); updateErr != nil {
+					logger.LogError(c, fmt.Sprintf("Failed to persist video cache metadata for task %s: %s", originTask.TaskID, updateErr.Error()))
+				}
+			}
+		}
+	}
+
 	// OpenAI Video API 格式: 走各 adaptor 的 ConvertToOpenAIVideo
 	if isOpenAIVideoAPI {
 		adaptor := GetTaskAdaptor(originTask.Platform)
@@ -421,7 +436,13 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 				taskResp = service.TaskErrorWrapper(err, "convert_to_openai_video_failed", http.StatusInternalServerError)
 				return
 			}
-			respBody = openAIVideoData
+			localVideoURL := ""
+			if originTask.Status == model.TaskStatusSuccess && !service.VideoCacheExpired(originTask) {
+				if _, cached := service.CachedVideoPath(originTask.TaskID); cached {
+					localVideoURL = taskcommon.BuildPublicVideoURL(originTask.TaskID)
+				}
+			}
+			respBody = service.SanitizeOpenAIVideoResponse(openAIVideoData, originTask.TaskID, originTask.GetUpstreamTaskID(), localVideoURL)
 			return
 		}
 		taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
@@ -443,6 +464,9 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 // 仅当渠道类型为 Gemini 或 Vertex 时触发；其他渠道或出错时返回 nil。
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
 func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
+	if task != nil && task.Status == model.TaskStatusSuccess && service.VideoCacheExpired(task) {
+		return nil
+	}
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil
@@ -461,7 +485,11 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		return nil
 	}
 
-	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, map[string]any{
+	key := strings.TrimSpace(task.PrivateData.Key)
+	if key == "" {
+		key = channelModel.Key
+	}
+	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
 	}, proxy)
@@ -488,13 +516,28 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	if ti.Progress != "" {
 		task.Progress = ti.Progress
 	}
-	if strings.HasPrefix(ti.Url, "data:") {
-		// data: URI — kept in Data, not ResultURL
-	} else if ti.Url != "" {
-		task.PrivateData.ResultURL = ti.Url
-	} else if task.Status == model.TaskStatusSuccess {
-		// No URL from adaptor — construct proxy URL using public task ID
-		task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+	localVideoURL := ""
+	if constant.IsVideoTaskChannelType(channelModel.Type) && task.Status == model.TaskStatusSuccess {
+		videoSourceURL := strings.TrimSpace(ti.Url)
+		if videoSourceURL == "" {
+			videoSourceURL = strings.TrimSpace(ti.RemoteUrl)
+		}
+		if videoSourceURL == "" {
+			videoSourceURL = service.ExtractVideoDataURL(body)
+		}
+		if _, cacheErr := service.CacheVideoTaskResult(nil, task, channelModel, videoSourceURL); cacheErr != nil {
+			common.SysError(fmt.Sprintf("Failed to cache realtime video task %s locally: %s", task.TaskID, cacheErr.Error()))
+			task.Status = model.TaskStatusInProgress
+			task.Progress = "95%"
+			task.PrivateData.ResultURL = ""
+		} else {
+			service.MarkVideoTaskCached(task)
+			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+			task.PrivateData.ResultURL = localVideoURL
+		}
+	}
+	if constant.IsVideoTaskChannelType(channelModel.Type) {
+		task.Data = service.SanitizeVideoTaskData(body, task.TaskID, task.GetUpstreamTaskID(), localVideoURL)
 	}
 
 	if !snap.Equal(task.Snapshot()) {
@@ -508,13 +551,19 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 
 	// 非 OpenAI Video API: 构建自定义格式响应
 	format := detectVideoFormat(body)
+	resultURL := ""
+	if task.Status == model.TaskStatusSuccess && !service.VideoCacheExpired(task) {
+		if _, cached := service.CachedVideoPath(task.TaskID); cached {
+			resultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+		}
+	}
 	out := map[string]any{
 		"error":    nil,
 		"format":   format,
 		"metadata": nil,
 		"status":   mapTaskStatusToSimple(task.Status),
 		"task_id":  task.TaskID,
-		"url":      task.GetResultURL(),
+		"url":      resultURL,
 	}
 	respBody, _ := common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
@@ -565,18 +614,15 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	taskData := task.Data
 	resultURL := task.GetResultURL()
-	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeNewAPIVideo)) ||
-		task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAIVideo)) {
+	failReason := task.FailReason
+	if constant.IsVideoTaskPlatform(task.Platform) {
 		localVideoURL := ""
-		if task.Status == model.TaskStatusSuccess {
-			if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeNewAPIVideo)) {
-				localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-			} else {
-				localVideoURL = taskcommon.BuildProxyURL(task.TaskID)
-			}
+		if task.Status == model.TaskStatusSuccess && !service.VideoCacheExpired(task) {
+			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
 		}
-		taskData = service.SanitizeNewAPIVideoTaskData(task.Data, task.TaskID, task.GetUpstreamTaskID(), localVideoURL)
+		taskData = service.SanitizeVideoTaskData(task.Data, task.TaskID, task.GetUpstreamTaskID(), localVideoURL)
 		resultURL = localVideoURL
+		failReason = service.SanitizeVideoTaskReason(failReason, task.GetUpstreamTaskID())
 	}
 	return &dto.TaskDto{
 		ID:         task.ID,
@@ -590,7 +636,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Quota:      task.Quota,
 		Action:     task.Action,
 		Status:     string(task.Status),
-		FailReason: task.FailReason,
+		FailReason: failReason,
 		ResultURL:  resultURL,
 		SubmitTime: task.SubmitTime,
 		StartTime:  task.StartTime,

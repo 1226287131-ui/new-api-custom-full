@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 )
 
 func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) (string, error) {
@@ -17,8 +19,8 @@ func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) 
 		return "", fmt.Errorf("invalid channel or task")
 	}
 
-	if url := extractGeminiVideoURLFromTaskData(task); url != "" {
-		return ensureAPIKey(url, apiKey), nil
+	if url := extractGeminiVideoURLFromTaskData(task); url != "" && !isLocalVideoProxyURL(url) {
+		return url, nil
 	}
 
 	baseURL := constant.ChannelBaseURLs[channel.Type]
@@ -52,11 +54,11 @@ func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) 
 
 	taskInfo, parseErr := adaptor.ParseTaskResult(body)
 	if parseErr == nil && taskInfo != nil && taskInfo.RemoteUrl != "" {
-		return ensureAPIKey(taskInfo.RemoteUrl, apiKey), nil
+		return taskInfo.RemoteUrl, nil
 	}
 
 	if url := extractGeminiVideoURLFromPayload(body); url != "" {
-		return ensureAPIKey(url, apiKey), nil
+		return url, nil
 	}
 
 	if parseErr != nil {
@@ -149,10 +151,10 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 	if channel == nil || task == nil {
 		return "", fmt.Errorf("invalid channel or task")
 	}
-	if url := strings.TrimSpace(task.GetResultURL()); url != "" && !isTaskProxyContentURL(url, task.TaskID) {
+	if url := strings.TrimSpace(task.GetResultURL()); url != "" && !isLocalVideoProxyURL(url) {
 		return url, nil
 	}
-	if url := extractVertexVideoURLFromTaskData(task); url != "" {
+	if url := extractVertexVideoURLFromTaskData(task); url != "" && !isLocalVideoProxyURL(url) {
 		return url, nil
 	}
 
@@ -198,11 +200,23 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 	return "", fmt.Errorf("vertex video url not found")
 }
 
-func isTaskProxyContentURL(url string, taskID string) bool {
-	if strings.TrimSpace(url) == "" || strings.TrimSpace(taskID) == "" {
+func isLocalVideoProxyURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
 		return false
 	}
-	return strings.Contains(url, "/v1/videos/"+taskID+"/content")
+	if !strings.Contains(parsed.Path, "/video-cache/") &&
+		!strings.Contains(parsed.Path, "/v1/videos/") {
+		return false
+	}
+	if !parsed.IsAbs() && parsed.Host == "" {
+		return true
+	}
+	server, err := url.Parse(strings.TrimSpace(system_setting.ServerAddress))
+	if err != nil || !server.IsAbs() || server.Host == "" {
+		return false
+	}
+	return strings.EqualFold(parsed.Scheme, server.Scheme) && strings.EqualFold(parsed.Host, server.Host)
 }
 
 func getVertexTaskKey(channel *model.Channel, task *model.Task) string {
@@ -278,17 +292,4 @@ func buildVideoDataURL(mimeType string, encoding string, base64Data string) stri
 		}
 	}
 	return "data:" + mime + ";base64," + base64Data
-}
-
-func ensureAPIKey(uri, key string) string {
-	if key == "" || uri == "" {
-		return uri
-	}
-	if strings.Contains(uri, "key=") {
-		return uri
-	}
-	if strings.Contains(uri, "?") {
-		return fmt.Sprintf("%s&key=%s", uri, key)
-	}
-	return fmt.Sprintf("%s?key=%s", uri, key)
 }
