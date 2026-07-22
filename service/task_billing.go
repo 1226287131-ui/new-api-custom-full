@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -20,8 +21,12 @@ import (
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
-	// 支持任务仅按次计费
-	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
+	taskBillingMode := billing_setting.GetTaskBillingMode(
+		info.OriginModelName,
+		common.StringsContains(constant.TaskPricePatches, info.OriginModelName),
+	)
+	// 任务按次计费时不展示时长、分辨率等倍率，避免日志与实际计费单位混淆。
+	if taskBillingMode == billing_setting.BillingModePerRequest {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
 		if otherRatios := info.PriceData.OtherRatios(); len(otherRatios) > 0 {

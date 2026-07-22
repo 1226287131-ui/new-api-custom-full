@@ -38,6 +38,9 @@ export function ModelBillingModeBadge(props: ModelBillingModeBadgeProps) {
   if (hasImageResolutionPricing(props.model)) {
     label = t('Image resolution pricing')
     variant = 'cyan'
+  } else if (props.model.billing_mode === 'per-second') {
+    label = t('Per second')
+    variant = 'info'
   } else if (isDynamicPricingModel(props.model)) {
     label = t('Dynamic Pricing')
     variant = 'warning'

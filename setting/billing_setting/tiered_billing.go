@@ -11,6 +11,8 @@ import (
 const (
 	BillingModeRatio      = "ratio"
 	BillingModeTieredExpr = "tiered_expr"
+	BillingModePerRequest = "per-request"
+	BillingModePerSecond  = "per-second"
 	BillingModeField      = "billing_mode"
 	BillingExprField      = "billing_expr"
 )
@@ -40,6 +42,30 @@ func GetBillingMode(model string) string {
 		return mode
 	}
 	return BillingModeRatio
+}
+
+// GetTaskBillingMode resolves the billing unit for asynchronous task models.
+//
+// Historically, task models listed in TASK_PRICE_PATCH were charged once per
+// request while all other task models applied adaptor-provided ratios such as
+// duration. Keep that behavior for models without an explicit setting, while
+// allowing pricing settings to select the unit per model.
+func GetTaskBillingMode(model string, legacyPerRequest bool) string {
+	return resolveTaskBillingMode(GetBillingMode(model), legacyPerRequest)
+}
+
+func resolveTaskBillingMode(configuredMode string, legacyPerRequest bool) string {
+	switch configuredMode {
+	case BillingModePerRequest:
+		return BillingModePerRequest
+	case BillingModePerSecond:
+		return BillingModePerSecond
+	default:
+		if legacyPerRequest {
+			return BillingModePerRequest
+		}
+		return BillingModePerSecond
+	}
 }
 
 func GetBillingExpr(model string) (string, bool) {
