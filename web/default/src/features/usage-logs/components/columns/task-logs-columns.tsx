@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { ExternalLink, Music } from 'lucide-react'
+import { Music, Video } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -28,7 +28,7 @@ import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { TASK_ACTIONS, TASK_PLATFORMS, TASK_STATUS } from '../../constants'
+import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
 import type { TaskLog } from '../../types'
 import {
@@ -36,6 +36,7 @@ import {
   type AudioClip,
 } from '../dialogs/audio-preview-dialog'
 import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
+import { VideoPreviewDialog } from '../dialogs/video-preview-dialog'
 import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   createDurationColumn,
@@ -85,6 +86,35 @@ function AudioPreviewCell({ log }: { log: TaskLog }) {
         open={open}
         onOpenChange={setOpen}
         clips={clips as AudioClip[]}
+      />
+    </>
+  )
+}
+
+function VideoPreviewCell({ log }: { log: TaskLog }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const encodedTaskId = encodeURIComponent(log.task_id)
+  const videoUrl = `/video-cache/${encodedTaskId}.mp4`
+
+  return (
+    <>
+      <button
+        type='button'
+        className='group flex items-center gap-1 text-left text-xs'
+        onClick={() => setOpen(true)}
+        title={t('View video')}
+      >
+        <Video className='text-muted-foreground size-3' />
+        <span className='text-foreground leading-snug group-hover:underline'>
+          {t('View video')}
+        </span>
+      </button>
+      <VideoPreviewDialog
+        videoUrl={videoUrl}
+        taskId={log.task_id}
+        open={open}
+        onOpenChange={setOpen}
       />
     </>
   )
@@ -245,31 +275,11 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
           log.action === TASK_ACTIONS.REMIX_GENERATE
         const isSuccess = status === TASK_STATUS.SUCCESS
-        const isNewAPIVideo = log.platform === TASK_PLATFORMS.NEW_API_VIDEO
         const hasResultUrl = Boolean(log.result_url?.trim())
         const hasLegacyVideoUrl = failReason?.startsWith('http')
 
-        if (
-          isSuccess &&
-          isVideoTask &&
-          (isNewAPIVideo || hasResultUrl || hasLegacyVideoUrl)
-        ) {
-          const encodedTaskId = encodeURIComponent(log.task_id)
-          const videoUrl = isNewAPIVideo
-            ? `/video-cache/${encodedTaskId}.mp4`
-            : `/v1/videos/${encodedTaskId}/content`
-          return (
-            <a
-              href={videoUrl}
-              target='_blank'
-              rel='noopener noreferrer'
-              title={t('View video')}
-              className='text-foreground inline-flex items-center gap-1 text-xs hover:underline'
-            >
-              <ExternalLink aria-hidden='true' className='size-3' />
-              <span>{t('View video')}</span>
-            </a>
-          )
+        if (isSuccess && isVideoTask && (hasResultUrl || hasLegacyVideoUrl)) {
+          return <VideoPreviewCell log={log} />
         }
 
         if (!failReason) {

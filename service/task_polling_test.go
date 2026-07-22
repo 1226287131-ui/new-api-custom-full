@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/stretchr/testify/assert"
@@ -123,6 +125,94 @@ func seedPollingTask(t *testing.T, channelID int, publicID string, upstreamID st
 	}
 	require.NoError(t, model.DB.Create(task).Error)
 	return task
+}
+
+type completedVideoPollingAdaptor struct {
+	result relaycommon.TaskInfo
+	body   []byte
+}
+
+func (a *completedVideoPollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
+
+func (a *completedVideoPollingAdaptor) FetchTask(_ string, _ string, _ map[string]any, _ string) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(a.body)),
+	}, nil
+}
+
+func (a *completedVideoPollingAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	result := a.result
+	return &result, nil
+}
+
+func (a *completedVideoPollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	return 0
+}
+
+func TestUpdateVideoSingleTaskDoesNotPublishBeforeCacheSucceeds(t *testing.T) {
+	truncate(t)
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+
+	const channelID = 451
+	seedTaskPollingChannel(t, channelID, true)
+	channel, err := model.CacheGetChannel(channelID)
+	require.NoError(t, err)
+	task := seedPollingTask(t, channelID, "task_cache_pending", "upstream_cache_pending")
+	adaptor := &completedVideoPollingAdaptor{
+		result: relaycommon.TaskInfo{
+			Status:   model.TaskStatusSuccess,
+			Progress: "100%",
+			Url:      "ftp://provider.example/video.mp4",
+		},
+		body: []byte(`{"status":"succeed","url":"ftp://provider.example/video.mp4"}`),
+	}
+
+	err = updateVideoSingleTask(context.Background(), adaptor, channel, task.GetUpstreamTaskID(), map[string]*model.Task{
+		task.GetUpstreamTaskID(): task,
+	})
+	require.NoError(t, err)
+
+	var saved model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
+	assert.Equal(t, model.TaskStatusInProgress, saved.Status)
+	assert.Equal(t, "95%", saved.Progress)
+	assert.Empty(t, saved.PrivateData.ResultURL)
+	assert.Equal(t, "ftp://provider.example/video.mp4", saved.PrivateData.UpstreamResultURL)
+	assert.NotContains(t, string(saved.Data), "provider.example")
+}
+
+func TestUpdateVideoSingleTaskPublishesOnlyCachedVideo(t *testing.T) {
+	truncate(t)
+	cacheDir := t.TempDir()
+	t.Setenv("VIDEO_CACHE_DIR", cacheDir)
+
+	const channelID = 452
+	seedTaskPollingChannel(t, channelID, true)
+	channel, err := model.CacheGetChannel(channelID)
+	require.NoError(t, err)
+	task := seedPollingTask(t, channelID, "task_cache_ready", "upstream_cache_ready")
+	adaptor := &completedVideoPollingAdaptor{
+		result: relaycommon.TaskInfo{
+			Status:   model.TaskStatusSuccess,
+			Progress: "100%",
+			Url:      "data:video/mp4;base64,dmlkZW8=",
+		},
+		body: []byte(`{"status":"succeed","url":"data:video/mp4;base64,dmlkZW8="}`),
+	}
+
+	err = updateVideoSingleTask(context.Background(), adaptor, channel, task.GetUpstreamTaskID(), map[string]*model.Task{
+		task.GetUpstreamTaskID(): task,
+	})
+	require.NoError(t, err)
+
+	var saved model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
+	assert.Equal(t, model.TaskStatusSuccess, saved.Status)
+	assert.NotZero(t, saved.PrivateData.VideoCachedAt)
+	assert.Equal(t, taskcommon.BuildPublicVideoURL(task.TaskID), saved.PrivateData.ResultURL)
+	assert.NotContains(t, string(saved.Data), "data:video")
+	assert.FileExists(t, filepath.Join(cacheDir, task.TaskID+".mp4"))
 }
 
 func TestUpdateVideoTasksDefaultSleepWaitsBetweenTasks(t *testing.T) {

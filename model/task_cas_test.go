@@ -137,7 +137,8 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 		FinishTime: 5678,
 		FailReason: "timeout",
 		PrivateData: TaskPrivateData{
-			ResultURL: "https://example.com/result.mp4",
+			ResultURL:     "https://example.com/result.mp4",
+			VideoCachedAt: 123456,
 		},
 		Data: json.RawMessage(`{"model":"test-model"}`),
 	}
@@ -148,6 +149,7 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 	assert.Equal(t, task.FinishTime, snap.FinishTime)
 	assert.Equal(t, task.FailReason, snap.FailReason)
 	assert.Equal(t, task.PrivateData.ResultURL, snap.ResultURL)
+	assert.Equal(t, task.PrivateData.VideoCachedAt, snap.VideoCachedAt)
 	assert.JSONEq(t, string(task.Data), string(snap.Data))
 }
 

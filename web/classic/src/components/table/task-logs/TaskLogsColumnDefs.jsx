@@ -415,10 +415,7 @@ export const getTaskLogsColumns = ({
           typeof resultUrl === 'string' && resultUrl.trim().length > 0;
         if (isSuccess && isVideoTask && hasResultUrl) {
           const encodedTaskId = encodeURIComponent(record.task_id);
-          const videoUrl =
-            record.platform === '59'
-              ? `/video-cache/${encodedTaskId}.mp4`
-              : `/v1/videos/${encodedTaskId}/content`;
+          const videoUrl = `/video-cache/${encodedTaskId}.mp4`;
           return (
             <a
               href='#'

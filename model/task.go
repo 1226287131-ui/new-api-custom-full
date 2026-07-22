@@ -103,6 +103,7 @@ type TaskPrivateData struct {
 	UpstreamTaskID    string `json:"upstream_task_id,omitempty"`    // 上游真实 task ID
 	ResultURL         string `json:"result_url,omitempty"`          // 任务成功后的结果 URL（视频地址等）
 	UpstreamResultURL string `json:"upstream_result_url,omitempty"` // 上游结果地址，仅供服务端缓存回源使用
+	VideoCachedAt     int64  `json:"video_cached_at,omitempty"`     // 本地视频缓存完成时间，用于固定 48 小时保留期
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -390,6 +391,7 @@ type taskSnapshot struct {
 	FailReason        string
 	ResultURL         string
 	UpstreamResultURL string
+	VideoCachedAt     int64
 	Data              json.RawMessage
 }
 
@@ -401,6 +403,7 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		s.FailReason == other.FailReason &&
 		s.ResultURL == other.ResultURL &&
 		s.UpstreamResultURL == other.UpstreamResultURL &&
+		s.VideoCachedAt == other.VideoCachedAt &&
 		bytes.Equal(s.Data, other.Data)
 }
 
@@ -413,6 +416,7 @@ func (t *Task) Snapshot() taskSnapshot {
 		FailReason:        t.FailReason,
 		ResultURL:         t.PrivateData.ResultURL,
 		UpstreamResultURL: t.PrivateData.UpstreamResultURL,
+		VideoCachedAt:     t.PrivateData.VideoCachedAt,
 		Data:              t.Data,
 	}
 }

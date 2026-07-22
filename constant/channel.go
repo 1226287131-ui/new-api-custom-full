@@ -1,5 +1,10 @@
 package constant
 
+import (
+	"strconv"
+	"strings"
+)
+
 const (
 	ChannelTypeUnknown        = 0
 	ChannelTypeOpenAI         = 1
@@ -184,6 +189,47 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAdvancedCustom: "Advanced Custom",
 	ChannelTypeNewAPIVideo:    "NewAPI Video",
 	ChannelTypeOpenAIVideo:    "Openai Video",
+}
+
+// IsVideoTaskChannelType reports whether a channel is handled by the async
+// video task pipeline. ChannelTypeOpenAI is included because its task route
+// uses the Sora adaptor for video generation; normal chat requests do not
+// create Task rows and are unaffected.
+func IsVideoTaskChannelType(channelType int) bool {
+	switch channelType {
+	case ChannelTypeOpenAI,
+		ChannelTypeAli,
+		ChannelTypeGemini,
+		ChannelTypeMiniMax,
+		ChannelTypeVertexAi,
+		ChannelTypeVolcEngine,
+		ChannelTypeKling,
+		ChannelTypeJimeng,
+		ChannelTypeVidu,
+		ChannelTypeDoubaoVideo,
+		ChannelTypeSora,
+		ChannelTypeNewAPIVideo,
+		ChannelTypeOpenAIVideo:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsVideoTaskPlatform is the platform-string counterpart used by task DTOs,
+// including legacy rows that stored a provider name instead of a channel type.
+func IsVideoTaskPlatform(platform TaskPlatform) bool {
+	if channelType, err := strconv.Atoi(string(platform)); err == nil {
+		return IsVideoTaskChannelType(channelType)
+	}
+	switch strings.ToLower(strings.TrimSpace(string(platform))) {
+	case "openai", "ali", "gemini", "minimax", "vertexai", "vertex",
+		"volcengine", "kling", "jimeng", "vidu", "doubaovideo", "doubao-video",
+		"sora", "newapi-video", "newapi_video", "openai-video", "openai_video":
+		return true
+	default:
+		return false
+	}
 }
 
 func GetChannelTypeName(channelType int) string {

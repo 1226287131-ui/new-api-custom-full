@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -492,6 +493,12 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if ch.Type == constant.ChannelTypeNewAPIVideo || ch.Type == constant.ChannelTypeOpenAIVideo {
 		normalizeNewAPIVideoTaskResult(baseURL, taskResult)
 	}
+	if taskResult.Url != "" && !strings.HasPrefix(strings.ToLower(taskResult.Url), "data:") {
+		taskResult.Url = ResolveVideoResultURL(baseURL, taskResult.Url)
+	}
+	if taskResult.RemoteUrl != "" && !strings.HasPrefix(strings.ToLower(taskResult.RemoteUrl), "data:") {
+		taskResult.RemoteUrl = ResolveVideoResultURL(baseURL, taskResult.RemoteUrl)
+	}
 	if taskResult.TerminalError && taskResult.Status != model.TaskStatusSuccess && taskResult.Status != model.TaskStatusFailure && taskTerminalErrorExpired(task, now) {
 		logger.LogWarn(ctx, fmt.Sprintf("Task %s exceeded terminal error timeout: %s", task.TaskID, taskResult.Reason))
 		taskResult.Status = model.TaskStatusFailure
@@ -500,19 +507,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			taskResult.Reason = "upstream reported a terminal error without a usable video result"
 		}
 	}
-
-	localVideoURL := ""
-	videoResultReady := ch.Type == constant.ChannelTypeNewAPIVideo && taskResult.Status == model.TaskStatusSuccess
-	if videoResultReady {
-		localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-	}
-	if ch.Type == constant.ChannelTypeNewAPIVideo || ch.Type == constant.ChannelTypeOpenAIVideo {
-		task.Data = SanitizeNewAPIVideoTaskData(responseBody, task.TaskID, task.GetUpstreamTaskID(), localVideoURL)
-	} else {
-		task.Data = redactVideoResponseBody(responseBody, localVideoURL, false)
-	}
-
-	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
 
 	if taskResult.Status == "" {
 		//taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
@@ -536,6 +530,39 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 	}
 
+	localVideoURL := ""
+	if constant.IsVideoTaskChannelType(ch.Type) && taskResult.Status == model.TaskStatusSuccess {
+		videoSourceURL := strings.TrimSpace(taskResult.Url)
+		if videoSourceURL == "" {
+			videoSourceURL = strings.TrimSpace(taskResult.RemoteUrl)
+		}
+		if videoSourceURL == "" {
+			videoSourceURL = ExtractVideoDataURL(responseBody)
+		}
+		if _, cacheErr := CacheVideoTaskResult(ctx, task, ch, videoSourceURL); cacheErr != nil {
+			// A completed provider result is not public until the local copy exists.
+			// Keeping it in progress lets the normal poller retry transient download
+			// failures without exposing the provider URL.
+			logger.LogError(ctx, fmt.Sprintf("Failed to cache video task %s locally: %s", task.TaskID, cacheErr.Error()))
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "95%"
+			taskResult.Reason = ""
+			taskResult.TerminalError = false
+			task.PrivateData.ResultURL = ""
+		} else {
+			MarkVideoTaskCached(task)
+			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+		}
+	}
+
+	if constant.IsVideoTaskChannelType(ch.Type) {
+		task.Data = SanitizeVideoTaskData(responseBody, task.TaskID, task.GetUpstreamTaskID(), localVideoURL)
+	} else {
+		task.Data = redactVideoResponseBody(responseBody, localVideoURL, false)
+	}
+
+	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
+
 	shouldRefund := false
 	shouldSettle := false
 	quota := task.Quota
@@ -556,33 +583,14 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
-		if strings.HasPrefix(taskResult.Url, "data:") {
-			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
-			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+		if constant.IsVideoTaskChannelType(ch.Type) {
+			// Every asynchronous video exposes the same shareable local .mp4 URL.
+			task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
 		} else if taskResult.Url != "" {
-			if ch.Type == constant.ChannelTypeOpenAIVideo {
-				task.PrivateData.UpstreamResultURL = taskResult.Url
-				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-			} else if ch.Type == constant.ChannelTypeNewAPIVideo {
-				// Keep the upstream URL private and expose only the local public URL.
-				task.PrivateData.UpstreamResultURL = taskResult.Url
-				task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-				if _, cacheErr := CacheRemoteVideo(ctx, task.TaskID, taskResult.Url, proxy, key); cacheErr != nil {
-					logger.LogError(ctx, fmt.Sprintf("Failed to cache video task %s locally: %s", task.TaskID, cacheErr.Error()))
-				}
-			} else {
-				// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
-				task.PrivateData.ResultURL = taskResult.Url
-			}
+			task.PrivateData.ResultURL = taskResult.Url
 		} else {
-			// No URL from adaptor — construct proxy URL using public task ID
-			if ch.Type == constant.ChannelTypeNewAPIVideo {
-				task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-			} else if ch.Type == constant.ChannelTypeOpenAIVideo {
-				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-			} else {
-				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-			}
+			// No URL from a non-video adaptor: preserve the historical proxy URL.
+			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		}
 		shouldSettle = true
 	case model.TaskStatusFailure:
@@ -667,9 +675,9 @@ func redactVideoResponseBody(body []byte, localVideoURL string, hideVideoURLs bo
 	return b
 }
 
-// SanitizeNewAPIVideoTaskData keeps provider response details useful without
-// exposing provider URLs or the provider's task identifier through TaskDto.Data.
-func SanitizeNewAPIVideoTaskData(body []byte, publicTaskID, upstreamTaskID, localVideoURL string) []byte {
+// SanitizeVideoTaskData keeps provider response details useful without
+// exposing provider URLs or provider task identifiers through task responses.
+func SanitizeVideoTaskData(body []byte, publicTaskID, upstreamTaskID, localVideoURL string) []byte {
 	redacted := redactVideoResponseBody(body, localVideoURL, true)
 	var m map[string]any
 	if err := common.Unmarshal(redacted, &m); err != nil {
@@ -683,6 +691,48 @@ func SanitizeNewAPIVideoTaskData(body []byte, publicTaskID, upstreamTaskID, loca
 		return []byte(`{}`)
 	}
 	return b
+}
+
+var videoURLInTaskReason = regexp.MustCompile(`https?://[^\s"'<>]+`)
+
+// SanitizeVideoTaskReason removes provider URLs and provider task IDs from
+// task log error text while preserving the rest of the diagnostic message.
+func SanitizeVideoTaskReason(reason, upstreamTaskID string) string {
+	if upstreamTaskID != "" {
+		reason = strings.ReplaceAll(reason, upstreamTaskID, "[redacted]")
+	}
+	return videoURLInTaskReason.ReplaceAllString(reason, "[redacted]")
+}
+
+// SanitizeNewAPIVideoTaskData is kept as a compatibility wrapper for callers
+// and tests that use the historical function name.
+func SanitizeNewAPIVideoTaskData(body []byte, publicTaskID, upstreamTaskID, localVideoURL string) []byte {
+	return SanitizeVideoTaskData(body, publicTaskID, upstreamTaskID, localVideoURL)
+}
+
+// SanitizeOpenAIVideoResponse normalizes converter output so OpenAI video
+// fetches also expose only the local cache URL.
+func SanitizeOpenAIVideoResponse(body []byte, publicTaskID, upstreamTaskID, localVideoURL string) []byte {
+	sanitized := SanitizeVideoTaskData(body, publicTaskID, upstreamTaskID, localVideoURL)
+	if strings.TrimSpace(localVideoURL) == "" {
+		return sanitized
+	}
+	var response map[string]any
+	if err := common.Unmarshal(sanitized, &response); err != nil {
+		return sanitized
+	}
+	response["result_url"] = localVideoURL
+	metadata, _ := response["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = make(map[string]any)
+	}
+	metadata["url"] = localVideoURL
+	response["metadata"] = metadata
+	encoded, err := common.Marshal(response)
+	if err != nil {
+		return sanitized
+	}
+	return encoded
 }
 
 func isVideoURLField(key string) bool {
@@ -713,6 +763,65 @@ func ExtractVideoResultURL(body []byte) string {
 		return ""
 	}
 	return findVideoResultURL(root)
+}
+
+// ExtractVideoDataURL finds common inline base64 video response shapes. It is
+// used for legacy Vertex tasks and for providers that return bytes directly.
+func ExtractVideoDataURL(body []byte) string {
+	var root any
+	if err := common.Unmarshal(body, &root); err != nil {
+		return ""
+	}
+	return findVideoDataURL(root)
+}
+
+func findVideoDataURL(node any) string {
+	switch value := node.(type) {
+	case map[string]any:
+		if encoded, ok := value["bytesBase64Encoded"].(string); ok && strings.TrimSpace(encoded) != "" {
+			return buildVideoDataURL(value["mimeType"], value["encoding"], encoded)
+		}
+		if encoded, ok := value["video"].(string); ok && strings.TrimSpace(encoded) != "" {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(encoded)), "data:") {
+				return strings.TrimSpace(encoded)
+			}
+			if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(encoded)), "http://") && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(encoded)), "https://") {
+				return buildVideoDataURL(value["mimeType"], value["encoding"], encoded)
+			}
+		}
+		for _, key := range []string{"response", "data", "video", "videos", "output", "result"} {
+			if child, ok := value[key]; ok {
+				if candidate := findVideoDataURL(child); candidate != "" {
+					return candidate
+				}
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if candidate := findVideoDataURL(child); candidate != "" {
+				return candidate
+			}
+		}
+	}
+	return ""
+}
+
+func buildVideoDataURL(mimeValue, encodingValue any, encoded string) string {
+	mimeType, _ := mimeValue.(string)
+	mimeType = strings.TrimSpace(mimeType)
+	if mimeType == "" {
+		encoding, _ := encodingValue.(string)
+		encoding = strings.TrimSpace(encoding)
+		if encoding == "" {
+			encoding = "mp4"
+		}
+		if strings.Contains(encoding, "/") {
+			mimeType = encoding
+		} else {
+			mimeType = "video/" + encoding
+		}
+	}
+	return "data:" + mimeType + ";base64," + strings.TrimSpace(encoded)
 }
 
 // ResolveVideoResultURL converts provider-relative video paths into absolute URLs.

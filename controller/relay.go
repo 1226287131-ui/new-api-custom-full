@@ -586,7 +586,7 @@ func RelayTask(c *gin.Context) {
 				task.Properties.VideoSize = request.Size
 			}
 		}
-		if relayInfo.ChannelType == constant.ChannelTypeOpenAIVideo {
+		if constant.IsVideoTaskChannelType(relayInfo.ChannelType) {
 			task.PrivateData.Key = relayInfo.ApiKey
 		}
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
@@ -606,8 +606,8 @@ func RelayTask(c *gin.Context) {
 			) == billing_setting.BillingModePerRequest,
 		}
 		task.Quota = result.Quota
-		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo || relayInfo.ChannelType == constant.ChannelTypeOpenAIVideo {
-			task.Data = service.SanitizeNewAPIVideoTaskData(result.TaskData, task.TaskID, result.UpstreamTaskID, "")
+		if constant.IsVideoTaskChannelType(relayInfo.ChannelType) {
+			task.Data = service.SanitizeVideoTaskData(result.TaskData, task.TaskID, result.UpstreamTaskID, "")
 		} else {
 			task.Data = result.TaskData
 		}
