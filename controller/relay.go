@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -599,7 +600,10 @@ func RelayTask(c *gin.Context) {
 			ModelRatio:      relayInfo.PriceData.ModelRatio,
 			OtherRatios:     relayInfo.PriceData.OtherRatios(),
 			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			PerCallBilling: billing_setting.GetTaskBillingMode(
+				relayInfo.OriginModelName,
+				common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName),
+			) == billing_setting.BillingModePerRequest,
 		}
 		task.Quota = result.Quota
 		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo || relayInfo.ChannelType == constant.ChannelTypeOpenAIVideo {

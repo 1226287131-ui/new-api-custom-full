@@ -54,7 +54,7 @@ export type PricingModel = {
   supported_endpoint_types?: string[]
   key?: string
   group_ratio?: Record<string, number>
-  /** Billing mode (e.g. "tiered_expr") used to flag dynamic pricing */
+  /** Billing mode (e.g. "per-second" or "tiered_expr") */
   billing_mode?: string
   /** Raw expression describing dynamic / tiered billing */
   billing_expr?: string
@@ -114,4 +114,4 @@ export type PriceType =
   | 'image'
   | 'audio_input'
   | 'audio_output'
-export type QuotaType = 0 | 1 // 0: token-based, 1: per-request
+export type QuotaType = 0 | 1 // 0: token-based, 1: fixed-price task
