@@ -175,7 +175,7 @@ func TestUpdateVideoSingleTaskDoesNotPublishBeforeCacheSucceeds(t *testing.T) {
 
 	var saved model.Task
 	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
-	assert.Equal(t, model.TaskStatusInProgress, saved.Status)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), saved.Status)
 	assert.Equal(t, "95%", saved.Progress)
 	assert.Empty(t, saved.PrivateData.ResultURL)
 	assert.Equal(t, "ftp://provider.example/video.mp4", saved.PrivateData.UpstreamResultURL)
@@ -208,7 +208,7 @@ func TestUpdateVideoSingleTaskPublishesOnlyCachedVideo(t *testing.T) {
 
 	var saved model.Task
 	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
-	assert.Equal(t, model.TaskStatusSuccess, saved.Status)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), saved.Status)
 	assert.NotZero(t, saved.PrivateData.VideoCachedAt)
 	assert.Equal(t, taskcommon.BuildPublicVideoURL(task.TaskID), saved.PrivateData.ResultURL)
 	assert.NotContains(t, string(saved.Data), "data:video")
