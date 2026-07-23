@@ -442,6 +442,8 @@
     "代理设置": "Proxy Settings",
     "代码已复制到剪贴板": "Code copied to clipboard",
     "令牌": "Tokens",
+    "全选分组": "Select all groups",
+    "自动选择当前可用的全部普通分组；关闭后可手动选择。auto 分组不能与其他分组同时使用。": "Automatically select all available non-auto groups. Turn it off to choose groups manually. The auto group cannot be combined with other groups.",
     "令牌不存在": "",
     "令牌分组": "Token Group",
     "令牌分组，默认为用户的分组": "Token group, default is your group",

@@ -43,6 +43,7 @@ import {
   Tag,
   Avatar,
   Form,
+  Switch,
   Col,
   Row,
   InputNumber,
@@ -69,6 +70,7 @@ const EditTokenModal = (props) => {
   const [groups, setGroups] = useState([]);
   const [showQuotaInput, setShowQuotaInput] = useState(false);
   const isEdit = props.editingToken.id !== undefined;
+  const selectableGroups = groups.filter((group) => group.value !== 'auto');
 
   const getInitValues = () => ({
     name: '',
@@ -234,6 +236,21 @@ const EditTokenModal = (props) => {
       return null;
     }
     return groups.join(',');
+  };
+
+  const handleToggleAllGroups = (checked) => {
+    let nextGroups = [];
+    if (checked) {
+      nextGroups = selectableGroups.map((group) => group.value);
+    } else if (selectableGroups.length > 0) {
+      const fallbackGroup =
+        selectableGroups.find((group) => group.value === 'default') ||
+        selectableGroups[0];
+      nextGroups = fallbackGroup ? [fallbackGroup.value] : [];
+    }
+
+    formApiRef.current?.setValue('group', nextGroups);
+    formApiRef.current?.setValue('cross_group_retry', false);
   };
 
   const submit = async (values) => {
@@ -420,33 +437,75 @@ const EditTokenModal = (props) => {
                     />
                   </Col>
                   <Col span={24}>
-                    {groups.length > 0 ? (
-                      <Form.Select
-                        field='group'
-                        label={t('令牌分组')}
-                        placeholder={t('选择一个或多个令牌分组')}
-                        optionList={groups}
-                        renderOptionItem={renderGroupOption}
-                        multiple
-                        filter={(input, option) => {
-                          const q = input.toLowerCase();
-                          return (
-                            option.value?.toLowerCase().includes(q) ||
-                            (typeof option.label === 'string' &&
-                              option.label.toLowerCase().includes(q))
-                          );
-                        }}
-                        showClear
-                        style={{ width: '100%' }}
-                      />
-                    ) : (
-                      <Form.Select
-                        placeholder={t('管理员未设置用户可选分组')}
-                        disabled
-                        label={t('令牌分组')}
-                        style={{ width: '100%' }}
-                      />
-                    )}
+                    <Row gutter={12}>
+                      <Col xs={24} sm={24} md={16} lg={16} xl={16}>
+                        {groups.length > 0 ? (
+                          <Form.Select
+                            field='group'
+                            label={t('令牌分组')}
+                            placeholder={t('选择一个或多个令牌分组')}
+                            optionList={groups}
+                            renderOptionItem={renderGroupOption}
+                            multiple
+                            filter={(input, option) => {
+                              const q = input.toLowerCase();
+                              return (
+                                option.value?.toLowerCase().includes(q) ||
+                                (typeof option.label === 'string' &&
+                                  option.label.toLowerCase().includes(q))
+                              );
+                            }}
+                            showClear
+                            style={{ width: '100%' }}
+                          />
+                        ) : (
+                          <Form.Select
+                            placeholder={t('管理员未设置用户可选分组')}
+                            disabled
+                            label={t('令牌分组')}
+                            style={{ width: '100%' }}
+                          />
+                        )}
+                      </Col>
+                      {!isEdit && selectableGroups.length > 0 && (
+                        <Col xs={24} sm={24} md={8} lg={8} xl={8}>
+                          <Form.Slot label={t('全选分组')}>
+                            <div className='flex items-start justify-between gap-2'>
+                              <Text
+                                type='tertiary'
+                                size='small'
+                                className='min-w-0 flex-1'
+                              >
+                                {t(
+                                  '自动选择当前可用的全部普通分组；关闭后可手动选择。auto 分组不能与其他分组同时使用。',
+                                )}
+                              </Text>
+                              <Switch
+                                checked={(() => {
+                                  const selectedGroups = Array.isArray(
+                                    values.group,
+                                  )
+                                    ? values.group
+                                    : values.group
+                                      ? [values.group]
+                                      : [];
+                                  return (
+                                    selectedGroups.length ===
+                                      selectableGroups.length &&
+                                    selectableGroups.every((group) =>
+                                      selectedGroups.includes(group.value),
+                                    )
+                                  );
+                                })()}
+                                onChange={handleToggleAllGroups}
+                                aria-label={t('全选分组')}
+                                size='default'
+                              />
+                            </div>
+                          </Form.Slot>
+                        </Col>
+                      )}
+                    </Row>
                   </Col>
                   <Col
                     span={24}

@@ -2158,6 +2158,8 @@
     "Group: {{ratio}}x": "分组：{{ratio}}x",
     "Grouped monitor status from Uptime Kuma": "来自 Uptime Kuma 的分组监控状态",
     "Groups": "分组",
+    "Select all groups": "全选分组",
+    "Automatically select all available non-auto groups. Turn it off to choose groups manually. The auto group cannot be combined with other groups.": "自动选择当前可用的全部普通分组；关闭后可手动选择。auto 分组不能与其他分组同时使用。",
     "Groups *": "分组 *",
     "Groups that users can select when creating API keys.": "用户在创建 API 密钥时可以选择的分组。",
     "Growth": "增长",

@@ -128,6 +128,7 @@ export function ApiKeysMutateDrawer({
       ratio: info.ratio,
     })
   )
+  const selectableGroups = groups.filter((group) => group.value !== 'auto')
   const backendHasAuto = groups.some((g) => g.value === 'auto')
   const schema = getApiKeyFormSchema(t)
 
@@ -261,6 +262,29 @@ export function ApiKeysMutateDrawer({
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
   const selectedGroups = form.watch('group')
   const unlimitedQuota = form.watch('unlimited_quota')
+  const allGroupsSelected =
+    !isUpdate &&
+    selectableGroups.length > 0 &&
+    selectedGroups.length === selectableGroups.length &&
+    selectableGroups.every((group) => selectedGroups.includes(group.value))
+
+  const handleToggleAllGroups = (checked: boolean) => {
+    let nextGroups: string[] = []
+    if (checked) {
+      nextGroups = selectableGroups.map((group) => group.value)
+    } else if (selectableGroups.length > 0) {
+      const fallbackGroup =
+        selectableGroups.find((group) => group.value === 'default') ??
+        selectableGroups[0]
+      nextGroups = fallbackGroup ? [fallbackGroup.value] : []
+    }
+
+    form.setValue('group', nextGroups, {
+      shouldDirty: true,
+      shouldValidate: true,
+    })
+    form.setValue('cross_group_retry', false)
+  }
 
   return (
     <Sheet
@@ -312,25 +336,51 @@ export function ApiKeysMutateDrawer({
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name='group'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Groups')}</FormLabel>
-                    <FormControl>
-                      <ApiKeyGroupCombobox
-                        options={groups}
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        placeholder={t('Select a group')}
-                        exclusiveValues={['auto']}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+              <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.72fr)] sm:items-start'>
+                <FormField
+                  control={form.control}
+                  name='group'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Groups')}</FormLabel>
+                      <FormControl>
+                        <ApiKeyGroupCombobox
+                          options={groups}
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          placeholder={t('Select a group')}
+                          exclusiveValues={['auto']}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {!isUpdate && selectableGroups.length > 0 && (
+                  <div
+                    className={sideDrawerSwitchItemClassName(
+                      'sm:mt-6 sm:min-h-20'
+                    )}
+                  >
+                    <div className='flex min-w-0 flex-col gap-0.5'>
+                      <div className='text-foreground text-sm font-medium'>
+                        {t('Select all groups')}
+                      </div>
+                      <p className='text-muted-foreground text-xs leading-5'>
+                        {t(
+                          'Automatically select all available non-auto groups. Turn it off to choose groups manually. The auto group cannot be combined with other groups.'
+                        )}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={allGroupsSelected}
+                      onCheckedChange={handleToggleAllGroups}
+                      aria-label={t('Select all groups')}
+                    />
+                  </div>
                 )}
-              />
+              </div>
 
               {selectedGroups.length === 1 && selectedGroups[0] === 'auto' && (
                 <FormField
