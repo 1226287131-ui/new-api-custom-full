@@ -336,7 +336,7 @@ export function ApiKeysMutateDrawer({
                 )}
               />
 
-              <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.72fr)] sm:items-start'>
+              <div className='flex min-w-0 flex-col gap-3'>
                 <FormField
                   control={form.control}
                   name='group'
@@ -359,21 +359,20 @@ export function ApiKeysMutateDrawer({
 
                 {!isUpdate && selectableGroups.length > 0 && (
                   <div
-                    className={sideDrawerSwitchItemClassName(
-                      'sm:mt-6 sm:min-h-20'
-                    )}
+                    className='border-border/60 bg-muted/20 flex min-w-0 items-start justify-between gap-4 rounded-lg border px-3 py-3 sm:px-4'
                   >
-                    <div className='flex min-w-0 flex-col gap-0.5'>
+                    <div className='flex min-w-0 flex-1 flex-col gap-0.5'>
                       <div className='text-foreground text-sm font-medium'>
                         {t('Select all groups')}
                       </div>
-                      <p className='text-muted-foreground text-xs leading-5'>
+                      <p className='text-muted-foreground max-w-2xl text-xs leading-5'>
                         {t(
                           'Automatically select all available non-auto groups. Turn it off to choose groups manually. The auto group cannot be combined with other groups.'
                         )}
                       </p>
                     </div>
                     <Switch
+                      className='mt-0.5 shrink-0'
                       checked={allGroupsSelected}
                       onCheckedChange={handleToggleAllGroups}
                       aria-label={t('Select all groups')}

@@ -438,7 +438,7 @@ const EditTokenModal = (props) => {
                   </Col>
                   <Col span={24}>
                     <Row gutter={12}>
-                      <Col xs={24} sm={24} md={16} lg={16} xl={16}>
+                      <Col span={24}>
                         {groups.length > 0 ? (
                           <Form.Select
                             field='group'
@@ -447,6 +447,7 @@ const EditTokenModal = (props) => {
                             optionList={groups}
                             renderOptionItem={renderGroupOption}
                             multiple
+                            maxTagCount={1}
                             filter={(input, option) => {
                               const q = input.toLowerCase();
                               return (
@@ -468,19 +469,20 @@ const EditTokenModal = (props) => {
                         )}
                       </Col>
                       {!isEdit && selectableGroups.length > 0 && (
-                        <Col xs={24} sm={24} md={8} lg={8} xl={8}>
+                        <Col span={24}>
                           <Form.Slot label={t('全选分组')}>
-                            <div className='flex items-start justify-between gap-2'>
+                            <div className='flex min-w-0 items-start justify-between gap-4 rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-3 dark:border-gray-700 dark:bg-gray-800/40 sm:px-4'>
                               <Text
                                 type='tertiary'
                                 size='small'
-                                className='min-w-0 flex-1'
+                                className='min-w-0 flex-1 leading-5'
                               >
                                 {t(
                                   '自动选择当前可用的全部普通分组；关闭后可手动选择。auto 分组不能与其他分组同时使用。',
                                 )}
                               </Text>
                               <Switch
+                                className='mt-0.5 shrink-0'
                                 checked={(() => {
                                   const selectedGroups = Array.isArray(
                                     values.group,
