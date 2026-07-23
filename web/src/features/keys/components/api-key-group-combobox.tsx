@@ -52,10 +52,11 @@ export type ApiKeyGroupOption = {
 
 type ApiKeyGroupComboboxProps = {
   options: ApiKeyGroupOption[]
-  value?: string
-  onValueChange: (value: string) => void
+  value?: string[]
+  onValueChange: (value: string[]) => void
   placeholder?: string
   disabled?: boolean
+  exclusiveValues?: string[]
 }
 
 export function ApiKeyGroupCombobox({
@@ -64,13 +65,27 @@ export function ApiKeyGroupCombobox({
   onValueChange,
   placeholder,
   disabled,
+  exclusiveValues = [],
 }: ApiKeyGroupComboboxProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [searchValue, setSearchValue] = useState('')
   const shouldReduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
-  const selectedOption = options.find((option) => option.value === value)
-  const isAutoSelected = selectedOption?.value === 'auto'
+  const selectedValues = value ?? []
+  const exclusiveValueSet = useMemo(
+    () => new Set(exclusiveValues),
+    [exclusiveValues]
+  )
+  const selectedOptions = options.filter((option) =>
+    selectedValues.includes(option.value)
+  )
+  let selectedGroupLabel = placeholder || t('Select a group')
+  if (selectedOptions.length > 0) {
+    selectedGroupLabel = selectedOptions
+      .map((option) => option.label)
+      .join(', ')
+  }
+  const isAutoSelected = selectedValues.includes('auto')
 
   const filteredOptions = useMemo(() => {
     const search = searchValue.trim().toLowerCase()
@@ -88,8 +103,19 @@ export function ApiKeyGroupCombobox({
   }, [options, searchValue])
 
   const handleSelect = (selectedValue: string) => {
-    onValueChange(selectedValue)
-    setOpen(false)
+    let nextValues: string[]
+    if (exclusiveValueSet.has(selectedValue)) {
+      nextValues = [selectedValue]
+    } else {
+      const nonExclusiveValues = selectedValues.filter(
+        (item) => !exclusiveValueSet.has(item)
+      )
+      nextValues = nonExclusiveValues.includes(selectedValue)
+        ? nonExclusiveValues.filter((item) => item !== selectedValue)
+        : [...nonExclusiveValues, selectedValue]
+    }
+
+    onValueChange(nextValues)
     setSearchValue('')
   }
 
@@ -121,17 +147,21 @@ export function ApiKeyGroupCombobox({
         <span className='flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3'>
           <span className='min-w-0'>
             <span className='block truncate font-medium'>
-              {selectedOption?.label || placeholder || t('Select a group')}
+              {selectedGroupLabel}
             </span>
-            {selectedOption?.desc && (
+            {selectedOptions.length === 1 && selectedOptions[0]?.desc && (
               <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
-                {selectedOption.desc}
+                {selectedOptions[0].desc}
               </span>
             )}
           </span>
           <span className='hidden sm:block'>
             <GroupRatioBadge
-              ratio={selectedOption?.ratio}
+              ratio={
+                selectedOptions.length === 1
+                  ? selectedOptions[0]?.ratio
+                  : undefined
+              }
               isAuto={isAutoSelected}
               shouldReduceMotion={shouldReduceMotion}
             />
@@ -184,7 +214,9 @@ export function ApiKeyGroupCombobox({
                       aria-hidden='true'
                       className={cn(
                         'mt-0.5 size-4',
-                        value === option.value ? 'opacity-100' : 'opacity-0'
+                        selectedValues.includes(option.value)
+                          ? 'opacity-100'
+                          : 'opacity-0'
                       )}
                     />
                     <span className='min-w-0 flex-1'>

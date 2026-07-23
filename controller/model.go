@@ -195,6 +195,14 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 		}, nil
 	}
 
+	if tokenGroups := model.ParseTokenGroups(tokenGroup); len(tokenGroups) > 1 {
+		return modelListGroups{
+			userGroup:   userGroup,
+			tokenGroup:  tokenGroup,
+			ownerGroups: tokenGroups,
+		}, nil
+	}
+
 	group := userGroup
 	if tokenGroup != "" {
 		group = tokenGroup

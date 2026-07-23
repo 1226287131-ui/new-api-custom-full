@@ -196,6 +196,69 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
       cell: ({ row }) => {
         const apiKey = row.original
         const group = row.getValue('group') as string
+        const groups = group
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+
+        if (group === 'auto') {
+          return (
+            <Tooltip>
+              <TooltipTrigger
+                render={<BadgeCell className='gap-1.5 text-xs' />}
+              >
+                <GroupBadge group='auto' />
+                {apiKey.cross_group_retry && (
+                  <StatusBadge
+                    label={t('Cross-group')}
+                    variant='info'
+                    copyable={false}
+                  />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>
+                <span className='text-xs'>
+                  {t(
+                    'Automatically selects the best available group with circuit breaker mechanism'
+                  )}
+                </span>
+              </TooltipContent>
+            </Tooltip>
+          )
+        }
+        if (groups.length > 1) {
+          return (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <BadgeCell className='max-w-full flex-nowrap gap-1 overflow-hidden text-xs' />
+                }
+              >
+                {groups.map((groupName) => (
+                  <GroupBadge
+                    key={groupName}
+                    group={groupName}
+                    ratio={groupRatios[groupName]}
+                  />
+                ))}
+              </TooltipTrigger>
+              <TooltipContent className='max-w-xs'>
+                <div className='space-y-1 text-xs'>
+                  {groups.map((groupName) => (
+                    <div key={groupName} className='flex items-center gap-2'>
+                      <span>{groupName}</span>
+                      {groupRatios[groupName] !== undefined && (
+                        <span className='text-muted-foreground font-mono'>
+                          {groupRatios[groupName]}x
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          )
+        }
         return (
           <ApiKeyGroupCell
             group={group}

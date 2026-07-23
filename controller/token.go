@@ -269,6 +269,11 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
+	token.Group, err = model.NormalizeTokenGroup(token.Group)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -364,6 +369,13 @@ func UpdateToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
+	if statusOnly == "" {
+		token.Group, err = model.NormalizeTokenGroup(token.Group)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return

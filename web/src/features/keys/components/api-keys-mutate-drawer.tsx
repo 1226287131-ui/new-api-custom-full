@@ -257,25 +257,37 @@ export function ApiKeysMutateDrawer({
   const formTarget =
     isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
   const isFormInitialized = initializedTarget === formTarget
-  const selectedGroup = form.watch('group')
+  const selectedGroups = form.watch('group')
 
-  // Correct group after groups load: if the form value is not in available groups, fall back
+  // Correct groups after groups load: drop unavailable values and retain the
+  // selection order used by the backend for multi-group channel lookup.
   useEffect(() => {
     if (groups.length === 0) return
-    const currentGroup = selectedGroup
-    if (currentGroup && !groups.some((g) => g.value === currentGroup)) {
+    const currentGroups = form.getValues('group') || []
+    const availableGroups = new Set(groups.map((group) => group.value))
+    const normalizedGroups = [
+      ...new Set(currentGroups.filter((group) => availableGroups.has(group))),
+    ]
+    const nextGroups = normalizedGroups.includes('auto')
+      ? ['auto']
+      : normalizedGroups
+
+    if (nextGroups.length === 0) {
       const fallback =
         groups.find((g) => g.value === 'default')?.value ??
         groups[0]?.value ??
         ''
-      form.setValue('group', fallback)
-      if (currentGroup === 'auto') {
-        form.setValue('auto_groups', [])
-        form.setValue('auto_groups_mode', 'inherit')
-        form.setValue('cross_group_retry', false)
-      }
+      form.setValue('group', fallback ? [fallback] : [])
+    } else if (nextGroups.join(',') !== currentGroups.join(',')) {
+      form.setValue('group', nextGroups)
     }
-  }, [groups, form, selectedGroup])
+
+    if (!(nextGroups.length === 1 && nextGroups[0] === 'auto')) {
+      form.setValue('auto_groups', [])
+      form.setValue('auto_groups_mode', 'inherit')
+      form.setValue('cross_group_retry', false)
+    }
+  }, [groups, form, selectedGroups])
 
   const onSubmit = async (data: ApiKeyFormValues) => {
     setIsSubmitting(true)
@@ -417,14 +429,17 @@ export function ApiKeysMutateDrawer({
                 name='group'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Group')}</FormLabel>
+                    <FormLabel>{t('Groups')}</FormLabel>
                     <FormControl>
                       <ApiKeyGroupCombobox
                         options={groups}
                         value={field.value}
-                        onValueChange={(group) => {
-                          field.onChange(group)
-                          if (group === 'auto') {
+                        onValueChange={(nextGroups) => {
+                          field.onChange(nextGroups)
+                          if (
+                            nextGroups.length === 1 &&
+                            nextGroups[0] === 'auto'
+                          ) {
                             form.setValue('cross_group_retry', true, {
                               shouldDirty: true,
                             })
@@ -435,6 +450,7 @@ export function ApiKeysMutateDrawer({
                           })
                         }}
                         placeholder={t('Select a group')}
+                        exclusiveValues={['auto']}
                       />
                     </FormControl>
                     <FormMessage />
@@ -442,7 +458,7 @@ export function ApiKeysMutateDrawer({
                 )}
               />
 
-              {selectedGroup === 'auto' && (
+              {selectedGroups.length === 1 && selectedGroups[0] === 'auto' && (
                 <FormField
                   control={form.control}
                   name='auto_groups'
@@ -483,7 +499,7 @@ export function ApiKeysMutateDrawer({
                 />
               )}
 
-              {selectedGroup === 'auto' && (
+              {selectedGroups.length === 1 && selectedGroups[0] === 'auto' && (
                 <FormField
                   control={form.control}
                   name='cross_group_retry'

@@ -116,3 +116,17 @@ func TestGetModelListGroupsUsesFilteredTokenAutoGroupsSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, groups.ownerGroups)
 }
+
+func TestGetModelListGroupsUsesMultipleTokenGroups(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "premium,standard,premium")
+
+	groups, err := getModelListGroups(ctx)
+	require.NoError(t, err)
+
+	require.Equal(t, "default", groups.userGroup)
+	require.Equal(t, "premium,standard,premium", groups.tokenGroup)
+	require.Equal(t, []string{"premium", "standard"}, groups.ownerGroups)
+}
