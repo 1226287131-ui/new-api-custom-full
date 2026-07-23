@@ -18,8 +18,10 @@ func TestCacheGetRandomSatisfiedChannelUsesNextSelectedTokenGroup(t *testing.T) 
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	originalMainDatabaseType := common.MainDatabaseType()
+	originalLogDatabaseType := common.LogDatabaseType()
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	common.MemoryCacheEnabled = false
+	common.MemoryCacheEnabled = true
 
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
 	require.NoError(t, err)
@@ -31,6 +33,10 @@ func TestCacheGetRandomSatisfiedChannelUsesNextSelectedTokenGroup(t *testing.T) 
 		model.DB = originalDB
 		model.LOG_DB = originalLogDB
 		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
+		if originalMemoryCacheEnabled && originalDB != nil {
+			model.InitChannelCache()
+		}
 	})
 
 	channel := &model.Channel{
@@ -38,6 +44,8 @@ func TestCacheGetRandomSatisfiedChannelUsesNextSelectedTokenGroup(t *testing.T) 
 		Name:   "secondary-channel",
 		Key:    "test-key",
 		Status: common.ChannelStatusEnabled,
+		Group:  "secondary",
+		Models: "test-model",
 	}
 	require.NoError(t, db.Create(channel).Error)
 	require.NoError(t, db.Create(&model.Ability{
@@ -46,6 +54,7 @@ func TestCacheGetRandomSatisfiedChannelUsesNextSelectedTokenGroup(t *testing.T) 
 		ChannelId: channel.Id,
 		Enabled:   true,
 	}).Error)
+	model.InitChannelCache()
 
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	selected, group, err := CacheGetRandomSatisfiedChannel(&RetryParam{
