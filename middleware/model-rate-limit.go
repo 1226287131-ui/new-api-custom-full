@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/common/limiter"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
@@ -183,11 +184,32 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 			group = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 		}
 
-		//获取分组的限流配置
-		groupTotalCount, groupSuccessCount, found := setting.GetGroupRateLimit(group)
-		if found {
-			totalMaxCount = groupTotalCount
-			successMaxCount = groupSuccessCount
+		groups := model.ParseTokenGroups(group)
+		if len(groups) <= 1 {
+			if len(groups) == 1 {
+				group = groups[0]
+			}
+			groupTotalCount, groupSuccessCount, found := setting.GetGroupRateLimit(group)
+			if found {
+				totalMaxCount = groupTotalCount
+				successMaxCount = groupSuccessCount
+			}
+		} else {
+			// A multi-group token may be routed through any selected group. Apply
+			// the strictest configured limit so a key cannot bypass a group limit
+			// by requesting a model that exists in another selected group.
+			for _, tokenGroup := range groups {
+				groupTotalCount, groupSuccessCount, found := setting.GetGroupRateLimit(tokenGroup)
+				if !found {
+					continue
+				}
+				if groupTotalCount > 0 && (totalMaxCount == 0 || groupTotalCount < totalMaxCount) {
+					totalMaxCount = groupTotalCount
+				}
+				if groupSuccessCount > 0 && (successMaxCount == 0 || groupSuccessCount < successMaxCount) {
+					successMaxCount = groupSuccessCount
+				}
+			}
 		}
 
 		// 根据存储类型选择并执行限流处理器

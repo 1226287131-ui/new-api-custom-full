@@ -154,9 +154,20 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
-		if err != nil {
-			return nil, param.TokenGroup, err
+		groups := model.ParseTokenGroups(param.TokenGroup)
+		if len(groups) == 0 {
+			groups = []string{param.TokenGroup}
+		}
+		selectGroup = groups[0]
+		for _, group := range groups {
+			channel, err = model.GetRandomSatisfiedChannel(group, param.ModelName, param.GetRetry(), param.RequestPath)
+			if err != nil {
+				return nil, group, err
+			}
+			if channel != nil {
+				selectGroup = group
+				break
+			}
 		}
 	}
 	return channel, selectGroup, nil

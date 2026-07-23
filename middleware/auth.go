@@ -418,17 +418,25 @@ func TokenAuth() func(c *gin.Context) {
 		userCache.WriteContext(c)
 
 		userGroup := userCache.Group
-		tokenGroup := token.Group
+		tokenGroups := token.GetGroups()
+		tokenGroup := strings.Join(tokenGroups, ",")
+		if token.Group != "" && tokenGroup == "" {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "令牌分组配置无效")
+			return
+		}
 		if tokenGroup != "" {
-			// check common.UserUsableGroups[userGroup]
-			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
-				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
+			if len(tokenGroups) > 1 && common.StringsContains(tokenGroups, "auto") {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "auto 分组不能与其他分组同时选择")
 				return
 			}
-			// check group in common.GroupRatio
-			if !ratio_setting.ContainsGroupRatio(tokenGroup) {
-				if tokenGroup != "auto" {
-					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("分组 %s 已被弃用", tokenGroup))
+			usableGroups := service.GetUserUsableGroups(userGroup)
+			for _, group := range tokenGroups {
+				if _, ok := usableGroups[group]; !ok {
+					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", group))
+					return
+				}
+				if !ratio_setting.ContainsGroupRatio(group) && group != "auto" {
+					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("分组 %s 已被弃用", group))
 					return
 				}
 			}
@@ -462,7 +470,7 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	} else {
 		c.Set("token_model_limit_enabled", false)
 	}
-	common.SetContextKey(c, constant.ContextKeyTokenGroup, token.Group)
+	common.SetContextKey(c, constant.ContextKeyTokenGroup, strings.Join(token.GetGroups(), ","))
 	common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, token.CrossGroupRetry)
 	if len(parts) > 1 {
 		if model.IsAdmin(token.UserId) {

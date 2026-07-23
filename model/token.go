@@ -31,6 +31,60 @@ type Token struct {
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
+// ParseTokenGroups returns the distinct groups assigned to a token in their
+// configured order. Token groups are stored as a comma-separated string so
+// existing single-group token records remain compatible.
+func ParseTokenGroups(group string) []string {
+	if strings.TrimSpace(group) == "" {
+		return nil
+	}
+
+	groups := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, item := range strings.Split(group, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		groups = append(groups, item)
+	}
+	return groups
+}
+
+// NormalizeTokenGroup validates and canonicalizes a token's group list before
+// persisting it. The auto group is intentionally exclusive because it already
+// has its own ordered group-selection behavior.
+func NormalizeTokenGroup(group string) (string, error) {
+	if strings.TrimSpace(group) == "" {
+		return "", nil
+	}
+
+	for _, item := range strings.Split(group, ",") {
+		if strings.TrimSpace(item) == "" {
+			return "", errors.New("令牌分组不能为空")
+		}
+	}
+
+	groups := ParseTokenGroups(group)
+	for _, item := range groups {
+		if item == "auto" && len(groups) != 1 {
+			return "", errors.New("auto 分组不能与其他分组同时选择")
+		}
+	}
+	return strings.Join(groups, ","), nil
+}
+
+func (token *Token) GetGroups() []string {
+	if token == nil {
+		return nil
+	}
+	return ParseTokenGroups(token.Group)
+}
+
 func (token *Token) Clean() {
 	token.Key = ""
 }

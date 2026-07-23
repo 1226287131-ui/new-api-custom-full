@@ -87,8 +87,7 @@ const renderStatus = (text, record, t) => {
   );
 };
 
-// Render group column
-const renderGroupColumn = (text, record, t, groupRatios = {}) => {
+const renderSingleGroup = (text, record, t, groupRatios = {}) => {
   if (text === 'auto') {
     return (
       <Tooltip
@@ -114,6 +113,29 @@ const renderGroupColumn = (text, record, t, groupRatios = {}) => {
         </Tag>
       )}
     </span>
+  );
+};
+
+// Render group column
+const renderGroupColumn = (text, record, t, groupRatios = {}) => {
+  const groups = String(text || '')
+    .split(',')
+    .map((group) => group.trim())
+    .filter(Boolean);
+  if (groups.length <= 1) {
+    return renderSingleGroup(groups[0] || '', record, t, groupRatios);
+  }
+
+  return (
+    <Tooltip content={groups.join(', ')} position='top'>
+      <Space spacing={4} wrap>
+        {groups.map((group) => (
+          <span key={group}>
+            {renderSingleGroup(group, record, t, groupRatios)}
+          </span>
+        ))}
+      </Space>
+    </Tooltip>
   );
 };
 

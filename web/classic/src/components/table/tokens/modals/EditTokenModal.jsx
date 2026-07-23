@@ -79,7 +79,7 @@ const EditTokenModal = (props) => {
     model_limits_enabled: false,
     model_limits: [],
     allow_ips: '',
-    group: '',
+    group: [],
     cross_group_retry: false,
     tokenCount: 1,
   });
@@ -169,6 +169,12 @@ const EditTokenModal = (props) => {
       } else {
         data.model_limits = [];
       }
+      data.group = data.group
+        ? data.group
+            .split(',')
+            .map((group) => group.trim())
+            .filter(Boolean)
+        : [];
       data.remain_amount = Number(
         quotaToDisplayAmount(data.remain_quota || 0).toFixed(6),
       );
@@ -215,10 +221,32 @@ const EditTokenModal = (props) => {
     return result;
   };
 
+  const serializeGroups = (group) => {
+    const groups = Array.from(
+      new Set(
+        (Array.isArray(group) ? group : [group])
+          .map((item) => String(item || '').trim())
+          .filter(Boolean),
+      ),
+    );
+    if (groups.length > 1 && groups.includes('auto')) {
+      showError(t('auto 分组不能与其他分组同时选择'));
+      return null;
+    }
+    return groups.join(',');
+  };
+
   const submit = async (values) => {
     setLoading(true);
     if (isEdit) {
       let { tokenCount: _tc, ...localInputs } = values;
+      localInputs.group = serializeGroups(localInputs.group);
+      if (localInputs.group === null) {
+        setLoading(false);
+        return;
+      }
+      localInputs.cross_group_retry =
+        localInputs.group === 'auto' ? !!localInputs.cross_group_retry : false;
       localInputs.remain_quota = localInputs.unlimited_quota
         ? 0
         : displayAmountToQuota(localInputs.remain_amount);
@@ -255,6 +283,15 @@ const EditTokenModal = (props) => {
       let successCount = 0;
       for (let i = 0; i < count; i++) {
         let { tokenCount: _tc, ...localInputs } = values;
+        localInputs.group = serializeGroups(localInputs.group);
+        if (localInputs.group === null) {
+          setLoading(false);
+          break;
+        }
+        localInputs.cross_group_retry =
+          localInputs.group === 'auto'
+            ? !!localInputs.cross_group_retry
+            : false;
         const baseName =
           values.name.trim() === '' ? 'default' : values.name.trim();
         if (i !== 0 || values.name.trim() === '') {
@@ -387,9 +424,10 @@ const EditTokenModal = (props) => {
                       <Form.Select
                         field='group'
                         label={t('令牌分组')}
-                        placeholder={t('令牌分组，默认为用户的分组')}
+                        placeholder={t('选择一个或多个令牌分组')}
                         optionList={groups}
                         renderOptionItem={renderGroupOption}
+                        multiple
                         filter={(input, option) => {
                           const q = input.toLowerCase();
                           return (
@@ -413,7 +451,10 @@ const EditTokenModal = (props) => {
                   <Col
                     span={24}
                     style={{
-                      display: values.group === 'auto' ? 'block' : 'none',
+                      display:
+                        values.group?.length === 1 && values.group[0] === 'auto'
+                          ? 'block'
+                          : 'none',
                     }}
                   >
                     <Form.Switch
@@ -552,7 +593,10 @@ const EditTokenModal = (props) => {
                         ? `▾ ${t('收起原生额度输入')}`
                         : `▸ ${t('使用原生额度输入')}`}
                     </div>
-                    <div style={{ display: showQuotaInput ? 'block' : 'none' }} className='mt-2'>
+                    <div
+                      style={{ display: showQuotaInput ? 'block' : 'none' }}
+                      className='mt-2'
+                    >
                       <Form.InputNumber
                         field='remain_quota'
                         label={t('额度')}

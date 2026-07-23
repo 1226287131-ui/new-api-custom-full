@@ -202,6 +202,10 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
         const apiKey = row.original
         const group = row.getValue('group') as string
         const ratio = group && group !== 'auto' ? groupRatios[group] : undefined
+        const groups = group
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
 
         if (group === 'auto') {
           return (
@@ -224,6 +228,39 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
                     'Automatically selects the best available group with circuit breaker mechanism'
                   )}
                 </span>
+              </TooltipContent>
+            </Tooltip>
+          )
+        }
+        if (groups.length > 1) {
+          return (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <BadgeCell className='max-w-full flex-nowrap gap-1 overflow-hidden text-xs' />
+                }
+              >
+                {groups.map((groupName) => (
+                  <GroupBadge
+                    key={groupName}
+                    group={groupName}
+                    ratio={groupRatios[groupName]}
+                  />
+                ))}
+              </TooltipTrigger>
+              <TooltipContent className='max-w-xs'>
+                <div className='space-y-1 text-xs'>
+                  {groups.map((groupName) => (
+                    <div key={groupName} className='flex items-center gap-2'>
+                      <span>{groupName}</span>
+                      {groupRatios[groupName] !== undefined && (
+                        <span className='text-muted-foreground font-mono'>
+                          {groupRatios[groupName]}x
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </TooltipContent>
             </Tooltip>
           )

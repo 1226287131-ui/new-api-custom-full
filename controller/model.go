@@ -194,6 +194,14 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 		}, nil
 	}
 
+	if tokenGroups := model.ParseTokenGroups(tokenGroup); len(tokenGroups) > 1 {
+		return modelListGroups{
+			userGroup:   userGroup,
+			tokenGroup:  tokenGroup,
+			ownerGroups: tokenGroups,
+		}, nil
+	}
+
 	group := userGroup
 	if tokenGroup != "" {
 		group = tokenGroup
@@ -245,18 +253,14 @@ func ListModels(c *gin.Context, modelType int) {
 			userModelNames = append(userModelNames, allowModel)
 		}
 	} else {
-		var models []string
-		if groups.tokenGroup == "auto" {
-			for _, autoGroup := range ownerGroups {
-				groupModels := model.GetGroupEnabledModels(autoGroup)
-				for _, g := range groupModels {
-					if !common.StringsContains(models, g) {
-						models = append(models, g)
-					}
+		models := make([]string, 0)
+		for _, group := range ownerGroups {
+			groupModels := model.GetGroupEnabledModels(group)
+			for _, groupModel := range groupModels {
+				if !common.StringsContains(models, groupModel) {
+					models = append(models, groupModel)
 				}
 			}
-		} else {
-			models = model.GetGroupEnabledModels(ownerGroups[0])
 		}
 		for _, modelName := range models {
 			if !acceptUnsetRatioModel {

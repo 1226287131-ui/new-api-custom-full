@@ -306,6 +306,10 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		}, nil
 	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
+	if selectGroup != "" {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, selectGroup)
+		info.UsingGroup = selectGroup
+	}
 
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 

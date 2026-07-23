@@ -119,11 +119,17 @@ func Distribute() func(c *gin.Context) {
 									break
 								}
 							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							channel = preferred
-							selectGroup = usingGroup
-							affinityUsable = true
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+						} else {
+							for _, group := range model.ParseTokenGroups(usingGroup) {
+								if !model.IsChannelEnabledForGroupModel(group, modelRequest.Model, preferred.Id) {
+									continue
+								}
+								channel = preferred
+								selectGroup = group
+								affinityUsable = true
+								service.MarkChannelAffinityUsed(c, group, preferred.Id)
+								break
+							}
 						}
 					}
 					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
@@ -158,6 +164,7 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 				}
+				common.SetContextKey(c, constant.ContextKeyUsingGroup, selectGroup)
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
