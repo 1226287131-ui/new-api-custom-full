@@ -180,7 +180,7 @@ func getChannelNames(channelIDs []int) (map[int]string, error) {
 			Name string `gorm:"column:name"`
 		}
 		if err := DB.Table("channels").Select("id, name").Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
-			return err
+			return nil, err
 		}
 		for _, channel := range channels {
 			channelNameByID[channel.Id] = channel.Name
