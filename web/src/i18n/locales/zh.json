@@ -5261,6 +5261,17 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Today's channel consumption": "今日渠道消耗",
+    "Live summary of today's successful consumption by channel": "按渠道实时汇总今日成功消费记录",
+    "Live": "实时",
+    "Refresh now": "立即刷新",
+    "Total consumption": "总消耗",
+    "Failed to load channel consumption. Please retry.": "渠道消耗加载失败，请重试。",
+    "No channel consumption today": "今日暂无渠道消耗",
+    "No successful consumption records have been recorded today": "今天还没有成功消费记录",
+    "Auto-refresh every 30 seconds": "每 30 秒自动刷新",
+    "Last updated {{time}}": "最近更新 {{time}}",
+    "Waiting for update": "等待更新"
   }
 }

@@ -33,6 +33,24 @@ export interface QuotaDataItem {
   quota?: number
 }
 
+export interface ChannelUsageItem {
+  channel_id: number
+  channel_name: string
+  count: number
+  quota: number
+  token_used: number
+}
+
+export interface TodayChannelUsage {
+  date: string
+  start_timestamp: number
+  updated_at: number
+  total_count: number
+  total_quota: number
+  total_token_used: number
+  channels: ChannelUsageItem[]
+}
+
 export interface FlowQuotaDataItem {
   user_id?: number
   username?: string

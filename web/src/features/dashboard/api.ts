@@ -21,6 +21,7 @@ import { api } from '@/lib/api'
 import type {
   FlowQuotaDataItem,
   QuotaDataItem,
+  TodayChannelUsage,
   UptimeGroupResult,
 } from './types'
 
@@ -81,6 +82,17 @@ export async function getFlowQuotaDates(
     data?: FlowQuotaDataItem[]
     message?: string
   }>(endpoint, { params })
+  return res.data
+}
+
+export async function getTodayChannelUsage() {
+  const res = await api.get<{
+    success: boolean
+    data?: TodayChannelUsage
+    message?: string
+  }>('/api/data/channels/today', {
+    disableDuplicate: true,
+  })
   return res.data
 }
 

@@ -551,6 +551,19 @@ export const STATIC_I18N_KEYS = [
   'The model that was requested',
   'The upstream channel that served the requests',
 
+  // Dashboard channel consumption
+  "Today's channel consumption",
+  "Live summary of today's successful consumption by channel",
+  'Live',
+  'Refresh now',
+  'Total consumption',
+  'Failed to load channel consumption. Please retry.',
+  'No channel consumption today',
+  'No successful consumption records have been recorded today',
+  'Auto-refresh every 30 seconds',
+  'Last updated {{time}}',
+  'Waiting for update',
+
   // Misc
   'Cancel',
   'Status',

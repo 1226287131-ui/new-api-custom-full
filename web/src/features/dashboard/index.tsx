@@ -37,6 +37,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { ModelsChartPreferences } from './components/models/models-chart-preferences'
 import { ModelsFilter } from './components/models/models-filter-dialog'
+import { TodayChannelUsage } from './components/models/today-channel-usage'
 import { OverviewDashboard } from './components/overview/overview-dashboard'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
 import {
@@ -360,6 +361,11 @@ export function Dashboard() {
                   <Suspense fallback={<PerformanceOverviewFallback />}>
                     <LazyPerformanceOverview />
                   </Suspense>
+                </FadeIn>
+              )}
+              {isAdmin && (
+                <FadeIn delay={0.08}>
+                  <TodayChannelUsage />
                 </FadeIn>
               )}
               <FadeIn delay={0.1}>

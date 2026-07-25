@@ -5261,6 +5261,17 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Today's channel consumption": "Today's channel consumption",
+    "Live summary of today's successful consumption by channel": "Live summary of today's successful consumption by channel",
+    "Live": "Live",
+    "Refresh now": "Refresh now",
+    "Total consumption": "Total consumption",
+    "Failed to load channel consumption. Please retry.": "Failed to load channel consumption. Please retry.",
+    "No channel consumption today": "No channel consumption today",
+    "No successful consumption records have been recorded today": "No successful consumption records have been recorded today",
+    "Auto-refresh every 30 seconds": "Auto-refresh every 30 seconds",
+    "Last updated {{time}}": "Last updated {{time}}",
+    "Waiting for update": "Waiting for update"
   }
 }

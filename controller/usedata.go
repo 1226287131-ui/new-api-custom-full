@@ -45,6 +45,19 @@ func GetAllQuotaDates(c *gin.Context) {
 	return
 }
 
+func GetTodayChannelUsage(c *gin.Context) {
+	usage, err := model.GetTodayChannelUsage()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    usage,
+	})
+}
+
 func GetQuotaDatesByUser(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
