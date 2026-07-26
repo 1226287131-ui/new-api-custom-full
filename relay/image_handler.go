@@ -114,11 +114,24 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		}
 	}
 
+	originalWriter := c.Writer
+	captureWriter := &imageResponseCaptureWriter{ResponseWriter: originalWriter}
+	c.Writer = captureWriter
+	defer func() { c.Writer = originalWriter }()
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
+	c.Writer = originalWriter
 	if newAPIError != nil {
 		// reset status code 重置状态码
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
+	}
+
+	imageCacheJob := prepareImageCacheJob(c, info, captureWriter.Bytes())
+	if imageCacheJob != nil {
+		service.SetImageCacheInfo(c, service.ImageCacheInfo{
+			TotalCount: len(imageCacheJob.Sources),
+			Status:     "pending",
+		})
 	}
 
 	imageN := uint(1)
@@ -151,5 +164,79 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
+	service.StartImageCacheJob(imageCacheJob)
 	return nil
+}
+
+// imageResponseCaptureWriter forwards every byte to the client while keeping
+// a copy for local image recovery. The embedded gin writer preserves Flush,
+// Hijack, CloseNotify and the other response-writer capabilities used by SSE.
+type imageResponseCaptureWriter struct {
+	gin.ResponseWriter
+	body bytes.Buffer
+}
+
+func (w *imageResponseCaptureWriter) Write(data []byte) (int, error) {
+	_, _ = w.body.Write(data)
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *imageResponseCaptureWriter) WriteString(value string) (int, error) {
+	_, _ = w.body.WriteString(value)
+	return w.ResponseWriter.WriteString(value)
+}
+
+func (w *imageResponseCaptureWriter) Bytes() []byte {
+	return w.body.Bytes()
+}
+
+func prepareImageCacheJob(c *gin.Context, info *relaycommon.RelayInfo, body []byte) *service.ImageCacheJob {
+	contentType := c.Writer.Header().Get("Content-Type")
+	sources := service.ExtractImageSources(body, contentType)
+	requestID := strings.TrimSpace(c.GetString(common.RequestIdKey))
+	if len(sources) == 0 || requestID == "" {
+		return nil
+	}
+
+	headers := imageCacheAuthHeaders(info)
+	for index := range sources {
+		sources[index].Headers = headers
+		if info != nil {
+			sources[index].Proxy = info.ChannelSetting.Proxy
+		}
+	}
+
+	requestSnapshot := &http.Request{Host: c.Request.Host, Header: c.Request.Header.Clone()}
+	if c.Request.TLS != nil {
+		requestSnapshot.TLS = c.Request.TLS
+	}
+	userID := 0
+	if info != nil {
+		userID = info.UserId
+	}
+	return &service.ImageCacheJob{
+		RequestID: requestID,
+		UserID:    userID,
+		Request:   requestSnapshot,
+		Sources:   sources,
+	}
+}
+
+func imageCacheAuthHeaders(info *relaycommon.RelayInfo) http.Header {
+	headers := make(http.Header)
+	if info == nil || strings.TrimSpace(info.ApiKey) == "" {
+		return headers
+	}
+	key := strings.TrimSpace(info.ApiKey)
+	switch info.ChannelType {
+	case constant.ChannelTypeGemini:
+		headers.Set("x-goog-api-key", key)
+	case constant.ChannelTypeAnthropic:
+		headers.Set("x-api-key", key)
+	case constant.ChannelTypeAzure:
+		headers.Set("api-key", key)
+	default:
+		headers.Set("Authorization", "Bearer "+key)
+	}
+	return headers
 }

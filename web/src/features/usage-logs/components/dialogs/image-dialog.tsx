@@ -26,6 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 interface ImageDialogProps {
   imageUrl: string
   taskId?: string
+  showImageUrl?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -33,6 +34,7 @@ interface ImageDialogProps {
 export function ImageDialog({
   imageUrl,
   taskId,
+  showImageUrl = true,
   open,
   onOpenChange,
 }: ImageDialogProps) {
@@ -101,12 +103,13 @@ export function ImageDialog({
             )}
           </div>
 
-          {/* Image URL */}
-          <div className='bg-muted mt-4 rounded-md p-3'>
-            <p className='text-muted-foreground font-mono text-xs break-all'>
-              {imageUrl}
-            </p>
-          </div>
+          {showImageUrl && (
+            <div className='bg-muted mt-4 rounded-md p-3'>
+              <p className='text-muted-foreground font-mono text-xs break-all'>
+                {imageUrl}
+              </p>
+            </div>
+          )}
         </div>
       </ScrollArea>
     </Dialog>

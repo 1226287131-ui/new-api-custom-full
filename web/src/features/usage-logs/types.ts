@@ -210,6 +210,11 @@ export interface LogOtherData {
   image_generation_call?: boolean
   image_generation_call_price?: number
   image_generation_call_count?: number
+  image_cache_urls?: string[]
+  image_cache_count?: number
+  image_cache_total?: number
+  image_cache_status?: 'cached' | 'partial' | 'failed' | string
+  image_cache_expires_at?: number
   is_system_prompt_overwritten?: boolean
   po?: string[]
   billing_source?: string

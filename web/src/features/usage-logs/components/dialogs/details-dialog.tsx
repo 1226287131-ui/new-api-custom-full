@@ -16,28 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { TFunction } from 'i18next'
-/*
-Copyright (C) 2023-2026 QuantumNous
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as
-published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-For commercial licensing, please contact support@quantumnous.com
-*/
 import {
   Copy,
   Check,
+  ImageIcon,
   Route,
   Settings2,
   AlertTriangle,
@@ -50,6 +32,8 @@ import {
   Info,
   LogIn,
 } from 'lucide-react'
+import type { TFunction } from 'i18next'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -60,7 +44,12 @@ import { Label } from '@/components/ui/label'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
-import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
+import {
+  formatLogQuota,
+  formatTimestampToDate,
+  formatTokens,
+  formatUseTime,
+} from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import type { UsageLog } from '../../data/schema'
@@ -82,6 +71,7 @@ import {
   isTimingLogType,
 } from '../../lib/utils'
 import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
+import { ImageDialog } from './image-dialog'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
 // to its i18n label key for display in the audit details.
@@ -469,6 +459,80 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   )
 }
 
+function ImageCacheSection({ other }: { other: LogOtherData }) {
+  const { t } = useTranslation()
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const urls = Array.isArray(other.image_cache_urls)
+    ? other.image_cache_urls.filter(
+        (url): url is string => typeof url === 'string' && url.trim() !== ''
+      )
+    : []
+  const total = other.image_cache_total ?? urls.length
+  const expiresAt = other.image_cache_expires_at ?? 0
+  const isExpired = expiresAt > 0 && expiresAt * 1000 <= Date.now()
+
+  if (urls.length === 0 && total <= 0) return null
+
+  return (
+    <>
+      <DetailSection
+        icon={<ImageIcon className='size-3.5' aria-hidden='true' />}
+        label={t('Cached Images')}
+      >
+        {urls.length > 0 ? (
+          <div className='grid grid-cols-2 gap-2 sm:grid-cols-3'>
+            {urls.map((url, index) => (
+              <button
+                key={url}
+                type='button'
+                className='bg-background/80 hover:border-primary/60 focus-visible:ring-ring aspect-square overflow-hidden rounded-md border transition-colors focus-visible:ring-2 focus-visible:outline-none'
+                onClick={() => setPreviewUrl(url)}
+                title={t('Click to view image')}
+              >
+                <img
+                  src={url}
+                  alt={`${t('Generated image')} ${index + 1}`}
+                  className='size-full object-cover'
+                  loading='lazy'
+                />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className='text-muted-foreground text-xs'>
+            {other.image_cache_status === 'pending'
+              ? t('Image cache pending')
+              : t('Image cache is unavailable')}
+          </p>
+        )}
+        <div className='text-muted-foreground flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px]'>
+          <span>
+            {other.image_cache_count ?? urls.length}/{total}{' '}
+            {t('images cached')}
+          </span>
+          {expiresAt > 0 && (
+            <span className={isExpired ? 'text-red-500' : undefined}>
+              {isExpired
+                ? t('Image cache expired')
+                : `${t('Available until')}: ${formatTimestampToDate(expiresAt)}`}
+            </span>
+          )}
+        </div>
+      </DetailSection>
+      {previewUrl && (
+        <ImageDialog
+          imageUrl={previewUrl}
+          showImageUrl={false}
+          open={previewUrl !== null}
+          onOpenChange={(open) => {
+            if (!open) setPreviewUrl(null)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
 interface DetailsDialogProps {
   log: UsageLog
   isAdmin: boolean
@@ -739,6 +803,8 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
         </div>
+
+        {isConsume && other && <ImageCacheSection other={other} />}
 
         {/* Request conversion (admin only, not for refund) */}
         {showConversion && (

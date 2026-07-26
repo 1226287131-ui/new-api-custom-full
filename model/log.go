@@ -403,6 +403,34 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 }
 
+// UpdateConsumeLogImageCache appends local image cache metadata to the
+// consume log identified by the relay request ID. It is used by the
+// asynchronous image cache worker after the API response has completed.
+func UpdateConsumeLogImageCache(requestID string, userID int, cacheOther map[string]interface{}) error {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" || len(cacheOther) == 0 {
+		return errors.New("image cache log update requires request id and metadata")
+	}
+
+	var log Log
+	query := LOG_DB.Where("type = ? AND request_id = ?", LogTypeConsume, requestID)
+	if userID > 0 {
+		query = query.Where("user_id = ?", userID)
+	}
+	if err := query.Order("id desc").First(&log).Error; err != nil {
+		return err
+	}
+
+	other, _ := common.StrToMap(log.Other)
+	if other == nil {
+		other = make(map[string]interface{})
+	}
+	for key, value := range cacheOther {
+		other[key] = value
+	}
+	return LOG_DB.Model(&Log{}).Where("id = ?", log.Id).Update("other", common.MapToJsonStr(other)).Error
+}
+
 type RecordTaskBillingLogParams struct {
 	UserId    int
 	LogType   int

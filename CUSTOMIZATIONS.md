@@ -35,6 +35,29 @@ Billing precedence is:
 tiered expression > image resolution > fixed model price > token ratio
 ```
 
+## Image recovery for usage logs
+
+- Keeps the downstream image API response unchanged: URL responses still
+  contain the upstream URL, and base64 responses still contain the original
+  base64 payload.
+- Starts a background cache job after the response has been written and the
+  consume log has been recorded. Cache failures never change the API result or
+  delay the customer response.
+- Shows the local `/image-cache/{random_name}` URL only inside the NewAPI usage
+  log details, so an image can be recovered when a downstream client misses
+  the original result.
+- Removes cached image files after 24 hours. The cleanup runs at startup and
+  hourly, and `/data` is already persisted by the default Docker Compose file.
+
+Optional environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `IMAGE_CACHE_DIR` | `/data/image-cache` | Local image cache directory |
+| `IMAGE_CACHE_PUBLIC_BASE_URL` | system server address | Public URL base for usage-log previews |
+| `IMAGE_CACHE_MAX_MB` | `50` | Maximum size of one cached image |
+| `IMAGE_CACHE_DOWNLOAD_TIMEOUT_SECONDS` | `120` | Background upstream image download timeout |
+
 ## Sora-compatible video relay
 
 - Adds channel type `59` for the NewAPI video task adapter.

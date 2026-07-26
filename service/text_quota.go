@@ -520,6 +520,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	AddImageCacheInfoToOther(ctx, other)
 
 	attachQuotaSaturation(ctx, relayInfo, other)
 

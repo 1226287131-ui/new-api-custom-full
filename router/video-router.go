@@ -15,6 +15,8 @@ func SetVideoRouter(router *gin.Engine) {
 	{
 		publicVideoRouter.GET("/video-cache/:file_name", controller.PublicVideoProxy)
 		publicVideoRouter.HEAD("/video-cache/:file_name", controller.PublicVideoProxy)
+		publicVideoRouter.GET("/image-cache/:file_name", controller.PublicImageProxy)
+		publicVideoRouter.HEAD("/image-cache/:file_name", controller.PublicImageProxy)
 		publicVideoRouter.GET("/video-input-cache/:file_name", controller.PublicVideoInput)
 		publicVideoRouter.HEAD("/video-input-cache/:file_name", controller.PublicVideoInput)
 	}
