@@ -250,10 +250,11 @@ func CacheImageSource(ctx context.Context, request *http.Request, source ImageCa
 
 	client := GetSSRFProtectedHTTPClient()
 	if strings.TrimSpace(source.Proxy) != "" {
-		client, err = GetHttpClientWithProxy(source.Proxy)
-		if err != nil {
-			return "", fmt.Errorf("create image cache proxy client: %w", err)
+		proxyClient, proxyErr := GetHttpClientWithProxy(source.Proxy)
+		if proxyErr != nil {
+			return "", fmt.Errorf("create image cache proxy client: %w", proxyErr)
 		}
+		client = proxyClient
 	}
 	if client == nil {
 		client = http.DefaultClient
