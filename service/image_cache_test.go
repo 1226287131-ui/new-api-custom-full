@@ -52,6 +52,24 @@ func TestCacheImageDataURLWritesLocalFile(t *testing.T) {
 	assert.Equal(t, testPNGBytes(t), contents)
 }
 
+func TestCacheImageDataURLAcceptsRawURLSafeBase64(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("IMAGE_CACHE_DIR", cacheDir)
+	t.Setenv("IMAGE_CACHE_PUBLIC_BASE_URL", "https://api.example")
+
+	dataURL := "data:image/png;base64," + base64.RawURLEncoding.EncodeToString(testPNGBytes(t))
+	publicURL, err := CacheImageDataURL(nil, dataURL)
+	require.NoError(t, err)
+
+	parsed, err := url.Parse(publicURL)
+	require.NoError(t, err)
+	path, _, ok := CachedImagePath(filepath.Base(parsed.Path))
+	require.True(t, ok)
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, testPNGBytes(t), contents)
+}
+
 func TestCacheImageSourceDetectsImageBytesWhenContentTypeIsGeneric(t *testing.T) {
 	cacheDir := t.TempDir()
 	t.Setenv("IMAGE_CACHE_DIR", cacheDir)

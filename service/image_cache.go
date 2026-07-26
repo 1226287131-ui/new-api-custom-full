@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -29,6 +30,7 @@ const (
 	defaultImageCacheCleanupInterval = time.Hour
 	defaultImageCacheMaxMB           = 50
 	defaultImageCacheDownloadTimeout = 120
+	defaultImageCacheRetryDelay      = 2 * time.Second
 )
 
 var imageCacheMimeExtensions = map[string]string{
@@ -60,6 +62,7 @@ type ImageCacheInfo struct {
 	CachedAt    int64
 	ExpiresAt   int64
 	Status      string
+	FailedReasons []string
 }
 
 // ImageCacheJob is scheduled only after the upstream image response and the
@@ -80,6 +83,15 @@ func StartImageCacheJob(job *ImageCacheJob) {
 	}
 	go func() {
 		info := CacheImageSources(context.Background(), job.Request, job.Sources)
+		for index, reason := range info.FailedReasons {
+			common.SysError(fmt.Sprintf(
+				"image cache failed: request=%s source=%d/%d reason=%s",
+				job.RequestID,
+				index+1,
+				info.TotalCount,
+				reason,
+			))
+		}
 		if err := model.UpdateConsumeLogImageCache(job.RequestID, job.UserID, imageCacheInfoToOther(info)); err != nil {
 			common.SysError(fmt.Sprintf("image cache log update failed for request %s: %v", job.RequestID, err))
 		}
@@ -154,6 +166,7 @@ func CacheImageSources(ctx context.Context, request *http.Request, sources []Ima
 		cachedURL, err := CacheImageSource(ctx, request, source)
 		if err != nil {
 			info.FailedCount++
+			info.FailedReasons = append(info.FailedReasons, err.Error())
 			continue
 		}
 		info.URLs = append(info.URLs, cachedURL)
@@ -235,19 +248,6 @@ func CacheImageSource(ctx context.Context, request *http.Request, source ImageCa
 		return "", fmt.Errorf("image cache URL blocked: %w", err)
 	}
 
-	downloadCtx, cancel := context.WithTimeout(ctx, imageCacheDownloadTimeout())
-	defer cancel()
-	requestToFetch, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, remoteURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("create image cache request: %w", err)
-	}
-	requestToFetch.Header.Set("Accept", "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.9")
-	for key, values := range source.Headers {
-		for _, value := range values {
-			requestToFetch.Header.Add(key, value)
-		}
-	}
-
 	client := GetSSRFProtectedHTTPClient()
 	if strings.TrimSpace(source.Proxy) != "" {
 		client, err = GetHttpClientWithProxy(source.Proxy)
@@ -258,17 +258,109 @@ func CacheImageSource(ctx context.Context, request *http.Request, source ImageCa
 	if client == nil {
 		client = http.DefaultClient
 	}
+
+	// A URL returned by an image API is often already signed. Sending the
+	// provider API key to that URL can make some CDNs reject the request, so
+	// try the plain URL first and only fall back to the provider headers when
+	// the response cannot be cached.
+	headerAttempts := []http.Header{nil}
+	if len(source.Headers) > 0 {
+		headerAttempts = append(headerAttempts, source.Headers.Clone())
+	}
+
+	var lastErr error
+	for headerIndex, headers := range headerAttempts {
+		for retry := 0; retry < 2; retry++ {
+			if retry > 0 {
+				select {
+				case <-ctx.Done():
+					return "", fmt.Errorf("download image for cache: %w", ctx.Err())
+				case <-time.After(defaultImageCacheRetryDelay):
+				}
+			}
+
+			cachedURL, statusCode, err := downloadAndCacheImage(
+				ctx,
+				request,
+				remoteURL,
+				headers,
+				client,
+			)
+			if err == nil {
+				return cachedURL, nil
+			}
+			lastErr = err
+
+			// Retry transient upstream failures with the same headers. For an
+			// auth-related or non-image response, try the alternate header set.
+			if retry == 0 && isRetryableImageCacheStatus(statusCode) {
+				continue
+			}
+			break
+		}
+
+		if headerIndex == 0 && len(headerAttempts) > 1 && shouldTryImageCacheAuthFallback(lastErr) {
+			continue
+		}
+		break
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("image cache download failed")
+	}
+	return "", lastErr
+}
+
+func downloadAndCacheImage(
+	ctx context.Context,
+	request *http.Request,
+	remoteURL string,
+	headers http.Header,
+	client *http.Client,
+) (string, int, error) {
+	downloadCtx, cancel := context.WithTimeout(ctx, imageCacheDownloadTimeout())
+	defer cancel()
+	requestToFetch, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, remoteURL, nil)
+	if err != nil {
+		return "", 0, fmt.Errorf("create image cache request: %w", err)
+	}
+	requestToFetch.Header.Set("Accept", "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.9")
+	for key, values := range headers {
+		for _, value := range values {
+			requestToFetch.Header.Add(key, value)
+		}
+	}
+
 	response, err := client.Do(requestToFetch)
 	if err != nil {
-		return "", fmt.Errorf("download image for cache: %w", err)
+		return "", 0, fmt.Errorf("download image for cache: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("image cache upstream returned status %d", response.StatusCode)
+		return "", response.StatusCode, fmt.Errorf("image cache upstream returned status %d", response.StatusCode)
 	}
 
 	contentType := strings.TrimSpace(strings.Split(response.Header.Get("Content-Type"), ";")[0])
-	return cacheImageReader(request, response.Body, contentType)
+	cachedURL, err := cacheImageReader(request, response.Body, contentType)
+	if err != nil {
+		return "", response.StatusCode, err
+	}
+	return cachedURL, response.StatusCode, nil
+}
+
+func isRetryableImageCacheStatus(statusCode int) bool {
+	return statusCode == 0 || statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError
+}
+
+func shouldTryImageCacheAuthFallback(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "status 401") ||
+		strings.Contains(message, "status 403") ||
+		strings.Contains(message, "unsupported image mime") ||
+		strings.Contains(message, "source is empty")
 }
 
 // CacheImageDataURL decodes an inline base64 image into the local cache.
@@ -286,12 +378,29 @@ func cacheImageDataURL(request *http.Request, dataURL string) (string, error) {
 	if mimeType == "" {
 		mimeType = "image/png"
 	}
-	payload := strings.TrimSpace(parts[1])
-	decoder := base64.StdEncoding
-	if !strings.Contains(payload, "=") && len(payload)%4 != 0 {
-		decoder = base64.RawStdEncoding
+	payload := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(parts[1]))
+
+	encodings := []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
 	}
-	return cacheImageReader(request, base64.NewDecoder(decoder, strings.NewReader(payload)), mimeType)
+	var lastErr error
+	for _, encoding := range encodings {
+		decoded, err := encoding.DecodeString(payload)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return cacheImageReader(request, bytes.NewReader(decoded), mimeType)
+	}
+	return "", fmt.Errorf("decode image base64: %w", lastErr)
 }
 
 func cacheImageReader(request *http.Request, reader io.Reader, hintedMIME string) (string, error) {
@@ -578,7 +687,7 @@ func normalizeImageField(value string) string {
 
 func isImageURLField(field string) bool {
 	switch field {
-	case "url", "imageurl", "outputurl", "imageuri", "uri", "images", "outputs":
+	case "url", "image", "imageurl", "outputurl", "imageuri", "fileurl", "downloadurl", "uri", "images", "outputs":
 		return true
 	default:
 		return false
