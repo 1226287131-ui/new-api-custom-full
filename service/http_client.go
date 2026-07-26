@@ -22,6 +22,10 @@ import (
 var (
 	httpClient              *http.Client
 	ssrfProtectedHTTPClient *http.Client
+	imageCacheHTTPClient    *http.Client
+	imageCacheProxyClientLock sync.Mutex
+	imageCacheProxyClients  = make(map[string]*http.Client)
+	protectedClientLock     sync.RWMutex
 	proxyClients            = proxyHTTPClientCache{
 		clients: make(map[string]*http.Client),
 		aliases: make(map[string]string),
@@ -40,6 +44,8 @@ type proxyURLConfig struct {
 	cacheKey  string
 }
 
+const imageCacheUpstreamPort = "6002"
+
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	urlStr := req.URL.String()
 	if err := validateURLWithCurrentFetchSetting(urlStr, true); err != nil {
@@ -52,8 +58,15 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 }
 
 func checkProtectedFetchRedirect(req *http.Request, via []*http.Request) error {
+	return checkProtectedFetchRedirectWithValidator(req, via, ValidateSSRFProtectedFetchURL)
+}
+
+func checkProtectedFetchRedirectWithValidator(req *http.Request, via []*http.Request, validateURL func(string) error) error {
 	urlStr := req.URL.String()
-	if err := ValidateSSRFProtectedFetchURL(urlStr); err != nil {
+	if validateURL == nil {
+		validateURL = ValidateSSRFProtectedFetchURL
+	}
+	if err := validateURL(urlStr); err != nil {
 		return fmt.Errorf("redirect to %s blocked: %v", urlStr, err)
 	}
 	if len(via) >= 10 {
@@ -98,6 +111,29 @@ func newRelayHTTPTransport() *http.Transport {
 	return transport
 }
 
+func imageCacheAllowedPorts(allowedPorts []string) []string {
+	ports := append([]string(nil), allowedPorts...)
+	return append(ports, imageCacheUpstreamPort)
+}
+
+// ValidateImageCacheFetchURL applies the normal SSRF rules while allowing the
+// provider port used by image result URLs. This exception is intentionally
+// scoped to image recovery and does not widen other user-controlled fetches.
+func ValidateImageCacheFetchURL(urlStr string) error {
+	fetchSetting := system_setting.GetFetchSetting()
+	return common.ValidateURLWithFetchSetting(
+		urlStr,
+		fetchSetting.EnableSSRFProtection,
+		fetchSetting.AllowPrivateIp,
+		fetchSetting.DomainFilterMode,
+		fetchSetting.IpFilterMode,
+		fetchSetting.DomainList,
+		fetchSetting.IpList,
+		imageCacheAllowedPorts(fetchSetting.AllowedPorts),
+		fetchSetting.ApplyIPFilterForDomain,
+	)
+}
+
 func newRelayHTTPClient(transport http.RoundTripper) *http.Client {
 	client := &http.Client{
 		Transport:     transport,
@@ -117,7 +153,10 @@ func InitHttpClient() {
 	policy := defaultHTTPTransportPolicy()
 	httpClient = newDirectHTTPClient(policy, nil)
 	proxyClients.store(clientCacheKey("", policy), httpClient)
+	protectedClientLock.Lock()
 	ssrfProtectedHTTPClient = newProtectedFetchHTTPClient()
+	imageCacheHTTPClient = newImageCacheProtectedFetchHTTPClient()
+	protectedClientLock.Unlock()
 }
 
 // GetHttpClient returns the general outbound client used by relay/provider
@@ -137,7 +176,73 @@ func GetSSRFProtectedHTTPClient() *http.Client {
 	if fetchSetting := system_setting.GetFetchSetting(); fetchSetting != nil && !fetchSetting.EnableSSRFProtection {
 		return GetHttpClient()
 	}
+	protectedClientLock.RLock()
+	client := ssrfProtectedHTTPClient
+	protectedClientLock.RUnlock()
+	if client != nil {
+		return client
+	}
+
+	protectedClientLock.Lock()
+	defer protectedClientLock.Unlock()
+	if ssrfProtectedHTTPClient == nil {
+		ssrfProtectedHTTPClient = newProtectedFetchHTTPClient()
+	}
 	return ssrfProtectedHTTPClient
+}
+
+// GetImageCacheHTTPClient returns the SSRF-protected client used only for
+// downloading image results into the usage-log cache.
+func GetImageCacheHTTPClient() *http.Client {
+	if fetchSetting := system_setting.GetFetchSetting(); fetchSetting != nil && !fetchSetting.EnableSSRFProtection {
+		return GetHttpClient()
+	}
+	protectedClientLock.RLock()
+	client := imageCacheHTTPClient
+	protectedClientLock.RUnlock()
+	if client != nil {
+		return client
+	}
+
+	protectedClientLock.Lock()
+	defer protectedClientLock.Unlock()
+	if imageCacheHTTPClient == nil {
+		imageCacheHTTPClient = newImageCacheProtectedFetchHTTPClient()
+	}
+	return imageCacheHTTPClient
+}
+
+// GetImageCacheHTTPClientWithProxy preserves channel proxy support while
+// keeping the image-cache-specific URL and dial validation in place.
+func GetImageCacheHTTPClientWithProxy(proxyURL string) (*http.Client, error) {
+	if proxyURL == "" {
+		return GetImageCacheHTTPClient(), nil
+	}
+
+	imageCacheProxyClientLock.Lock()
+	if client, ok := imageCacheProxyClients[proxyURL]; ok {
+		imageCacheProxyClientLock.Unlock()
+		return client, nil
+	}
+	imageCacheProxyClientLock.Unlock()
+
+	parsedURL, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	client, err := newImageCacheProtectedProxyHTTPClient(parsedURL)
+	if err != nil {
+		return nil, err
+	}
+
+	imageCacheProxyClientLock.Lock()
+	if existing, ok := imageCacheProxyClients[proxyURL]; ok {
+		imageCacheProxyClientLock.Unlock()
+		return existing, nil
+	}
+	imageCacheProxyClients[proxyURL] = client
+	imageCacheProxyClientLock.Unlock()
+	return client, nil
 }
 
 func newProxyURLConfig(parsedURL *url.URL) *proxyURLConfig {
@@ -432,6 +537,12 @@ func ResetProxyClientCache() {
 	for _, client := range proxyClients.reset() {
 		client.CloseIdleConnections()
 	}
+	imageCacheProxyClientLock.Lock()
+	for _, client := range imageCacheProxyClients {
+		client.CloseIdleConnections()
+	}
+	imageCacheProxyClients = make(map[string]*http.Client)
+	imageCacheProxyClientLock.Unlock()
 	if defaultClient == nil {
 		return
 	}

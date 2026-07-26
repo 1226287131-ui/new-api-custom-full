@@ -57,6 +57,48 @@ func configureSSRFTestFetchSetting(t *testing.T) {
 	fetchSetting.ApplyIPFilterForDomain = true
 }
 
+func TestImageCacheFetchAllowsProviderPortWithoutWideningGeneralFetch(t *testing.T) {
+	configureSSRFTestFetchSetting(t)
+	remoteURL := "http://8.8.8.8:6002/image.png"
+
+	require.Error(t, ValidateSSRFProtectedFetchURL(remoteURL))
+	require.NoError(t, ValidateImageCacheFetchURL(remoteURL))
+
+	protection, enabled, err := currentImageCacheProtection()
+	require.NoError(t, err)
+	require.True(t, enabled)
+	require.NoError(t, protection.ValidateNetworkTarget("8.8.8.8", 6002))
+}
+
+func TestImageCacheProtectedRoundTripperUsesDedicatedPortValidator(t *testing.T) {
+	configureSSRFTestFetchSetting(t)
+	var dialed []string
+	client := newProtectedFetchHTTPClientWithProxyAndValidator(
+		staticSSRFResolver{},
+		func(ctx context.Context, network, address string) (net.Conn, error) {
+			dialed = append(dialed, address)
+			return nil, errors.New("stop after image cache dial")
+		},
+		staticProtection(&common.SSRFProtection{
+			AllowedPorts:           []int{6002},
+			DomainFilterMode:       false,
+			IpFilterMode:           false,
+			ApplyIPFilterForDomain: true,
+		}),
+		func(req *http.Request) (*url.URL, error) {
+			return nil, nil
+		},
+		ValidateImageCacheFetchURL,
+	)
+	req, err := http.NewRequest(http.MethodGet, "http://8.8.8.8:6002/image.png", nil)
+	require.NoError(t, err)
+
+	resp, err := client.Do(req)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Equal(t, []string{"8.8.8.8:6002"}, dialed)
+}
+
 func mustParseURL(t *testing.T, rawURL string) *url.URL {
 	t.Helper()
 	parsedURL, err := url.Parse(rawURL)

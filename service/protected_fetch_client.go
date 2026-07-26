@@ -12,6 +12,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+
+	"golang.org/x/net/proxy"
 )
 
 type ssrfResolver interface {
@@ -29,6 +31,7 @@ type ssrfProtectedRoundTripper struct {
 	dialContext   func(ctx context.Context, network, address string) (net.Conn, error)
 	getProtection func() (*common.SSRFProtection, bool, error)
 	proxy         func(*http.Request) (*url.URL, error)
+	validateURL   func(string) error
 
 	mutex      sync.Mutex
 	transports map[string]*http.Transport
@@ -55,8 +58,78 @@ func currentFetchProtection() (*common.SSRFProtection, bool, error) {
 	return protection, true, nil
 }
 
+func currentImageCacheProtection() (*common.SSRFProtection, bool, error) {
+	fetchSetting := system_setting.GetFetchSetting()
+	if !fetchSetting.EnableSSRFProtection {
+		return nil, false, nil
+	}
+
+	protection, err := common.NewSSRFProtectionFromFetchSetting(
+		fetchSetting.AllowPrivateIp,
+		fetchSetting.DomainFilterMode,
+		fetchSetting.IpFilterMode,
+		fetchSetting.DomainList,
+		fetchSetting.IpList,
+		imageCacheAllowedPorts(fetchSetting.AllowedPorts),
+		fetchSetting.ApplyIPFilterForDomain,
+	)
+	if err != nil {
+		return nil, true, err
+	}
+	return protection, true, nil
+}
+
 func newProtectedFetchHTTPClient() *http.Client {
 	return newProtectedFetchHTTPClientWithDialer(nil, nil, nil)
+}
+
+func newImageCacheProtectedFetchHTTPClient() *http.Client {
+	return newProtectedFetchHTTPClientWithProxyAndValidator(
+		nil,
+		nil,
+		currentImageCacheProtection,
+		http.ProxyFromEnvironment,
+		ValidateImageCacheFetchURL,
+	)
+}
+
+func newImageCacheProtectedProxyHTTPClient(proxyURL *url.URL) (*http.Client, error) {
+	if proxyURL == nil {
+		return nil, fmt.Errorf("proxy URL is nil")
+	}
+	switch proxyURL.Scheme {
+	case "http", "https":
+		return newProtectedFetchHTTPClientWithProxyAndValidator(
+			nil,
+			nil,
+			currentImageCacheProtection,
+			http.ProxyURL(proxyURL),
+			ValidateImageCacheFetchURL,
+		), nil
+	case "socks5", "socks5h":
+		var auth *proxy.Auth
+		if proxyURL.User != nil {
+			auth = &proxy.Auth{User: proxyURL.User.Username()}
+			if password, ok := proxyURL.User.Password(); ok {
+				auth.Password = password
+			}
+		}
+		dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, auth, proxy.Direct)
+		if err != nil {
+			return nil, err
+		}
+		return newProtectedFetchHTTPClientWithProxyAndValidator(
+			nil,
+			func(ctx context.Context, network, address string) (net.Conn, error) {
+				return dialer.Dial(network, address)
+			},
+			currentImageCacheProtection,
+			func(req *http.Request) (*url.URL, error) { return nil, nil },
+			ValidateImageCacheFetchURL,
+		), nil
+	default:
+		return nil, fmt.Errorf("unsupported proxy scheme: %s, must be http, https, socks5 or socks5h", proxyURL.Scheme)
+	}
 }
 
 func newProtectedFetchHTTPClientWithDialer(resolver ssrfResolver, dialContext func(ctx context.Context, network, address string) (net.Conn, error), getProtection func() (*common.SSRFProtection, bool, error)) *http.Client {
@@ -64,6 +137,10 @@ func newProtectedFetchHTTPClientWithDialer(resolver ssrfResolver, dialContext fu
 }
 
 func newProtectedFetchHTTPClientWithProxy(resolver ssrfResolver, dialContext func(ctx context.Context, network, address string) (net.Conn, error), getProtection func() (*common.SSRFProtection, bool, error), proxy func(*http.Request) (*url.URL, error)) *http.Client {
+	return newProtectedFetchHTTPClientWithProxyAndValidator(resolver, dialContext, getProtection, proxy, nil)
+}
+
+func newProtectedFetchHTTPClientWithProxyAndValidator(resolver ssrfResolver, dialContext func(ctx context.Context, network, address string) (net.Conn, error), getProtection func() (*common.SSRFProtection, bool, error), proxy func(*http.Request) (*url.URL, error), validateURL func(string) error) *http.Client {
 	if resolver == nil {
 		resolver = net.DefaultResolver
 	}
@@ -80,6 +157,9 @@ func newProtectedFetchHTTPClientWithProxy(resolver ssrfResolver, dialContext fun
 	if proxy == nil {
 		proxy = http.ProxyFromEnvironment
 	}
+	if validateURL == nil {
+		validateURL = ValidateSSRFProtectedFetchURL
+	}
 
 	client := &http.Client{
 		Transport: &ssrfProtectedRoundTripper{
@@ -87,9 +167,12 @@ func newProtectedFetchHTTPClientWithProxy(resolver ssrfResolver, dialContext fun
 			dialContext:   dialContext,
 			getProtection: getProtection,
 			proxy:         proxy,
+			validateURL:   validateURL,
 			transports:    make(map[string]*http.Transport),
 		},
-		CheckRedirect: checkProtectedFetchRedirect,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return checkProtectedFetchRedirectWithValidator(req, via, validateURL)
+		},
 	}
 	if common.RelayTimeout != 0 {
 		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
@@ -101,7 +184,11 @@ func (t *ssrfProtectedRoundTripper) RoundTrip(req *http.Request) (*http.Response
 	if req == nil || req.URL == nil {
 		return nil, fmt.Errorf("invalid request")
 	}
-	if err := ValidateSSRFProtectedFetchURL(req.URL.String()); err != nil {
+	validateURL := t.validateURL
+	if validateURL == nil {
+		validateURL = ValidateSSRFProtectedFetchURL
+	}
+	if err := validateURL(req.URL.String()); err != nil {
 		return nil, err
 	}
 

@@ -244,13 +244,13 @@ func CacheImageSource(ctx context.Context, request *http.Request, source ImageCa
 	if strings.HasPrefix(strings.ToLower(remoteURL), "data:") {
 		return cacheImageDataURL(request, remoteURL)
 	}
-	if err := ValidateSSRFProtectedFetchURL(remoteURL); err != nil {
+	if err := ValidateImageCacheFetchURL(remoteURL); err != nil {
 		return "", fmt.Errorf("image cache URL blocked: %w", err)
 	}
 
-	client := GetSSRFProtectedHTTPClient()
+	client := GetImageCacheHTTPClient()
 	if strings.TrimSpace(source.Proxy) != "" {
-		proxyClient, proxyErr := GetHttpClientWithProxy(source.Proxy)
+		proxyClient, proxyErr := GetImageCacheHTTPClientWithProxy(source.Proxy)
 		if proxyErr != nil {
 			return "", fmt.Errorf("create image cache proxy client: %w", proxyErr)
 		}
