@@ -700,7 +700,7 @@ func SanitizeVideoTaskData(body []byte, publicTaskID, upstreamTaskID, localVideo
 	if err != nil {
 		return []byte(`{}`)
 	}
-	return b
+	return SanitizeErrorResponseBody(b)
 }
 
 var videoURLInTaskReason = regexp.MustCompile(`https?://[^\s"'<>]+`)
@@ -711,7 +711,8 @@ func SanitizeVideoTaskReason(reason, upstreamTaskID string) string {
 	if upstreamTaskID != "" {
 		reason = strings.ReplaceAll(reason, upstreamTaskID, "[redacted]")
 	}
-	return videoURLInTaskReason.ReplaceAllString(reason, "[redacted]")
+	reason = videoURLInTaskReason.ReplaceAllString(reason, "[redacted]")
+	return SanitizeErrorMessage(reason)
 }
 
 // SanitizeNewAPIVideoTaskData is kept as a compatibility wrapper for callers

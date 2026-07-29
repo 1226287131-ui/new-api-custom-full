@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ErrorSanitizationSection } from '../request-limits/error-sanitization-section'
 import { RateLimitSection } from '../request-limits/rate-limit-section'
 import { SensitiveWordsSection } from '../request-limits/sensitive-words-section'
 import { SSRFSection } from '../request-limits/ssrf-section'
@@ -50,6 +51,17 @@ const SECURITY_SECTIONS = [
           CheckSensitiveEnabled: settings.CheckSensitiveEnabled,
           CheckSensitiveOnPromptEnabled: settings.CheckSensitiveOnPromptEnabled,
           SensitiveWords: settings.SensitiveWords,
+        }}
+      />
+    ),
+  },
+  {
+    id: 'error-sanitization',
+    titleKey: 'Error Message Sanitization',
+    build: (settings: SecuritySettings) => (
+      <ErrorSanitizationSection
+        defaultValues={{
+          ErrorSanitizationKeywords: settings.ErrorSanitizationKeywords,
         }}
       />
     ),
