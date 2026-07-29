@@ -173,6 +173,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
+	if err := helper.ResolveTaskBillingPrice(c, info); err != nil {
+		return nil, service.TaskErrorWrapper(err, "task_billing_price_error", http.StatusBadRequest)
+	}
 
 	// 3. 预生成公开 task ID（仅首次）
 	if info.PublicTaskID == "" {
@@ -190,11 +193,18 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		modelName,
 		common.StringsContains(constant.TaskPricePatches, modelName),
 	)
+	if info.TaskBillingPrice != nil {
+		taskBillingMode = info.TaskBillingPrice.Mode
+	}
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
 	//    ResolveOriginTask 可能已在 remix 路径中预设了 OtherRatios，此处合并。
-	if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
+	estimatedRatios := adaptor.EstimateBilling(c, info)
+	if info.TaskBillingPrice != nil {
+		estimatedRatios = normalizeConfiguredTaskRatios(estimatedRatios, taskBillingMode)
+	}
+	if len(estimatedRatios) > 0 {
 		for k, v := range estimatedRatios {
 			info.PriceData.AddOtherRatio(k, v)
 		}
@@ -273,6 +283,25 @@ func applyTaskBillingRatios(info *relaycommon.RelayInfo, billingMode string) {
 	quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
 	info.PriceData.Quota = quota
 	noteTaskQuotaClamp(info, clamp)
+}
+
+// normalizeConfiguredTaskRatios prevents a resolution-aware task price from
+// being multiplied again by an adaptor's legacy resolution ratio. Duration is
+// still retained for per-second pricing; per-request pricing intentionally has
+// no task multiplier at all.
+func normalizeConfiguredTaskRatios(ratios map[string]float64, billingMode string) map[string]float64 {
+	if billingMode == billing_setting.BillingModePerRequest || len(ratios) == 0 {
+		return nil
+	}
+
+	filtered := make(map[string]float64, 1)
+	for _, key := range []string{"seconds", "duration"} {
+		if value, ok := ratios[key]; ok {
+			filtered[key] = value
+			break
+		}
+	}
+	return filtered
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

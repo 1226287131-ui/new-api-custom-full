@@ -113,7 +113,7 @@ func TestBuildRequestBodyMapsLegacySecondsAndSize(t *testing.T) {
 	upstreamPayload, _, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
 		"model":   "seedance-2.0",
 		"prompt":  "animate this",
-		"seconds": "8",
+		"seconds": "10",
 		"size":    "720x1280",
 		"quality": "hd",
 		"image":   "https://images.example/reference.png",
@@ -127,6 +127,121 @@ func TestBuildRequestBodyMapsLegacySecondsAndSize(t *testing.T) {
 	assert.NotContains(t, upstreamPayload, "size")
 	assert.NotContains(t, upstreamPayload, "quality")
 	assert.NotContains(t, upstreamPayload, "image")
+}
+
+func TestBuildRequestBodySupportsSeedanceReferenceAliasesAndAspectRatio(t *testing.T) {
+	upstreamPayload, _, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
+		"model":                "seedance-2.0",
+		"prompt":               "animate the subject",
+		"duration":             15,
+		"aspect_ratio":         "21:9",
+		"resolution":           "1080p",
+		"reference_image_urls": []string{"https://images.example/one.png", "https://images.example/two.png"},
+		"reference_videos":     []string{"https://videos.example/reference.mp4"},
+		"reference_audios":     []string{"https://audios.example/reference.mp3"},
+		"generate_audio":       true,
+		"bypass_face_check":    true,
+		"grid_strength":        0.5,
+	})
+
+	assert.Equal(t, "21:9", upstreamPayload["ratio"])
+	assert.Equal(t, "1080p", upstreamPayload["resolution"])
+	assert.Equal(t, float64(15), upstreamPayload["duration"])
+	assert.Equal(t, []any{"https://images.example/one.png", "https://images.example/two.png"}, upstreamPayload["images"])
+	assert.Equal(t, []any{"https://videos.example/reference.mp4"}, upstreamPayload["videos"])
+	assert.Equal(t, []any{"https://audios.example/reference.mp3"}, upstreamPayload["audios"])
+	assert.Equal(t, true, upstreamPayload["generate_audio"])
+	assert.Equal(t, true, upstreamPayload["bypass_face_check"])
+	assert.Equal(t, 0.5, upstreamPayload["grid_strength"])
+	assert.NotContains(t, upstreamPayload, "aspect_ratio")
+	assert.NotContains(t, upstreamPayload, "reference_image_urls")
+}
+
+func TestFast720pAllowsImageOnlyRequestsAndRemovesPromptWhenAbsent(t *testing.T) {
+	upstreamPayload, _, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
+		"model":        "seedance-2.0-fast-720p",
+		"duration":     5,
+		"aspect_ratio": "3:4",
+		"images":       []string{"https://images.example/reference.png"},
+	})
+
+	assert.NotContains(t, upstreamPayload, "prompt")
+	assert.Equal(t, "3:4", upstreamPayload["ratio"])
+	assert.Equal(t, "720p", upstreamPayload["resolution"])
+	assert.NotContains(t, upstreamPayload, "size")
+}
+
+func TestFast720pAppliesRestrictionsAfterModelMapping(t *testing.T) {
+	requestBody, err := common.Marshal(map[string]any{
+		"model":    "customer-video",
+		"duration": 5,
+		"images":   []string{"https://images.example/reference.png"},
+	})
+	require.NoError(t, err)
+	c, adaptor, info := newOpenAIVideoRequestContext(
+		t,
+		"/v1/videos",
+		"application/json",
+		bytes.NewReader(requestBody),
+	)
+	c.Set("model_mapping", `{"customer-video":"cvk-2-fast-720"}`)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	request, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, true, request.Metadata["fast_720p"])
+}
+
+func TestFast720pRejectsUnsupportedInputs(t *testing.T) {
+	tests := []map[string]any{
+		{
+			"model":    "seedance-2.0-fast-720p",
+			"prompt":   "animate this",
+			"duration": 5,
+			"videos":   []string{"https://videos.example/reference.mp4"},
+		},
+		{
+			"model":          "seedance-2.0-fast-720p",
+			"duration":       5,
+			"images":         []string{"https://images.example/reference.png"},
+			"generate_audio": true,
+		},
+		{
+			"model":      "seedance-2.0-fast-720p",
+			"duration":   5,
+			"images":     []string{"https://images.example/reference.png"},
+			"resolution": "1080p",
+		},
+	}
+
+	for _, body := range tests {
+		requestBody, err := common.Marshal(body)
+		require.NoError(t, err)
+		c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
+		taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr)
+		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	}
+}
+
+func TestValidateRequestAcceptsOnlySupportedDurations(t *testing.T) {
+	for _, duration := range []int{5, 10, 15} {
+		requestBody, err := common.Marshal(map[string]any{
+			"model": "seedance-2.0", "prompt": "animate this", "duration": duration,
+		})
+		require.NoError(t, err)
+		c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
+		require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	}
+
+	requestBody, err := common.Marshal(map[string]any{
+		"model": "seedance-2.0", "prompt": "animate this", "duration": 8,
+	})
+	require.NoError(t, err)
+	c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_duration", taskErr.Code)
 }
 
 func TestValidateRequestUsesGenerateActionForAnyReferenceMedia(t *testing.T) {

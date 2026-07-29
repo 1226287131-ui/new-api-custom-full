@@ -219,7 +219,14 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hosttypes.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
 
-	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
+	var modelPrice float64
+	var success bool
+	if info.TaskBillingPrice != nil {
+		modelPrice = info.TaskBillingPrice.Price
+		success = true
+	} else {
+		modelPrice, success = ratio_setting.GetModelPrice(info.OriginModelName, true)
+	}
 	usePrice := success
 	var modelRatio float64
 
@@ -285,6 +292,9 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 }
 
 func HasModelBillingConfig(modelName string) bool {
+	if _, ok := billing_setting.GetTaskBillingPriceConfig(modelName); ok {
+		return true
+	}
 	if _, ok := ratio_setting.GetImageResolutionPrice(modelName); ok {
 		return true
 	}
@@ -299,6 +309,47 @@ func HasModelBillingConfig(modelName string) bool {
 	}
 	expr, ok := billing_setting.GetBillingExpr(modelName)
 	return ok && strings.TrimSpace(expr) != ""
+}
+
+func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo hosttypes.GroupRatioInfo) (hosttypes.PriceData, error) {
+// ResolveTaskBillingPrice selects the configured task price after the adaptor
+// has normalized the request. It intentionally runs before
+// ModelPriceHelperPerCall because the selected resolution price is the base
+// price, not a multiplier applied to the legacy ModelPrice.
+func ResolveTaskBillingPrice(c *gin.Context, info *relaycommon.RelayInfo) error {
+	info.TaskBillingPrice = nil
+	if _, configured := billing_setting.GetTaskBillingPriceConfig(info.OriginModelName); !configured {
+		return nil
+	}
+
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return fmt.Errorf("resolve task billing request: %w", err)
+	}
+	resolution := ""
+	if req.Metadata != nil {
+		if value, ok := req.Metadata["resolution"]; ok {
+			resolution = strings.TrimSpace(fmt.Sprint(value))
+		}
+		if resolution == "" {
+			if value, ok := req.Metadata["quality"]; ok {
+				resolution = strings.TrimSpace(fmt.Sprint(value))
+			}
+		}
+	}
+	if resolution == "" {
+		resolution = req.Size
+	}
+
+	selection, _, err := billing_setting.ResolveTaskBillingPrice(
+		info.OriginModelName,
+		resolution,
+	)
+	if err != nil {
+		return err
+	}
+	info.TaskBillingPrice = &selection
+	return nil
 }
 
 func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo hosttypes.GroupRatioInfo) (hosttypes.PriceData, error) {

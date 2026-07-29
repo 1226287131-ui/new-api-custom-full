@@ -30,3 +30,14 @@ func TestApplyTaskBillingRatios(t *testing.T) {
 		require.Equal(t, 1000, info.PriceData.Quota)
 	})
 }
+
+func TestConfiguredTaskRatiosIgnoreResolutionMultiplier(t *testing.T) {
+	ratios := map[string]float64{
+		"seconds":    10,
+		"resolution": 2,
+	}
+
+	require.Nil(t, normalizeConfiguredTaskRatios(ratios, billing_setting.BillingModePerRequest))
+	filtered := normalizeConfiguredTaskRatios(ratios, billing_setting.BillingModePerSecond)
+	require.Equal(t, map[string]float64{"seconds": 10}, filtered)
+}

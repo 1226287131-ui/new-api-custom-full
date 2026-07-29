@@ -59,6 +59,26 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 	return err
 }
 
+func taskBillingModeForRelayInfo(info *relaycommon.RelayInfo) string {
+	if info != nil && info.TaskBillingPrice != nil {
+		return info.TaskBillingPrice.Mode
+	}
+	if info == nil {
+		return billing_setting.BillingModePerSecond
+	}
+	return billing_setting.GetTaskBillingMode(
+		info.OriginModelName,
+		common.StringsContains(constant.TaskPricePatches, info.OriginModelName),
+	)
+}
+
+func taskBillingResolutionForRelayInfo(info *relaycommon.RelayInfo) string {
+	if info == nil || info.TaskBillingPrice == nil {
+		return ""
+	}
+	return info.TaskBillingPrice.Resolution
+}
+
 func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
 	if strings.Contains(c.Request.URL.Path, "embed") {
@@ -605,16 +625,15 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.TokenId = relayInfo.TokenId
 		task.PrivateData.NodeName = common.NodeName
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
-			ModelPrice:      relayInfo.PriceData.ModelPrice,
-			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-			ModelRatio:      relayInfo.PriceData.ModelRatio,
-			OtherRatios:     relayInfo.PriceData.OtherRatios(),
-			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling: billing_setting.GetTaskBillingMode(
-				relayInfo.OriginModelName,
-				common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName),
-			) == billing_setting.BillingModePerRequest,
+			ModelPrice:        relayInfo.PriceData.ModelPrice,
+			GroupRatio:        relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+			ModelRatio:        relayInfo.PriceData.ModelRatio,
+			OtherRatios:       relayInfo.PriceData.OtherRatios(),
+			OriginModelName:   relayInfo.OriginModelName,
+			BillingMode:       taskBillingModeForRelayInfo(relayInfo),
+			BillingResolution: taskBillingResolutionForRelayInfo(relayInfo),
 		}
+		task.PrivateData.BillingContext.PerCallBilling = task.PrivateData.BillingContext.BillingMode == billing_setting.BillingModePerRequest
 		task.Quota = result.Quota
 		if constant.IsVideoTaskChannelType(relayInfo.ChannelType) {
 			task.Data = service.SanitizeVideoTaskData(result.TaskData, task.TaskID, result.UpstreamTaskID, "")

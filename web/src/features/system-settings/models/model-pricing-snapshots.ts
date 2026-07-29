@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { splitBillingExprAndRequestRules } from '@/features/pricing/lib/billing-expr'
 
 import { safeJsonParse } from '../utils/json-parser'
+import type { TaskBillingPriceConfig } from './model-pricing-core'
 import { formatPricingNumber } from './pricing-format'
 
 export type ModelPricingSnapshotInput = {
@@ -32,6 +33,7 @@ export type ModelPricingSnapshotInput = {
   audioCompletionRatio: string
   billingMode: string
   billingExpr: string
+  taskBillingPricing: string
 }
 
 export type ModelPricingSnapshot = {
@@ -47,6 +49,7 @@ export type ModelPricingSnapshot = {
   billingMode?: string
   billingExpr?: string
   requestRuleExpr?: string
+  taskBillingPricing?: string
   hasConflict: boolean
 }
 
@@ -65,7 +68,8 @@ export const isBasePricingUnset = (snapshot?: ModelPricingSnapshot) =>
   !snapshot ||
   (snapshot.billingMode !== 'tiered_expr' &&
     !hasPricingValue(snapshot.price) &&
-    !hasPricingValue(snapshot.ratio))
+    !hasPricingValue(snapshot.ratio) &&
+    !hasPricingValue(snapshot.taskBillingPricing))
 
 const toNumberOrNull = (value?: string) => {
   if (!hasPricingValue(value)) return null
@@ -114,6 +118,21 @@ export const getPriceSummary = (
   if (row.billingMode === 'tiered_expr') {
     return getExpressionSummary(row, t)
   }
+  if (row.taskBillingPricing) {
+    try {
+      const taskPricing = JSON.parse(
+        row.taskBillingPricing
+      ) as TaskBillingPriceConfig
+      const count = Object.keys(taskPricing.resolution_prices || {}).length
+      const unit =
+        taskPricing.mode === 'per-second' ? t('second') : t('request')
+      return count > 0
+        ? `${t('Resolution pricing')} · ${count} ${t('tiers')} · ${unit}`
+        : `${t('Task pricing')} · ${unit}`
+    } catch {
+      return t('Invalid task pricing')
+    }
+  }
   if (row.billingMode === 'per-request') {
     return row.price ? `$${row.price} / ${t('request')}` : t('Unset price')
   }
@@ -147,6 +166,7 @@ export const getPriceDetail = (
       ? t('Includes request rules')
       : t('Expression based')
   }
+  if (row.taskBillingPricing) return t('Resolution-aware task price')
   if (row.billingMode === 'per-request') {
     return t('Fixed request price')
   }
@@ -182,6 +202,7 @@ export const buildModelSnapshots = ({
   audioCompletionRatio,
   billingMode,
   billingExpr,
+  taskBillingPricing,
 }: ModelPricingSnapshotInput): ModelPricingSnapshot[] => {
   const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
     fallback: {},
@@ -223,6 +244,12 @@ export const buildModelSnapshots = ({
     fallback: {},
     context: 'billing expression',
   })
+  const taskBillingPricingMap = safeJsonParse<
+    Record<string, TaskBillingPriceConfig>
+  >(taskBillingPricing, {
+    fallback: {},
+    context: 'task billing pricing',
+  })
 
   const modelNames = new Set([
     ...Object.keys(priceMap),
@@ -235,6 +262,7 @@ export const buildModelSnapshots = ({
     ...Object.keys(audioCompletionMap),
     ...Object.keys(billingModeMap),
     ...Object.keys(billingExprMap),
+    ...Object.keys(taskBillingPricingMap),
   ])
 
   return [...modelNames].map((name) => {
@@ -246,8 +274,12 @@ export const buildModelSnapshots = ({
     const image = imageMap[name]?.toString() || ''
     const audio = audioMap[name]?.toString() || ''
     const audioCompletion = audioCompletionMap[name]?.toString() || ''
+    const taskPricing = taskBillingPricingMap[name]
+      ? JSON.stringify(taskBillingPricingMap[name])
+      : ''
 
-    const modeForModel = billingModeMap[name]
+    const taskMode = taskPricing ? taskBillingPricingMap[name]?.mode : undefined
+    const modeForModel = billingModeMap[name] || taskMode
     if (modeForModel === 'tiered_expr') {
       const fullExpr = billingExprMap[name] || ''
       const { billingExpr: pureExpr, requestRuleExpr } =
@@ -265,6 +297,7 @@ export const buildModelSnapshots = ({
         imageRatio: image,
         audioRatio: audio,
         audioCompletionRatio: audioCompletion,
+        taskBillingPricing: taskPricing,
         hasConflict: false,
       }
     }
@@ -286,6 +319,7 @@ export const buildModelSnapshots = ({
       imageRatio: image,
       audioRatio: audio,
       audioCompletionRatio: audioCompletion,
+      taskBillingPricing: taskPricing,
       billingMode: snapshotBillingMode,
       hasConflict:
         price !== '' &&
@@ -314,5 +348,6 @@ export const getSnapshotSignature = (snapshot?: ModelPricingSnapshot) => {
     billingMode: snapshot.billingMode || 'per-token',
     billingExpr: snapshot.billingExpr || '',
     requestRuleExpr: snapshot.requestRuleExpr || '',
+    taskBillingPricing: snapshot.taskBillingPricing || '',
   })
 }

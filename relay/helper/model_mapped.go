@@ -1,17 +1,51 @@
 package helper
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
+	rootcommon "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
+
+// ResolveModelMapping follows a channel model mapping to its final upstream
+// model. Adaptors can use it during validation when provider capabilities
+// depend on the model selected after channel mapping.
+func ResolveModelMapping(modelMapping, modelName string) (string, bool, error) {
+	modelMapping = strings.TrimSpace(modelMapping)
+	if modelMapping == "" || modelMapping == "{}" {
+		return modelName, false, nil
+	}
+
+	modelMap := make(map[string]string)
+	if err := rootcommon.Unmarshal([]byte(modelMapping), &modelMap); err != nil {
+		return "", false, fmt.Errorf("unmarshal_model_mapping_failed")
+	}
+
+	currentModel := modelName
+	visitedModels := map[string]bool{
+		currentModel: true,
+	}
+	for {
+		mappedModel, exists := modelMap[currentModel]
+		if !exists || mappedModel == "" {
+			return currentModel, currentModel != modelName, nil
+		}
+		if visitedModels[mappedModel] {
+			if mappedModel == currentModel {
+				return currentModel, currentModel != modelName, nil
+			}
+			return "", false, errors.New("model_mapping_contains_cycle")
+		}
+		visitedModels[mappedModel] = true
+		currentModel = mappedModel
+	}
+}
 
 func ModelMappedHelper(c *gin.Context, info *common.RelayInfo, request dto.Request) error {
 	if info.ChannelMeta == nil {
@@ -25,45 +59,16 @@ func ModelMappedHelper(c *gin.Context, info *common.RelayInfo, request dto.Reque
 		mappingModelName = strings.TrimSuffix(originModelName, ratio_setting.CompactModelSuffix)
 	}
 
-	// map model name
-	modelMapping := c.GetString("model_mapping")
-	if modelMapping != "" && modelMapping != "{}" {
-		modelMap := make(map[string]string)
-		err := json.Unmarshal([]byte(modelMapping), &modelMap)
-		if err != nil {
-			return fmt.Errorf("unmarshal_model_mapping_failed")
-		}
-
-		// 支持链式模型重定向，最终使用链尾的模型
-		currentModel := mappingModelName
-		visitedModels := map[string]bool{
-			currentModel: true,
-		}
-		for {
-			if mappedModel, exists := modelMap[currentModel]; exists && mappedModel != "" {
-				// 模型重定向循环检测，避免无限循环
-				if visitedModels[mappedModel] {
-					if mappedModel == currentModel {
-						if currentModel == info.OriginModelName {
-							info.IsModelMapped = false
-							return nil
-						} else {
-							info.IsModelMapped = true
-							break
-						}
-					}
-					return errors.New("model_mapping_contains_cycle")
-				}
-				visitedModels[mappedModel] = true
-				currentModel = mappedModel
-				info.IsModelMapped = true
-			} else {
-				break
-			}
-		}
-		if info.IsModelMapped {
-			info.UpstreamModelName = currentModel
-		}
+	mappedModelName, isMapped, err := ResolveModelMapping(
+		c.GetString("model_mapping"),
+		mappingModelName,
+	)
+	if err != nil {
+		return err
+	}
+	info.IsModelMapped = isMapped
+	if isMapped {
+		info.UpstreamModelName = mappedModelName
 	}
 
 	if isResponsesCompact {

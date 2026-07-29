@@ -61,6 +61,7 @@ type ModelFormValues = {
   ExposeRatioEnabled: boolean
   BillingMode: string
   BillingExpr: string
+  TaskBillingPricing: string
 }
 
 type ModelRatioFormProps = {
@@ -83,6 +84,7 @@ type ModelJsonFieldName =
   | 'ImageResolutionPrice'
   | 'AudioRatio'
   | 'AudioCompletionRatio'
+  | 'TaskBillingPricing'
 
 const modelJsonFields: Array<{
   name: ModelJsonFieldName
@@ -137,6 +139,12 @@ const modelJsonFields: Array<{
     name: 'AudioCompletionRatio',
     labelKey: 'Audio completion ratio',
     descriptionKey: 'Ratio applied to audio completions for streaming models.',
+  },
+  {
+    name: 'TaskBillingPricing',
+    labelKey: 'Video task pricing',
+    descriptionKey:
+      'JSON map of model → task mode, default price, and optional resolution prices for video tasks.',
   },
 ]
 
@@ -291,6 +299,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               savedAudioCompletionRatio={savedValues.AudioCompletionRatio}
               savedBillingMode={savedValues.BillingMode}
               savedBillingExpr={savedValues.BillingExpr}
+              savedTaskBillingPricing={savedValues.TaskBillingPricing}
               modelPrice={form.watch('ModelPrice')}
               modelRatio={form.watch('ModelRatio')}
               cacheRatio={form.watch('CacheRatio')}
@@ -301,6 +310,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               audioCompletionRatio={form.watch('AudioCompletionRatio')}
               billingMode={form.watch('BillingMode')}
               billingExpr={form.watch('BillingExpr')}
+              taskBillingPricing={form.watch('TaskBillingPricing')}
               candidateModelNames={
                 isUnsetVariant ? enabledModelsQuery.data?.data : undefined
               }
@@ -314,6 +324,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
                 const fieldMap: Record<string, keyof ModelFormValues> = {
                   'billing_setting.billing_mode': 'BillingMode',
                   'billing_setting.billing_expr': 'BillingExpr',
+                  'billing_setting.task_billing_pricing': 'TaskBillingPricing',
                 }
                 const formField =
                   fieldMap[field] || (field as keyof ModelFormValues)

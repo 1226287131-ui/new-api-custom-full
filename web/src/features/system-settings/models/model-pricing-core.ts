@@ -45,6 +45,14 @@ export type PricingMode =
   | 'per-second'
   | 'tiered_expr'
 
+export type TaskResolution = '480p' | '720p' | '1080p' | '4k'
+
+export type TaskBillingPriceConfig = {
+  mode: 'per-request' | 'per-second'
+  default_price?: string
+  resolution_prices: Partial<Record<TaskResolution, string>>
+}
+
 export type LaneKey =
   | 'completion'
   | 'cache'
@@ -66,6 +74,7 @@ export type ModelRatioData = {
   billingMode?: PricingMode
   billingExpr?: string
   requestRuleExpr?: string
+  taskBillingPricing?: string
 }
 
 export type PreviewRow = {

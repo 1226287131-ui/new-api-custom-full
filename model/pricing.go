@@ -16,27 +16,28 @@ import (
 )
 
 type Pricing struct {
-	ModelName              string                              `json:"model_name"`
-	Description            string                              `json:"description,omitempty"`
-	Icon                   string                              `json:"icon,omitempty"`
-	Tags                   string                              `json:"tags,omitempty"`
-	VendorID               int                                 `json:"vendor_id,omitempty"`
-	QuotaType              int                                 `json:"quota_type"`
-	ModelRatio             float64                             `json:"model_ratio"`
-	ModelPrice             float64                             `json:"model_price"`
-	OwnerBy                string                              `json:"owner_by"`
-	CompletionRatio        float64                             `json:"completion_ratio"`
-	CacheRatio             *float64                            `json:"cache_ratio,omitempty"`
-	CreateCacheRatio       *float64                            `json:"create_cache_ratio,omitempty"`
-	ImageRatio             *float64                            `json:"image_ratio,omitempty"`
-	AudioRatio             *float64                            `json:"audio_ratio,omitempty"`
-	AudioCompletionRatio   *float64                            `json:"audio_completion_ratio,omitempty"`
-	EnableGroup            []string                            `json:"enable_groups"`
-	SupportedEndpointTypes []constant.EndpointType             `json:"supported_endpoint_types"`
-	BillingMode            string                              `json:"billing_mode,omitempty"`
-	BillingExpr            string                              `json:"billing_expr,omitempty"`
-	ImageResolutionPrices  *ratio_setting.ImageResolutionPrice `json:"image_resolution_prices,omitempty"`
-	PricingVersion         string                              `json:"pricing_version,omitempty"`
+	ModelName              string                                  `json:"model_name"`
+	Description            string                                  `json:"description,omitempty"`
+	Icon                   string                                  `json:"icon,omitempty"`
+	Tags                   string                                  `json:"tags,omitempty"`
+	VendorID               int                                     `json:"vendor_id,omitempty"`
+	QuotaType              int                                     `json:"quota_type"`
+	ModelRatio             float64                                 `json:"model_ratio"`
+	ModelPrice             float64                                 `json:"model_price"`
+	OwnerBy                string                                  `json:"owner_by"`
+	CompletionRatio        float64                                 `json:"completion_ratio"`
+	CacheRatio             *float64                                `json:"cache_ratio,omitempty"`
+	CreateCacheRatio       *float64                                `json:"create_cache_ratio,omitempty"`
+	ImageRatio             *float64                                `json:"image_ratio,omitempty"`
+	AudioRatio             *float64                                `json:"audio_ratio,omitempty"`
+	AudioCompletionRatio   *float64                                `json:"audio_completion_ratio,omitempty"`
+	EnableGroup            []string                                `json:"enable_groups"`
+	SupportedEndpointTypes []constant.EndpointType                 `json:"supported_endpoint_types"`
+	BillingMode            string                                  `json:"billing_mode,omitempty"`
+	BillingExpr            string                                  `json:"billing_expr,omitempty"`
+	TaskBillingPricing     *billing_setting.TaskBillingPriceConfig `json:"task_billing_pricing,omitempty"`
+	ImageResolutionPrices  *ratio_setting.ImageResolutionPrice     `json:"image_resolution_prices,omitempty"`
+	PricingVersion         string                                  `json:"pricing_version,omitempty"`
 }
 
 type PricingVendor struct {
@@ -414,6 +415,12 @@ func updatePricing() {
 			}
 		} else if billingMode == billing_setting.BillingModePerRequest || billingMode == billing_setting.BillingModePerSecond {
 			pricing.BillingMode = billingMode
+		}
+		if taskPricing, ok := billing_setting.GetTaskBillingPriceConfig(model); ok {
+			pricing.TaskBillingPricing = &taskPricing
+			if pricing.BillingMode == "" {
+				pricing.BillingMode = taskPricing.Mode
+			}
 		}
 		pricingMap = append(pricingMap, pricing)
 	}

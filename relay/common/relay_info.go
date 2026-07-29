@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
@@ -157,6 +158,11 @@ type RelayInfo struct {
 	UpstreamRequestBodySize int64
 
 	PriceData hosttypes.PriceData
+
+	// TaskBillingPrice is set when the model has a resolution-aware task price
+	// configuration. It is copied into TaskBillingContext before the task is
+	// persisted, so asynchronous polling never depends on live pricing settings.
+	TaskBillingPrice *billing_setting.TaskBillingPriceSelection
 
 	// QuotaClamp is set (non-nil) when a quota conversion saturated at the
 	// int32 bound (or NaN fallback) while computing this request's charge.

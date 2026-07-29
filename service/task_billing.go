@@ -25,6 +25,9 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		info.OriginModelName,
 		common.StringsContains(constant.TaskPricePatches, info.OriginModelName),
 	)
+	if info.TaskBillingPrice != nil {
+		taskBillingMode = info.TaskBillingPrice.Mode
+	}
 	// 任务按次计费时不展示时长、分辨率等倍率，避免日志与实际计费单位混淆。
 	if taskBillingMode == billing_setting.BillingModePerRequest {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
@@ -132,6 +135,12 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			other["model_ratio"] = bc.ModelRatio
 		}
 		other["group_ratio"] = bc.GroupRatio
+		if bc.BillingMode != "" {
+			other["billing_mode"] = bc.BillingMode
+		}
+		if bc.BillingResolution != "" {
+			other["resolution"] = bc.BillingResolution
+		}
 		if priceData := taskBillingContextPriceData(bc); priceData != nil {
 			for k, v := range priceData.OtherRatios() {
 				other[k] = v

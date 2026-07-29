@@ -60,6 +60,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 
@@ -78,6 +79,7 @@ import {
   type ModelPricingFormValues,
   type ModelRatioData,
   type PricingMode,
+  type TaskResolution,
 } from './model-pricing-core'
 import { PriceInput, PriceLane } from './model-pricing-inputs'
 import { formatPricingNumber } from './pricing-format'
@@ -91,6 +93,126 @@ type ModelPricingSheetProps = {
   editData?: ModelRatioData | null
   onSave?: () => void | Promise<void>
   isSaving?: boolean
+}
+
+const taskResolutions: TaskResolution[] = ['480p', '720p', '1080p', '4k']
+
+type ParsedTaskBillingPricing = {
+  mode: 'per-request' | 'per-second'
+  defaultPrice: string
+  resolutionPrices: Record<TaskResolution, string>
+}
+
+function emptyTaskResolutionPrices(): Record<TaskResolution, string> {
+  return {
+    '480p': '',
+    '720p': '',
+    '1080p': '',
+    '4k': '',
+  }
+}
+
+function formatTaskResolutionLabel(resolution: TaskResolution): string {
+  return resolution === '4k' ? '4K' : resolution
+}
+
+function parseTaskBillingPricing(
+  value: string | undefined
+): ParsedTaskBillingPricing | null {
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!parsed || typeof parsed !== 'object') return null
+    const record = parsed as Record<string, unknown>
+    if (record.mode !== 'per-request' && record.mode !== 'per-second') {
+      return null
+    }
+    const resolutionPrices = emptyTaskResolutionPrices()
+    if (
+      record.resolution_prices &&
+      typeof record.resolution_prices === 'object'
+    ) {
+      const source = record.resolution_prices as Record<string, unknown>
+      taskResolutions.forEach((resolution) => {
+        const price = source[resolution]
+        if (typeof price === 'number' && Number.isFinite(price)) {
+          resolutionPrices[resolution] = String(price)
+        } else if (typeof price === 'string' && price.trim() !== '') {
+          resolutionPrices[resolution] = price
+        }
+      })
+    }
+    let defaultPrice = ''
+    if (
+      typeof record.default_price === 'number' &&
+      Number.isFinite(record.default_price)
+    ) {
+      defaultPrice = String(record.default_price)
+    } else if (typeof record.default_price === 'string') {
+      defaultPrice = record.default_price
+    }
+    return {
+      mode: record.mode,
+      defaultPrice,
+      resolutionPrices,
+    }
+  } catch {
+    return null
+  }
+}
+
+function TaskBillingPricingFields(props: {
+  enabled: boolean
+  onEnabledChange: (enabled: boolean) => void
+  prices: Record<TaskResolution, string>
+  onPriceChange: (resolution: TaskResolution, value: string) => void
+  mode: 'per-request' | 'per-second'
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className='bg-muted/20 space-y-4 rounded-lg border p-3'>
+      <div className='flex items-start justify-between gap-4'>
+        <div className='min-w-0'>
+          <FieldLabel>{t('Resolution-aware video task pricing')}</FieldLabel>
+          <FieldDescription>
+            {t(
+              'Set optional prices by output resolution. Empty resolution prices use the default price above.'
+            )}
+          </FieldDescription>
+        </div>
+        <Switch
+          checked={props.enabled}
+          onCheckedChange={props.onEnabledChange}
+          aria-label={t('Enable resolution-aware video task pricing')}
+        />
+      </div>
+      {props.enabled && (
+        <div className='grid gap-3 sm:grid-cols-2'>
+          {taskResolutions.map((resolution) => (
+            <Field key={resolution}>
+              <FieldLabel>{formatTaskResolutionLabel(resolution)}</FieldLabel>
+              <InputGroup>
+                <InputGroupAddon>$</InputGroupAddon>
+                <InputGroupInput
+                  inputMode='decimal'
+                  placeholder={props.mode === 'per-second' ? '0.01' : '0.08'}
+                  value={props.prices[resolution]}
+                  onChange={(event) =>
+                    props.onPriceChange(resolution, event.target.value)
+                  }
+                />
+                <InputGroupAddon align='inline-end'>
+                  {t(
+                    props.mode === 'per-second' ? 'per second' : 'per request'
+                  )}
+                </InputGroupAddon>
+              </InputGroup>
+            </Field>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 type ModelPricingEditorPanelProps = Omit<
@@ -155,6 +277,10 @@ export const ModelPricingEditorPanel = forwardRef<
   })
   const [billingExpr, setBillingExpr] = useState('')
   const [requestRuleExpr, setRequestRuleExpr] = useState('')
+  const [taskPricingEnabled, setTaskPricingEnabled] = useState(false)
+  const [taskResolutionPrices, setTaskResolutionPrices] = useState<
+    Record<TaskResolution, string>
+  >(emptyTaskResolutionPrices)
   const [editorReloadToken, setEditorReloadToken] = useState(0)
   const isEditMode = !!editData
 
@@ -177,9 +303,10 @@ export const ModelPricingEditorPanel = forwardRef<
     const nextLaneState = createInitialLaneState(editData)
 
     if (editData) {
+      const taskPricing = parseTaskBillingPricing(editData.taskBillingPricing)
       form.reset({
         name: editData.name,
-        price: editData.price || '',
+        price: editData.price || taskPricing?.defaultPrice || '',
         ratio: editData.ratio || '',
         cacheRatio: editData.cacheRatio || '',
         createCacheRatio: editData.createCacheRatio || '',
@@ -199,6 +326,10 @@ export const ModelPricingEditorPanel = forwardRef<
       setPricingMode(nextPricingMode)
       setBillingExpr(editData.billingExpr || '')
       setRequestRuleExpr(editData.requestRuleExpr || '')
+      setTaskPricingEnabled(Boolean(taskPricing))
+      setTaskResolutionPrices(
+        taskPricing?.resolutionPrices || emptyTaskResolutionPrices()
+      )
     } else {
       form.reset({
         name: '',
@@ -214,6 +345,8 @@ export const ModelPricingEditorPanel = forwardRef<
       setPricingMode('per-token')
       setBillingExpr('')
       setRequestRuleExpr('')
+      setTaskPricingEnabled(false)
+      setTaskResolutionPrices(emptyTaskResolutionPrices())
     }
 
     setPromptPrice(nextLaneState.promptPrice)
@@ -342,6 +475,21 @@ export const ModelPricingEditorPanel = forwardRef<
     }
   }
 
+  const handleTaskResolutionPriceChange = (
+    resolution: TaskResolution,
+    value: string
+  ) => {
+    if (!numericDraftRegex.test(value)) return
+    setTaskResolutionPrices((previous) => ({
+      ...previous,
+      [resolution]: value,
+    }))
+  }
+
+  const hasTaskResolutionPrice = taskResolutions.some(
+    (resolution) => toNumberOrNull(taskResolutionPrices[resolution]) !== null
+  )
+
   const watchedValues = form.watch()
   const previewRows = useMemo(
     () =>
@@ -402,6 +550,17 @@ export const ModelPricingEditorPanel = forwardRef<
     }
 
     if (
+      taskPricingEnabled &&
+      (pricingMode === 'per-request' || pricingMode === 'per-second') &&
+      toNumberOrNull(watchedValues.price) === null &&
+      !hasTaskResolutionPrice
+    ) {
+      nextWarnings.push(
+        t('Set a default task price or at least one resolution price.')
+      )
+    }
+
+    if (
       pricingMode === 'per-token' &&
       laneEnabled.audioOutput &&
       !hasValue(lanePrices.audioInput)
@@ -410,7 +569,17 @@ export const ModelPricingEditorPanel = forwardRef<
     }
 
     return nextWarnings
-  }, [editData, laneEnabled, lanePrices, pricingMode, promptPrice, t])
+  }, [
+    editData,
+    hasTaskResolutionPrice,
+    laneEnabled,
+    lanePrices,
+    pricingMode,
+    promptPrice,
+    t,
+    taskPricingEnabled,
+    watchedValues.price,
+  ])
 
   const validatePricingValues = useCallback(() => {
     if (
@@ -437,8 +606,31 @@ export const ModelPricingEditorPanel = forwardRef<
       return false
     }
 
+    if (
+      taskPricingEnabled &&
+      (pricingMode === 'per-request' || pricingMode === 'per-second') &&
+      toNumberOrNull(form.getValues('price')) === null &&
+      !hasTaskResolutionPrice
+    ) {
+      form.setError('price', {
+        message: t(
+          'Set a default task price or at least one resolution price.'
+        ),
+      })
+      return false
+    }
+
     return true
-  }, [form, laneEnabled, lanePrices, pricingMode, promptPrice, t])
+  }, [
+    form,
+    hasTaskResolutionPrice,
+    laneEnabled,
+    lanePrices,
+    pricingMode,
+    promptPrice,
+    t,
+    taskPricingEnabled,
+  ])
 
   const buildSubmitData = useCallback(
     (values: ModelPricingFormValues) => {
@@ -460,9 +652,35 @@ export const ModelPricingEditorPanel = forwardRef<
         data.requestRuleExpr = requestRuleExpr
       }
 
+      if (
+        taskPricingEnabled &&
+        (pricingMode === 'per-request' || pricingMode === 'per-second')
+      ) {
+        const resolutionPrices: Record<string, number> = {}
+        taskResolutions.forEach((resolution) => {
+          const price = toNumberOrNull(taskResolutionPrices[resolution])
+          if (price !== null) resolutionPrices[resolution] = price
+        })
+        const taskPricing: Record<string, unknown> = {
+          mode: pricingMode,
+          resolution_prices: resolutionPrices,
+        }
+        const defaultPrice = toNumberOrNull(values.price)
+        if (defaultPrice !== null) taskPricing.default_price = defaultPrice
+        if (defaultPrice !== null || Object.keys(resolutionPrices).length > 0) {
+          data.taskBillingPricing = JSON.stringify(taskPricing)
+        }
+      }
+
       return data
     },
-    [billingExpr, pricingMode, requestRuleExpr]
+    [
+      billingExpr,
+      pricingMode,
+      requestRuleExpr,
+      taskPricingEnabled,
+      taskResolutionPrices,
+    ]
   )
 
   useImperativeHandle(
@@ -642,6 +860,13 @@ export const ModelPricingEditorPanel = forwardRef<
                         )}
                       />
                     </FieldGroup>
+                    <TaskBillingPricingFields
+                      enabled={taskPricingEnabled}
+                      onEnabledChange={setTaskPricingEnabled}
+                      prices={taskResolutionPrices}
+                      onPriceChange={handleTaskResolutionPriceChange}
+                      mode='per-request'
+                    />
                   </TabsContent>
 
                   <TabsContent value='per-second' className='pt-0'>
@@ -683,6 +908,13 @@ export const ModelPricingEditorPanel = forwardRef<
                         )}
                       />
                     </FieldGroup>
+                    <TaskBillingPricingFields
+                      enabled={taskPricingEnabled}
+                      onEnabledChange={setTaskPricingEnabled}
+                      prices={taskResolutionPrices}
+                      onPriceChange={handleTaskResolutionPriceChange}
+                      mode='per-second'
+                    />
                   </TabsContent>
 
                   <TabsContent value='tiered_expr' className='pt-0'>
