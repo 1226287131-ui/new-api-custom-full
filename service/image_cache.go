@@ -26,7 +26,7 @@ import (
 
 const (
 	defaultImageCacheDir             = "/data/image-cache"
-	defaultImageCacheTTL             = 24 * time.Hour
+	defaultImageCacheTTL             = 2 * time.Hour
 	defaultImageCacheCleanupInterval = time.Hour
 	defaultImageCacheMaxMB           = 50
 	defaultImageCacheDownloadTimeout = 120
@@ -523,7 +523,7 @@ func ImageCacheFileExpired(path string) bool {
 }
 
 // CleanupImageCache removes generated image files and abandoned temporary
-// files older than the 24-hour retention period.
+// files older than the 2-hour retention period.
 func CleanupImageCache() (int, error) {
 	entries, err := os.ReadDir(imageCacheDir())
 	if os.IsNotExist(err) {

@@ -15,6 +15,10 @@ import (
 
 const testPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 
+func TestImageCacheRetentionIsTwoHours(t *testing.T) {
+	assert.Equal(t, 2*time.Hour, defaultImageCacheTTL)
+}
+
 func TestExtractImageSourcesFromOpenAIJSON(t *testing.T) {
 	body := []byte(`{"data":[{"url":"https://upstream.example/one.png"},{"b64_json":"` + testPNGBase64 + `"}]}`)
 	sources := ExtractImageSources(body, "application/json")

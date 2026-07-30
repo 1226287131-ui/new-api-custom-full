@@ -46,7 +46,7 @@ tiered expression > image resolution > fixed model price > token ratio
 - Shows the local `/image-cache/{random_name}` URL only inside the NewAPI usage
   log details, so an image can be recovered when a downstream client misses
   the original result.
-- Removes cached image files after 24 hours. The cleanup runs at startup and
+- Removes cached image files after 2 hours. The cleanup runs at startup and
   hourly, and `/data` is already persisted by the default Docker Compose file.
 
 Optional environment variables:
