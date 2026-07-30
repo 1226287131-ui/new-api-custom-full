@@ -176,7 +176,7 @@ function TaskBillingPricingFields(props: {
           <FieldLabel>{t('Resolution-aware video task pricing')}</FieldLabel>
           <FieldDescription>
             {t(
-              'Set optional prices by output resolution. Empty resolution prices use the default price above.'
+              'Set prices by output resolution. The default price above is disabled while this is enabled, and blank resolutions are rejected.'
             )}
           </FieldDescription>
         </div>
@@ -501,7 +501,9 @@ export const ModelPricingEditorPanel = forwardRef<
         promptPrice,
         lanePrices,
         laneEnabled,
-        t
+        t,
+        taskPricingEnabled,
+        taskResolutionPrices
       ),
     [
       billingExpr,
@@ -511,6 +513,8 @@ export const ModelPricingEditorPanel = forwardRef<
       promptPrice,
       requestRuleExpr,
       t,
+      taskPricingEnabled,
+      taskResolutionPrices,
       watchedValues,
     ]
   )
@@ -552,12 +556,9 @@ export const ModelPricingEditorPanel = forwardRef<
     if (
       taskPricingEnabled &&
       (pricingMode === 'per-request' || pricingMode === 'per-second') &&
-      toNumberOrNull(watchedValues.price) === null &&
       !hasTaskResolutionPrice
     ) {
-      nextWarnings.push(
-        t('Set a default task price or at least one resolution price.')
-      )
+      nextWarnings.push(t('Set at least one resolution price before saving.'))
     }
 
     if (
@@ -578,7 +579,6 @@ export const ModelPricingEditorPanel = forwardRef<
     promptPrice,
     t,
     taskPricingEnabled,
-    watchedValues.price,
   ])
 
   const validatePricingValues = useCallback(() => {
@@ -609,13 +609,10 @@ export const ModelPricingEditorPanel = forwardRef<
     if (
       taskPricingEnabled &&
       (pricingMode === 'per-request' || pricingMode === 'per-second') &&
-      toNumberOrNull(form.getValues('price')) === null &&
       !hasTaskResolutionPrice
     ) {
       form.setError('price', {
-        message: t(
-          'Set a default task price or at least one resolution price.'
-        ),
+        message: t('Set at least one resolution price before saving.'),
       })
       return false
     }
@@ -665,9 +662,7 @@ export const ModelPricingEditorPanel = forwardRef<
           mode: pricingMode,
           resolution_prices: resolutionPrices,
         }
-        const defaultPrice = toNumberOrNull(values.price)
-        if (defaultPrice !== null) taskPricing.default_price = defaultPrice
-        if (defaultPrice !== null || Object.keys(resolutionPrices).length > 0) {
+        if (Object.keys(resolutionPrices).length > 0) {
           data.taskBillingPricing = JSON.stringify(taskPricing)
         }
       }
@@ -828,7 +823,9 @@ export const ModelPricingEditorPanel = forwardRef<
                         name='price'
                         render={({ field }) => (
                           <FormItem className='contents'>
-                            <Field>
+                            <Field
+                              className={cn(taskPricingEnabled && 'opacity-60')}
+                            >
                               <FieldLabel>{t('Fixed price')}</FieldLabel>
                               <FormControl>
                                 <InputGroup>
@@ -837,6 +834,7 @@ export const ModelPricingEditorPanel = forwardRef<
                                     inputMode='decimal'
                                     placeholder='0.01'
                                     {...field}
+                                    disabled={taskPricingEnabled}
                                     onChange={(event) => {
                                       const value = event.target.value
                                       if (numericDraftRegex.test(value)) {
@@ -851,7 +849,9 @@ export const ModelPricingEditorPanel = forwardRef<
                               </FormControl>
                               <FieldDescription>
                                 {t(
-                                  'Cost in USD per request, regardless of tokens used.'
+                                  taskPricingEnabled
+                                    ? 'Disabled while resolution pricing is enabled. The default price is not used.'
+                                    : 'Cost in USD per request, regardless of tokens used.'
                                 )}
                               </FieldDescription>
                               <FormMessage />
@@ -876,7 +876,9 @@ export const ModelPricingEditorPanel = forwardRef<
                         name='price'
                         render={({ field }) => (
                           <FormItem className='contents'>
-                            <Field>
+                            <Field
+                              className={cn(taskPricingEnabled && 'opacity-60')}
+                            >
                               <FieldLabel>{t('Per-second price')}</FieldLabel>
                               <FormControl>
                                 <InputGroup>
@@ -885,6 +887,7 @@ export const ModelPricingEditorPanel = forwardRef<
                                     inputMode='decimal'
                                     placeholder='0.01'
                                     {...field}
+                                    disabled={taskPricingEnabled}
                                     onChange={(event) => {
                                       const value = event.target.value
                                       if (numericDraftRegex.test(value)) {
@@ -899,7 +902,9 @@ export const ModelPricingEditorPanel = forwardRef<
                               </FormControl>
                               <FieldDescription>
                                 {t(
-                                  'Cost in USD per second of generated video.'
+                                  taskPricingEnabled
+                                    ? 'Disabled while resolution pricing is enabled. The default price is not used.'
+                                    : 'Cost in USD per second of generated video.'
                                 )}
                               </FieldDescription>
                               <FormMessage />

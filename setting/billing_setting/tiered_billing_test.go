@@ -51,7 +51,7 @@ func TestResolveTaskBillingMode(t *testing.T) {
 	}
 }
 
-func TestResolveTaskBillingPriceByResolutionAndDefault(t *testing.T) {
+func TestResolveTaskBillingPriceByResolutionOnly(t *testing.T) {
 	defaultPrice := 0.01
 	saved := billingSetting.TaskBillingPricing
 	billingSetting.TaskBillingPricing = map[string]TaskBillingPriceConfig{
@@ -81,11 +81,10 @@ func TestResolveTaskBillingPriceByResolutionAndDefault(t *testing.T) {
 	assert.Equal(t, 0.02, selection.Price)
 	assert.Equal(t, "1080p", selection.Resolution)
 
-	selection, configured, err = ResolveTaskBillingPrice("video-per-second", "480p")
-	require.NoError(t, err)
+	_, configured, err = ResolveTaskBillingPrice("video-per-second", "480p")
+	require.Error(t, err)
 	assert.True(t, configured)
-	assert.Equal(t, defaultPrice, selection.Price)
-	assert.Equal(t, "480p", selection.Resolution)
+	assert.Contains(t, err.Error(), "480p")
 
 	selection, configured, err = ResolveTaskBillingPrice("video-per-second", "2160p")
 	require.NoError(t, err)
@@ -98,6 +97,24 @@ func TestResolveTaskBillingPriceByResolutionAndDefault(t *testing.T) {
 	assert.True(t, configured)
 	assert.Equal(t, BillingModePerRequest, selection.Mode)
 	assert.Equal(t, 0.08, selection.Price)
+}
+
+func TestResolveTaskBillingPriceUsesDefaultWithoutResolutionTable(t *testing.T) {
+	defaultPrice := 0.01
+	saved := billingSetting.TaskBillingPricing
+	billingSetting.TaskBillingPricing = map[string]TaskBillingPriceConfig{
+		"legacy-video": {
+			Mode:         BillingModePerSecond,
+			DefaultPrice: &defaultPrice,
+		},
+	}
+	t.Cleanup(func() { billingSetting.TaskBillingPricing = saved })
+
+	selection, configured, err := ResolveTaskBillingPrice("legacy-video", "480p")
+	require.NoError(t, err)
+	assert.True(t, configured)
+	assert.Equal(t, defaultPrice, selection.Price)
+	assert.Equal(t, "480p", selection.Resolution)
 }
 
 func TestResolveTaskBillingPriceRejectsMissingResolutionPrice(t *testing.T) {

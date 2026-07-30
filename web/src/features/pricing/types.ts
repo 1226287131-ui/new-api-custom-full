@@ -31,6 +31,14 @@ export type ImageResolutionTier = '1K' | '2K' | '4K'
 
 export type ImageResolutionPrices = Record<ImageResolutionTier, number>
 
+export type TaskResolution = '480p' | '720p' | '1080p' | '4k'
+
+export type TaskBillingPriceConfig = {
+  mode: 'per-request' | 'per-second'
+  default_price?: number
+  resolution_prices?: Partial<Record<TaskResolution, number>>
+}
+
 export type PricingModel = {
   id: number
   model_name: string
@@ -56,6 +64,8 @@ export type PricingModel = {
   group_ratio?: Record<string, number>
   /** Billing mode (e.g. "per-second" or "tiered_expr") */
   billing_mode?: string
+  /** Optional task prices selected by video output resolution. */
+  task_billing_pricing?: TaskBillingPriceConfig
   /** Raw expression describing dynamic / tiered billing */
   billing_expr?: string
   /** Absolute USD price per generated image for each resolution tier. */

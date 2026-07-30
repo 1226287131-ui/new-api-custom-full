@@ -22,7 +22,10 @@ import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 
 import { isDynamicPricingModel } from '../lib/dynamic-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
-import { hasImageResolutionPricing } from '../lib/price'
+import {
+  hasImageResolutionPricing,
+  hasTaskResolutionPricing,
+} from '../lib/price'
 import type { PricingModel } from '../types'
 
 interface ModelBillingModeBadgeProps {
@@ -35,7 +38,10 @@ export function ModelBillingModeBadge(props: ModelBillingModeBadgeProps) {
   let label = t('Per Request')
   let variant: StatusVariant = 'purple'
 
-  if (hasImageResolutionPricing(props.model)) {
+  if (hasTaskResolutionPricing(props.model)) {
+    label = t('Video resolution pricing')
+    variant = 'cyan'
+  } else if (hasImageResolutionPricing(props.model)) {
     label = t('Image resolution pricing')
     variant = 'cyan'
   } else if (props.model.billing_mode === 'per-second') {

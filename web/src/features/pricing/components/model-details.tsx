@@ -76,6 +76,11 @@ import {
   formatFixedPrice,
   formatGroupPrice,
   formatImageResolutionGroupPrice,
+  formatTaskDefaultGroupPrice,
+  formatTaskResolutionGroupPrice,
+  getTaskResolutionPrices,
+  hasTaskBillingPricing,
+  hasTaskResolutionPricing,
   hasImageResolutionPricing,
   IMAGE_RESOLUTION_TIERS,
 } from '../lib/price'
@@ -83,6 +88,7 @@ import type {
   ModelCapability,
   PriceType,
   PricingModel,
+  TaskResolution,
   TokenUnit,
 } from '../types'
 import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
@@ -585,7 +591,10 @@ function PriceSection(props: {
 }) {
   const { t } = useTranslation()
   const isTokenBased = isTokenBasedModel(props.model)
+  const isTaskResolutionPricing = hasTaskResolutionPricing(props.model)
+  const isTaskPricing = hasTaskBillingPricing(props.model)
   const isImageResolutionPricing = hasImageResolutionPricing(props.model)
+  const taskResolutionPrices = getTaskResolutionPrices(props.model)
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
   const baseGroupKey = '_base'
   const baseGroupRatioMap = { [baseGroupKey]: 1 }
@@ -634,6 +643,71 @@ function PriceSection(props: {
         props.model.audio_completion_ratio != null,
     },
   ]
+
+  if (isTaskResolutionPricing) {
+    const unit =
+      props.model.task_billing_pricing?.mode === 'per-second'
+        ? t('second')
+        : t('request')
+
+    return (
+      <section>
+        <SectionTitle>{t('Base Price')}</SectionTitle>
+        <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-4'>
+          {taskResolutionPrices.map(({ tier }) => (
+            <div key={tier} className='bg-muted/20 rounded-lg border p-3'>
+              <div className='text-muted-foreground text-xs'>
+                {tier === '4k' ? '4K' : tier}
+              </div>
+              <div className='text-foreground mt-1 font-mono text-base font-semibold tabular-nums'>
+                {formatTaskResolutionGroupPrice(
+                  props.model,
+                  tier,
+                  baseGroupKey,
+                  props.showRechargePrice,
+                  props.priceRate,
+                  props.usdExchangeRate,
+                  baseGroupRatioMap
+                )}
+                <span className='text-muted-foreground/40 ml-1 text-xs font-normal'>
+                  / {unit}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    )
+  }
+
+  if (isTaskPricing) {
+    const unit =
+      props.model.task_billing_pricing?.mode === 'per-second'
+        ? t('second')
+        : t('request')
+
+    return (
+      <section>
+        <SectionTitle>{t('Base Price')}</SectionTitle>
+        <div className='flex items-baseline justify-between'>
+          <span className='text-muted-foreground text-sm'>
+            {t('Task price')}
+          </span>
+          <span className='text-foreground font-mono text-sm font-semibold tabular-nums'>
+            {formatTaskDefaultGroupPrice(
+              props.model,
+              baseGroupKey,
+              props.showRechargePrice,
+              props.priceRate,
+              props.usdExchangeRate,
+              baseGroupRatioMap
+            )}{' '}
+            / {unit}
+          </span>
+        </div>
+      </section>
+    )
+  }
 
   if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {
@@ -912,8 +986,14 @@ function GroupPricingSection(props: {
   )
 
   const isTokenBased = isTokenBasedModel(props.model)
+  const isTaskResolutionPricing = hasTaskResolutionPricing(props.model)
+  const isTaskPricing = hasTaskBillingPricing(props.model)
   const isImageResolutionPricing = hasImageResolutionPricing(props.model)
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
+  const taskBillingUnit =
+    props.model.task_billing_pricing?.mode === 'per-second'
+      ? t('second')
+      : t('request')
 
   const extraPriceTypes = useMemo(() => {
     const types: { label: string; type: PriceType }[] = []
@@ -1100,7 +1180,53 @@ function GroupPricingSection(props: {
       props.groupRatio
     )
 
+  const renderTaskResolutionGroupPrice = (
+    group: string,
+    tier: TaskResolution
+  ) =>
+    formatTaskResolutionGroupPrice(
+      props.model,
+      tier,
+      group,
+      showRechargePrice,
+      props.priceRate,
+      props.usdExchangeRate,
+      props.groupRatio
+    )
+
+  const renderTaskDefaultGroupPrice = (group: string) =>
+    formatTaskDefaultGroupPrice(
+      props.model,
+      group,
+      showRechargePrice,
+      props.priceRate,
+      props.usdExchangeRate,
+      props.groupRatio
+    )
+
   const getPriceColumns = () => {
+    if (isTaskResolutionPricing) {
+      return getTaskResolutionPrices(props.model).map(({ tier }) => ({
+        id: `task-${tier}`,
+        header: tier === '4k' ? '4K' : tier,
+        className: `${thClass} text-right`,
+        cellClassName: 'py-2.5 text-right font-mono',
+        cell: (group: string) => renderTaskResolutionGroupPrice(group, tier),
+      }))
+    }
+
+    if (isTaskPricing) {
+      return [
+        {
+          id: 'price',
+          header: t('Price'),
+          className: `${thClass} text-right`,
+          cellClassName: 'py-2.5 text-right font-mono',
+          cell: renderTaskDefaultGroupPrice,
+        },
+      ]
+    }
+
     if (isTokenBased) {
       return [
         {
@@ -1178,9 +1304,14 @@ function GroupPricingSection(props: {
         ]}
       />
       <div className='-mx-4 sm:mx-0'>
-        {isTokenBased && (
+        {isTokenBased && !isTaskPricing && (
           <p className='text-muted-foreground/40 mt-1.5 px-4 text-[10px] sm:px-0'>
             {t('Prices shown per')} {tokenUnitLabel} tokens
+          </p>
+        )}
+        {(isTaskResolutionPricing || isTaskPricing) && (
+          <p className='text-muted-foreground/40 mt-1.5 px-4 text-[10px] sm:px-0'>
+            {t('Prices shown per')} {taskBillingUnit}
           </p>
         )}
       </div>

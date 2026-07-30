@@ -35,6 +35,11 @@ import {
   formatImageResolutionPrice,
   formatPrice,
   formatRequestPrice,
+  formatTaskDefaultPrice,
+  formatTaskResolutionPrice,
+  getTaskResolutionPrices,
+  hasTaskBillingPricing,
+  hasTaskResolutionPricing,
   hasImageResolutionPricing,
   IMAGE_RESOLUTION_TIERS,
 } from '../lib/price'
@@ -62,6 +67,9 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const showRechargePrice = props.showRechargePrice ?? false
   const isTokenBased = isTokenBasedModel(props.model)
   const isImageResolutionPricing = hasImageResolutionPricing(props.model)
+  const isTaskResolutionPricing = hasTaskResolutionPricing(props.model)
+  const isTaskPricing = hasTaskBillingPricing(props.model)
+  const taskResolutionPrices = getTaskResolutionPrices(props.model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
   const groups = props.model.enable_groups || []
@@ -99,7 +107,55 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   }
 
   let priceSummary: ReactNode
-  if (dynamicSummary) {
+  if (isTaskResolutionPricing) {
+    const unit =
+      props.model.task_billing_pricing?.mode === 'per-second'
+        ? t('second')
+        : t('request')
+
+    priceSummary = (
+      <>
+        {taskResolutionPrices.map(({ tier }) => (
+          <span key={tier} className='text-muted-foreground whitespace-nowrap'>
+            {tier === '4k' ? '4K' : tier}{' '}
+            <span className='text-foreground font-mono font-semibold'>
+              {formatTaskResolutionPrice(
+                props.model,
+                tier,
+                showRechargePrice,
+                priceRate,
+                usdExchangeRate,
+                props.selectedGroup
+              )}
+            </span>
+          </span>
+        ))}
+        <span className='text-muted-foreground/60 whitespace-nowrap'>
+          / {unit}
+        </span>
+      </>
+    )
+  } else if (isTaskPricing) {
+    const unit =
+      props.model.task_billing_pricing?.mode === 'per-second'
+        ? t('second')
+        : t('request')
+
+    priceSummary = (
+      <span className='text-muted-foreground whitespace-nowrap'>
+        <span className='text-foreground font-mono font-semibold'>
+          {formatTaskDefaultPrice(
+            props.model,
+            showRechargePrice,
+            priceRate,
+            usdExchangeRate,
+            props.selectedGroup
+          )}
+        </span>{' '}
+        / {unit}
+      </span>
+    )
+  } else if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {
       priceSummary = (
         <span className='min-w-0'>

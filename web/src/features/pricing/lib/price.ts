@@ -25,6 +25,7 @@ import type {
   PricingModel,
   TokenUnit,
   PriceType,
+  TaskResolution,
 } from '../types'
 import { getConfiguredGroupRatio, getDisplayGroupRatio } from './model-helpers'
 
@@ -37,6 +38,13 @@ export const IMAGE_RESOLUTION_TIERS = [
   '2K',
   '4K',
 ] as const satisfies readonly ImageResolutionTier[]
+
+export const TASK_RESOLUTION_TIERS = [
+  '480p',
+  '720p',
+  '1080p',
+  '4k',
+] as const satisfies readonly TaskResolution[]
 
 type ImageResolutionPricingModel = PricingModel & {
   billing_mode: 'image_resolution'
@@ -226,6 +234,142 @@ export function formatImageResolutionGroupPrice(
   return formatImageResolutionPriceValue(
     model,
     tier,
+    getConfiguredGroupRatio(groupRatio, group),
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+}
+
+function isValidTaskPrice(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+export function hasTaskBillingPricing(model: PricingModel): boolean {
+  const config = model.task_billing_pricing
+  return (
+    config !== undefined &&
+    (config.mode === 'per-request' || config.mode === 'per-second')
+  )
+}
+
+export function getTaskResolutionPrices(model: PricingModel): Array<{
+  tier: TaskResolution
+  price: number
+}> {
+  if (!hasTaskBillingPricing(model)) return []
+
+  const prices = model.task_billing_pricing?.resolution_prices
+  if (!prices) return []
+
+  return TASK_RESOLUTION_TIERS.flatMap((tier) => {
+    const price = prices[tier]
+    return isValidTaskPrice(price) ? [{ tier, price }] : []
+  })
+}
+
+export function hasTaskResolutionPricing(model: PricingModel): boolean {
+  return getTaskResolutionPrices(model).length > 0
+}
+
+function formatTaskPriceValue(
+  price: number,
+  ratio: number,
+  showWithRecharge: boolean,
+  priceRate: number,
+  usdExchangeRate: number
+): string {
+  const priceInUSD = applyRechargeRate(
+    price * ratio,
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+
+  return formatCurrencyFromUSD(priceInUSD, {
+    digitsLarge: 4,
+    digitsSmall: 6,
+    abbreviate: false,
+  })
+}
+
+export function formatTaskResolutionPrice(
+  model: PricingModel,
+  tier: TaskResolution,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  selectedGroup?: string
+): string {
+  const price = getTaskResolutionPrices(model).find(
+    (entry) => entry.tier === tier
+  )?.price
+  if (price === undefined) return '-'
+
+  return formatTaskPriceValue(
+    price,
+    getDisplayGroupRatio(model, selectedGroup),
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+}
+
+export function formatTaskResolutionGroupPrice(
+  model: PricingModel,
+  tier: TaskResolution,
+  group: string,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  groupRatio: Record<string, number>
+): string {
+  const price = getTaskResolutionPrices(model).find(
+    (entry) => entry.tier === tier
+  )?.price
+  if (price === undefined) return '-'
+
+  return formatTaskPriceValue(
+    price,
+    getConfiguredGroupRatio(groupRatio, group),
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+}
+
+export function formatTaskDefaultPrice(
+  model: PricingModel,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  selectedGroup?: string
+): string {
+  const price = model.task_billing_pricing?.default_price
+  if (!isValidTaskPrice(price)) return '-'
+
+  return formatTaskPriceValue(
+    price,
+    getDisplayGroupRatio(model, selectedGroup),
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+}
+
+export function formatTaskDefaultGroupPrice(
+  model: PricingModel,
+  group: string,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  groupRatio: Record<string, number>
+): string {
+  const price = model.task_billing_pricing?.default_price
+  if (!isValidTaskPrice(price)) return '-'
+
+  return formatTaskPriceValue(
+    price,
     getConfiguredGroupRatio(groupRatio, group),
     showWithRecharge,
     priceRate,

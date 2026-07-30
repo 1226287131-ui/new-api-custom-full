@@ -139,9 +139,10 @@ func NormalizeTaskBillingResolution(value string) string {
 }
 
 // ResolveTaskBillingPrice returns the configured per-second or per-request
-// price. A configured model must have either a matching resolution price or a
-// default price; silently falling back to the legacy ModelPrice would make a
-// missing resolution entry undercharge a request.
+// price. When the resolution price table is non-empty, it is authoritative:
+// missing resolution entries must fail instead of falling back to a default
+// price. Configurations without a resolution table retain the legacy default
+// price behavior.
 func ResolveTaskBillingPrice(model, resolution string) (TaskBillingPriceSelection, bool, error) {
 	config, configured := GetTaskBillingPriceConfig(model)
 	if !configured {
@@ -153,6 +154,7 @@ func ResolveTaskBillingPrice(model, resolution string) (TaskBillingPriceSelectio
 	}
 
 	resolution = NormalizeTaskBillingResolution(resolution)
+	resolutionPricingEnabled := len(config.ResolutionPrices) > 0
 	if resolution != "" {
 		if price, ok := config.ResolutionPrices[resolution]; ok {
 			if err := validateTaskBillingPrice(price); err != nil {
@@ -160,6 +162,13 @@ func ResolveTaskBillingPrice(model, resolution string) (TaskBillingPriceSelectio
 			}
 			return TaskBillingPriceSelection{Mode: config.Mode, Price: price, Resolution: resolution}, true, nil
 		}
+		if resolutionPricingEnabled {
+			return TaskBillingPriceSelection{}, true, fmt.Errorf("model %s has no task price configured for resolution %s", model, resolution)
+		}
+	}
+
+	if resolutionPricingEnabled {
+		return TaskBillingPriceSelection{}, true, fmt.Errorf("model %s requires a configured resolution for task pricing", model)
 	}
 
 	if config.DefaultPrice != nil {

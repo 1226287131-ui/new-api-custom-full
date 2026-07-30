@@ -228,7 +228,9 @@ export function buildPreviewRows(
   promptPrice: string,
   lanePrices: Record<LaneKey, string>,
   laneEnabled: Record<LaneKey, boolean>,
-  t: (key: string) => string
+  t: (key: string) => string,
+  taskPricingEnabled = false,
+  taskResolutionPrices: Partial<Record<TaskResolution, string>> = {}
 ): PreviewRow[] {
   if (mode === 'tiered_expr') {
     const effectiveExpr = combineBillingExpr(billingExpr, requestRuleExpr)
@@ -244,6 +246,31 @@ export function buildPreviewRows(
   }
 
   if (mode === 'per-request' || mode === 'per-second') {
+    if (taskPricingEnabled) {
+      const resolutionRows = (['480p', '720p', '1080p', '4k'] as const)
+        .filter((resolution) => taskResolutionPrices[resolution])
+        .map((resolution) => {
+          const label = resolution === '4k' ? '4K' : resolution
+          return `${label}: $${taskResolutionPrices[resolution]} / ${t(
+            mode === 'per-second' ? 'second' : 'request'
+          )}`
+        })
+
+      return [
+        {
+          key: 'mode',
+          label: 'BillingMode',
+          value: mode,
+        },
+        {
+          key: 'resolutionPrices',
+          label: t('Resolution pricing'),
+          value: resolutionRows.length ? resolutionRows.join('\n') : t('Empty'),
+          multiline: true,
+        },
+      ]
+    }
+
     return [
       {
         key: 'price',
