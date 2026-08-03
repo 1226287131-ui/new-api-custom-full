@@ -211,3 +211,30 @@ func TestGeminiNativeImageHandlerConvertsInlineData(t *testing.T) {
 	require.Equal(t, 258, usage.TotalTokens)
 	require.Equal(t, "aGVsbG8=", gjson.Get(recorder.Body.String(), "data.0.b64_json").String())
 }
+
+func TestGeminiNativeImageHandlerConvertsMarkdownImageURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+
+	imageURL := "https://images.example.test/result.png?signature=abc123"
+	responseBody := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"![image](` + imageURL + `)"}]}}]}`)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(responseBody)),
+	}
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		OriginModelName: "nano-banana-2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+		RelayFormat: types.RelayFormatOpenAI,
+	}
+
+	usage, newAPIError := GeminiNativeImageHandler(c, info, resp)
+	require.Nil(t, newAPIError)
+	require.Equal(t, 258, usage.TotalTokens)
+	require.Equal(t, imageURL, gjson.Get(recorder.Body.String(), "data.0.url").String())
+}

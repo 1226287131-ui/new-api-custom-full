@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -21,6 +22,8 @@ import (
 )
 
 const maxGeminiInlineImageBytes = 20 * 1024 * 1024
+
+var geminiMarkdownImageURLPattern = regexp.MustCompile(`(?i)!\[[^\]]*\]\(\s*(?:<)?(https?://[^\s)>]+)(?:>)?(?:\s+["'][^)]*["'])?\s*\)`)
 
 var supportedGeminiImageAspectRatios = map[string]struct{}{
 	"1:1":  {},
@@ -665,12 +668,15 @@ func GeminiNativeImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 	}
 	for _, candidate := range geminiResponse.Candidates {
 		for _, part := range candidate.Content.Parts {
-			if part.InlineData == nil || part.InlineData.Data == "" || !strings.HasPrefix(strings.ToLower(part.InlineData.MimeType), "image/") {
+			if part.InlineData != nil && part.InlineData.Data != "" && strings.HasPrefix(strings.ToLower(part.InlineData.MimeType), "image/") {
+				openAIResponse.Data = append(openAIResponse.Data, dto.ImageData{
+					B64Json: part.InlineData.Data,
+				})
 				continue
 			}
-			openAIResponse.Data = append(openAIResponse.Data, dto.ImageData{
-				B64Json: part.InlineData.Data,
-			})
+			for _, imageURL := range extractGeminiMarkdownImageURLs(part.Text) {
+				openAIResponse.Data = append(openAIResponse.Data, dto.ImageData{Url: imageURL})
+			}
 		}
 	}
 
@@ -700,4 +706,25 @@ func GeminiNativeImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 		TotalTokens:  imageTokens * generatedImages,
 	}
 	return usage, nil
+}
+
+func extractGeminiMarkdownImageURLs(text string) []string {
+	matches := geminiMarkdownImageURLPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	urls := make([]string, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 || match[1] == "" {
+			continue
+		}
+		if _, exists := seen[match[1]]; exists {
+			continue
+		}
+		seen[match[1]] = struct{}{}
+		urls = append(urls, match[1])
+	}
+	return urls
 }
