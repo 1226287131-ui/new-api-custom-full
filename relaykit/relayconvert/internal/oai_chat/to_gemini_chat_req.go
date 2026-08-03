@@ -116,23 +116,18 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 				}
 			}
 
-			if _, hasErrorParam := googleBody["imageConfig"]; hasErrorParam {
-				return nil, errors.New("extra_body.google.imageConfig is not supported, use extra_body.google.image_config instead")
+			// Accept both Google-native camelCase and the snake_case spelling used
+			// by several OpenAI-compatible clients.
+			imageConfig, _ := googleBody["image_config"].(map[string]interface{})
+			if imageConfig == nil {
+				imageConfig, _ = googleBody["imageConfig"].(map[string]interface{})
 			}
-
-			if imageConfig, ok := googleBody["image_config"].(map[string]interface{}); ok {
-				if _, hasErrorParam := imageConfig["aspectRatio"]; hasErrorParam {
-					return nil, errors.New("extra_body.google.image_config.aspectRatio is not supported, use extra_body.google.image_config.aspect_ratio instead")
-				}
-				if _, hasErrorParam := imageConfig["imageSize"]; hasErrorParam {
-					return nil, errors.New("extra_body.google.image_config.imageSize is not supported, use extra_body.google.image_config.image_size instead")
-				}
-
+			if len(imageConfig) > 0 {
 				geminiImageConfig := make(map[string]interface{})
-				if aspectRatio, ok := imageConfig["aspect_ratio"]; ok {
+				if aspectRatio, ok := firstImageConfigValue(imageConfig, "aspect_ratio", "aspectRatio", "ratio"); ok {
 					geminiImageConfig["aspectRatio"] = aspectRatio
 				}
-				if imageSize, ok := imageConfig["image_size"]; ok {
+				if imageSize, ok := firstImageConfigValue(imageConfig, "image_size", "imageSize", "resolution"); ok {
 					geminiImageConfig["imageSize"] = imageSize
 				}
 
@@ -144,6 +139,12 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 					geminiRequest.GenerationConfig.ImageConfig = imageConfigBytes
 				}
 			}
+		}
+	}
+
+	if model_setting.IsGeminiModelSupportImagine(upstreamModelName) {
+		if err := applyOpenAIGeminiImageConfig(textRequest, &geminiRequest); err != nil {
+			return nil, err
 		}
 	}
 

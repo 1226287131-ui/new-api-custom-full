@@ -58,6 +58,25 @@ Optional environment variables:
 | `IMAGE_CACHE_MAX_MB` | `50` | Maximum size of one cached image |
 | `IMAGE_CACHE_DOWNLOAD_TIMEOUT_SECONDS` | `120` | Background upstream image download timeout |
 
+## Google Nano Banana OpenAI compatibility
+
+- Allows Google Gemini image models, including Nano Banana 2 and Nano Banana
+  Pro aliases, to be called through the OpenAI `/v1/images/generations`,
+  `/v1/images/edits`, and `/v1/chat/completions` interfaces.
+- Converts OpenAI `size` values such as `3:4`, `4:3`, `9:16`, `16:9`, and
+  portrait dimensions such as `1024x1365` into Google's
+  `generationConfig.imageConfig.aspectRatio`, so the requested ratio is not
+  silently reset to `1:1`.
+- Accepts Google image settings in either snake_case or camelCase under
+  `extra_body.google`, including `image_config`/`imageConfig`,
+  `aspect_ratio`/`aspectRatio`, and `image_size`/`imageSize`.
+- Accepts URL, base64, multipart, and multiple reference-image inputs and
+  converts Gemini `inlineData` results to OpenAI `b64_json` results.
+- Gemini image generation currently supports one output per request. Requests
+  with `n > 1` are rejected explicitly instead of being silently under-delivered.
+- Existing Imagen models continue to use the original `predict` request path;
+  only Gemini `generateContent` image models use this bridge.
+
 ## Sora-compatible video relay
 
 - Adds channel type `59` for the NewAPI video task adapter.

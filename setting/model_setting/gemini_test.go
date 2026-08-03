@@ -97,3 +97,17 @@ func TestValidateGeminiSafetySettings(t *testing.T) {
 		assert.Error(t, ValidateGeminiSafetySettings(value), value)
 	}
 }
+
+func TestIsGeminiModelSupportImagineRecognizesNanoBananaAliases(t *testing.T) {
+	for _, model := range []string{
+		"nano-banana-pro",
+		"nano_banana_2",
+		"BANANA-PRO",
+		"banana-2-preview",
+		"models/nano-banana-2",
+	} {
+		if !IsGeminiModelSupportImagine(model) {
+			t.Fatalf("expected %q to be recognized as a Gemini image model", model)
+		}
+	}
+}

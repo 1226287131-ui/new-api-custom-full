@@ -2,6 +2,7 @@ package model_setting
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -46,6 +47,10 @@ var defaultGeminiSettings = GeminiSettings{
 		"gemini-2.5-flash-image",
 		"gemini-3.1-flash-image",
 		"gemini-3.1-flash-image-preview",
+		"nano-banana-pro-preview",
+		"nano-banana-pro",
+		"nano-banana-2",
+		"nano-banana-2-preview",
 	},
 	ThinkingAdapterEnabled:                false,
 	ThinkingAdapterBudgetTokensPercentage: 0.6,
@@ -108,10 +113,16 @@ func GetGeminiVersionSetting(key string) string {
 }
 
 func IsGeminiModelSupportImagine(model string) bool {
+	normalized := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
 	for _, v := range geminiSettings.SupportedImagineModels {
-		if v == model {
+		if strings.EqualFold(v, normalized) {
 			return true
 		}
 	}
-	return false
+	// Upstream gateways use several aliases for the Nano Banana family. Keep
+	// aliases working without requiring a settings migration for every name.
+	compact := strings.NewReplacer("-", "", "_", "", ".", "").Replace(normalized)
+	return strings.Contains(compact, "nanobanana") ||
+		strings.Contains(compact, "banana2") ||
+		strings.Contains(compact, "bananapro")
 }

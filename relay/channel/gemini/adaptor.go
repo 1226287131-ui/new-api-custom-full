@@ -63,8 +63,11 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
-	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {
-		return nil, errors.New("not supported model for image generation, only imagen models are supported")
+	if !strings.HasPrefix(strings.ToLower(info.UpstreamModelName), "imagen") {
+		if !model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+			return nil, errors.New("not supported model for image generation, expected an Imagen or Gemini image model")
+		}
+		return convertOpenAIImageRequestToGemini(c, request)
 	}
 
 	// convert size to aspect ratio but allow user to specify aspect ratio
@@ -278,8 +281,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		}
 	}
 
-	if strings.HasPrefix(info.UpstreamModelName, "imagen") {
-		return GeminiImageHandler(c, info, resp)
+	if isGeminiNativeImageRequest(info) {
+		if strings.HasPrefix(strings.ToLower(info.UpstreamModelName), "imagen") {
+			return GeminiImageHandler(c, info, resp)
+		}
+		if model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+			return GeminiNativeImageHandler(c, info, resp)
+		}
 	}
 
 	// check if the model is an embedding model
