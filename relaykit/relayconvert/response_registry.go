@@ -912,20 +912,28 @@ func finalizeOAIChatStreamResponseToClaudeMessages(_ context.Context, info convm
 	return streamValuesFromAny(responses), usage, nil
 }
 
-func convertOAIChatResponseToGeminiChat(_ context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+func convertOAIChatResponseToGeminiChat(c context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
 	chatResponse, err := asOAIChatResponse(response)
 	if err != nil {
 		return nil, nil, err
 	}
-	return ResponseOpenAI2Gemini(chatResponse, info), UsageFromChatUsage(&chatResponse.Usage), nil
+	converted, err := ResponseOpenAI2GeminiWithContext(c, chatResponse, info)
+	if err != nil {
+		return nil, nil, err
+	}
+	return converted, UsageFromChatUsage(&chatResponse.Usage), nil
 }
 
-func convertOAIChatStreamResponseToGeminiChat(_ context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+func convertOAIChatStreamResponseToGeminiChat(c context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
 	chatResponse, err := asOAIChatStreamResponse(response)
 	if err != nil {
 		return nil, nil, err
 	}
-	return StreamResponseOpenAI2Gemini(chatResponse, info), canonicalUsageFromResponse(chatResponse), nil
+	converted, err := StreamResponseOpenAI2GeminiWithContext(c, chatResponse, info)
+	if err != nil {
+		return nil, nil, err
+	}
+	return converted, canonicalUsageFromResponse(chatResponse), nil
 }
 
 func convertClaudeMessagesResponseToOAIChat(_ context.Context, _ convmeta.Meta, response any) (any, *dto.Usage, error) {

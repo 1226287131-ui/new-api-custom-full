@@ -1,6 +1,9 @@
 package oaichat
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -8,6 +11,17 @@ import (
 
 // ResponseOpenAI2Gemini 将 OpenAI 响应转换为 Gemini 格式
 func ResponseOpenAI2Gemini(openAIResponse *dto.OpenAITextResponse, info convmeta.Meta) *dto.GeminiChatResponse {
+	response, _ := ResponseOpenAI2GeminiWithContext(nil, openAIResponse, info)
+	return response
+}
+
+// ResponseOpenAI2GeminiWithContext converts an OpenAI chat response into the
+// native Gemini response shape. The context is used to download URL-based
+// images so Gemini clients receive inlineData instead of an unusable URL.
+func ResponseOpenAI2GeminiWithContext(c context.Context, openAIResponse *dto.OpenAITextResponse, info convmeta.Meta) (*dto.GeminiChatResponse, error) {
+	if openAIResponse == nil {
+		return nil, fmt.Errorf("OpenAI response is nil")
+	}
 	totalTokens := openAIResponse.TotalTokens
 	if totalTokens == 0 {
 		totalTokens = openAIResponse.PromptTokens + openAIResponse.CompletionTokens
@@ -54,13 +68,11 @@ func ResponseOpenAI2Gemini(openAIResponse *dto.OpenAITextResponse, info convmeta
 			Parts: make([]dto.GeminiPart, 0),
 		}
 
-		textContent := choice.Message.StringContent()
-		if textContent != "" {
-			part := dto.GeminiPart{
-				Text: textContent,
-			}
-			content.Parts = append(content.Parts, part)
+		messageParts, err := openAIMessageToGeminiParts(c, choice.Message, info)
+		if err != nil {
+			return geminiResponse, err
 		}
+		content.Parts = append(content.Parts, messageParts...)
 
 		toolCalls := choice.Message.ParseToolCalls()
 		for _, toolCall := range toolCalls {
@@ -86,11 +98,22 @@ func ResponseOpenAI2Gemini(openAIResponse *dto.OpenAITextResponse, info convmeta
 		geminiResponse.Candidates = append(geminiResponse.Candidates, candidate)
 	}
 
-	return geminiResponse
+	return geminiResponse, nil
 }
 
 // StreamResponseOpenAI2Gemini 将 OpenAI 流式响应转换为 Gemini 格式
 func StreamResponseOpenAI2Gemini(openAIResponse *dto.ChatCompletionsStreamResponse, info convmeta.Meta) *dto.GeminiChatResponse {
+	response, _ := StreamResponseOpenAI2GeminiWithContext(nil, openAIResponse, info)
+	return response
+}
+
+// StreamResponseOpenAI2GeminiWithContext is the streaming counterpart of
+// ResponseOpenAI2GeminiWithContext. It handles image data when a provider puts
+// a complete image URL/data URL in one streamed content chunk.
+func StreamResponseOpenAI2GeminiWithContext(c context.Context, openAIResponse *dto.ChatCompletionsStreamResponse, info convmeta.Meta) (*dto.GeminiChatResponse, error) {
+	if openAIResponse == nil {
+		return nil, fmt.Errorf("OpenAI stream response is nil")
+	}
 	// 检查是否有实际内容或结束标志
 	hasContent := false
 	hasFinishReason := false
@@ -105,7 +128,7 @@ func StreamResponseOpenAI2Gemini(openAIResponse *dto.ChatCompletionsStreamRespon
 
 	// 如果没有实际内容且没有结束标志，跳过。主要针对 openai 流响应开头的空数据
 	if !hasContent && !hasFinishReason {
-		return nil
+		return nil, nil
 	}
 
 	estimatePromptTokens := 0
@@ -184,13 +207,14 @@ func StreamResponseOpenAI2Gemini(openAIResponse *dto.ChatCompletionsStreamRespon
 				content.Parts = append(content.Parts, part)
 			}
 		} else {
-			// 处理文本内容
+			// 处理文本内容和可能包含的图片
 			textContent := choice.Delta.GetContentString()
 			if textContent != "" {
-				part := dto.GeminiPart{
-					Text: textContent,
+				messageParts, err := appendOpenAIResponseTextParts(c, nil, textContent, info)
+				if err != nil {
+					return geminiResponse, err
 				}
-				content.Parts = append(content.Parts, part)
+				content.Parts = append(content.Parts, messageParts...)
 			}
 		}
 
@@ -198,7 +222,7 @@ func StreamResponseOpenAI2Gemini(openAIResponse *dto.ChatCompletionsStreamRespon
 		geminiResponse.Candidates = append(geminiResponse.Candidates, candidate)
 	}
 
-	return geminiResponse
+	return geminiResponse, nil
 }
 
 func geminiBillingMetadataFromOpenAIUsage(usage *dto.Usage) (dto.GeminiUsageMetadata, bool) {

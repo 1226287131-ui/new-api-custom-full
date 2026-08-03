@@ -75,6 +75,13 @@ Optional environment variables:
 - Normalizes native Gemini image responses from snake_case, Markdown image URLs,
   and OpenAI-style `b64_json`/`url` payloads into standard `inlineData` parts
   for Gemini clients such as infinite-canvas frontends.
+- Bridges native Gemini `generateContent` calls routed through an OpenAI channel:
+  Gemini image options and references are converted to `/v1/chat/completions`,
+  while Markdown images, content-item images, `message.images`, data URLs, and
+  Images API payloads are converted back to Gemini `inlineData` responses.
+- Derives supported Gemini aspect ratios from canvas-style `width`/`height` or
+  dimension strings, preventing compatible non-square requests from falling
+  back to `1:1` when a client omits `aspectRatio`.
 - Gemini image generation currently supports one output per request. Requests
   with `n > 1` are rejected explicitly instead of being silently under-delivered.
 - Existing Imagen models continue to use the original `predict` request path;

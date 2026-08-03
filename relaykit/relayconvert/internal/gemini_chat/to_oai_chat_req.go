@@ -147,6 +147,10 @@ func GeminiGenerateContentRequestToOpenAIChat(geminiRequest *dto.GeminiChatReque
 		openaiRequest.Messages = append([]dto.Message{systemMessage}, openaiRequest.Messages...)
 	}
 
+	if err := applyGeminiImageOptionsToOpenAIRequest(geminiRequest, openaiRequest, info); err != nil {
+		return nil, err
+	}
+
 	return openaiRequest, nil
 }
 

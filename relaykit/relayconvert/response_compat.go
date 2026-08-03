@@ -1,6 +1,8 @@
 package relayconvert
 
 import (
+	"context"
+
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	claudemessages "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/claude_messages"
@@ -64,8 +66,16 @@ func ResponseOpenAI2Gemini(openAIResponse *dto.OpenAITextResponse, info convmeta
 	return oaichat.ResponseOpenAI2Gemini(openAIResponse, info)
 }
 
+func ResponseOpenAI2GeminiWithContext(c context.Context, openAIResponse *dto.OpenAITextResponse, info convmeta.Meta) (*dto.GeminiChatResponse, error) {
+	return oaichat.ResponseOpenAI2GeminiWithContext(c, openAIResponse, info)
+}
+
 func StreamResponseOpenAI2Gemini(openAIResponse *dto.ChatCompletionsStreamResponse, info convmeta.Meta) *dto.GeminiChatResponse {
 	return oaichat.StreamResponseOpenAI2Gemini(openAIResponse, info)
+}
+
+func StreamResponseOpenAI2GeminiWithContext(c context.Context, openAIResponse *dto.ChatCompletionsStreamResponse, info convmeta.Meta) (*dto.GeminiChatResponse, error) {
+	return oaichat.StreamResponseOpenAI2GeminiWithContext(c, openAIResponse, info)
 }
 
 func UsageFromGeminiMetadata(metadata *dto.GeminiUsageMetadata, fallbackPromptTokens int) *dto.Usage {

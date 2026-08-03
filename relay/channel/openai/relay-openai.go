@@ -253,6 +253,21 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	// Some OpenAI-compatible image gateways return an Images API payload even
+	// when the request was sent to chat/completions. Normalize that payload
+	// before the Gemini response bridge runs so the downstream still receives
+	// candidates[].content.parts[].inlineData.
+	if info.RelayFormat == types.RelayFormatGemini {
+		mergeOpenAIChatImageFields(responseBody, &simpleResponse)
+		if len(simpleResponse.Choices) == 0 {
+			if imageResponse, ok, imageErr := openAIImageBodyAsChatResponse(responseBody); imageErr != nil {
+				return nil, types.NewOpenAIError(imageErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+			} else if ok {
+				simpleResponse = *imageResponse
+			}
+		}
+	}
+
 	for _, choice := range simpleResponse.Choices {
 		if choice.FinishReason == constant.FinishReasonContentFilter {
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "openai_finish_reason=content_filter")
