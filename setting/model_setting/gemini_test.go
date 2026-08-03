@@ -105,6 +105,8 @@ func TestIsGeminiModelSupportImagineRecognizesNanoBananaAliases(t *testing.T) {
 		"BANANA-PRO",
 		"banana-2-preview",
 		"models/nano-banana-2",
+		"Nano Banana Pro",
+		"Nano Banana 2",
 	} {
 		if !IsGeminiModelSupportImagine(model) {
 			t.Fatalf("expected %q to be recognized as a Gemini image model", model)

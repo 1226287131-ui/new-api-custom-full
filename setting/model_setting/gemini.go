@@ -3,6 +3,7 @@ package model_setting
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -121,7 +122,12 @@ func IsGeminiModelSupportImagine(model string) bool {
 	}
 	// Upstream gateways use several aliases for the Nano Banana family. Keep
 	// aliases working without requiring a settings migration for every name.
-	compact := strings.NewReplacer("-", "", "_", "", ".", "").Replace(normalized)
+	compact := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) || r == '-' || r == '_' || r == '.' {
+			return -1
+		}
+		return r
+	}, normalized)
 	return strings.Contains(compact, "nanobanana") ||
 		strings.Contains(compact, "banana2") ||
 		strings.Contains(compact, "bananapro")
