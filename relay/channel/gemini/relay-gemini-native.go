@@ -42,7 +42,12 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 	// 计算使用量（优先上游 UsageMetadata，缺失时本地估算并保留 Gemini 计费语义）
 	usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
 
-	service.IOCopyBytesGracefully(c, resp, responseBody)
+	canonicalBody, normalizeErr := normalizeNativeGeminiImageResponse(responseBody, info)
+	if normalizeErr != nil {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("normalize native Gemini image response failed: %v", normalizeErr))
+		canonicalBody = responseBody
+	}
+	service.IOCopyBytesGracefully(c, resp, canonicalBody)
 
 	return &usage, nil
 }

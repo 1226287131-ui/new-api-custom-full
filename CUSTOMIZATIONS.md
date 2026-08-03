@@ -72,6 +72,9 @@ Optional environment variables:
   `aspect_ratio`/`aspectRatio`, and `image_size`/`imageSize`.
 - Accepts URL, base64, multipart, and multiple reference-image inputs and
   converts Gemini `inlineData` results to OpenAI `b64_json` results.
+- Normalizes native Gemini image responses from snake_case, Markdown image URLs,
+  and OpenAI-style `b64_json`/`url` payloads into standard `inlineData` parts
+  for Gemini clients such as infinite-canvas frontends.
 - Gemini image generation currently supports one output per request. Requests
   with `n > 1` are rejected explicitly instead of being silently under-delivered.
 - Existing Imagen models continue to use the original `predict` request path;
