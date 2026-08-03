@@ -301,22 +301,23 @@ func normalizeNativeGeminiImageRequest(request *dto.GeminiChatRequest, info *rel
 	}
 	request.GenerationConfig.ResponseModalities = modalities
 
-	imageConfigRaw, err := nativeGeminiImageConfigWithResponseFormat(
-		request.GenerationConfig.ImageConfig,
-		request.GenerationConfig.ResponseFormat,
-	)
-	if err != nil {
-		return err
+	if len(request.GenerationConfig.ResponseFormat) > 0 {
+		// Some Gemini-compatible upstreams use responseFormat.image rather than
+		// Google's native imageConfig. Preserve that wrapper so those upstreams
+		// can apply the requested ratio and resolution.
+		responseFormat, err := normalizeNativeGeminiResponseFormat(request.GenerationConfig.ResponseFormat)
+		if err != nil {
+			return err
+		}
+		request.GenerationConfig.ResponseFormat = responseFormat
 	}
-	imageConfig, err := normalizeNativeGeminiImageConfig(imageConfigRaw)
+	imageConfig, err := normalizeNativeGeminiImageConfig(request.GenerationConfig.ImageConfig)
 	if err != nil {
 		return err
 	}
 	if len(imageConfig) > 0 {
 		request.GenerationConfig.ImageConfig = imageConfig
 	}
-	// The wrapper has been consumed and must not be sent to Google.
-	request.GenerationConfig.ResponseFormat = nil
 	return nil
 }
 
@@ -351,58 +352,63 @@ func resolveGeminiUpstreamModelName(info *relaycommon.RelayInfo) string {
 	return strings.TrimSpace(info.OriginModelName)
 }
 
-// nativeGeminiImageConfigWithResponseFormat accepts the wrapper emitted by
-// Gemini-compatible clients, for example:
-// {"responseFormat":{"image":{"aspectRatio":"9:16","imageSize":"2K"}}}
-// and converts it into the native generationConfig.imageConfig payload.
-func nativeGeminiImageConfigWithResponseFormat(imageConfig, responseFormat json.RawMessage) (json.RawMessage, error) {
-	if len(responseFormat) == 0 || strings.TrimSpace(string(responseFormat)) == "null" {
-		return imageConfig, nil
-	}
-
+func normalizeNativeGeminiResponseFormat(raw json.RawMessage) (json.RawMessage, error) {
 	var root map[string]any
-	if err := common.Unmarshal(responseFormat, &root); err != nil {
+	if err := common.Unmarshal(raw, &root); err != nil {
 		return nil, fmt.Errorf("invalid Gemini response format: %w", err)
 	}
 	if len(root) == 0 {
-		return imageConfig, nil
+		return raw, nil
 	}
 
-	var wrappedImage any
+	var image map[string]any
 	for key, value := range root {
-		if normalizeImageOptionKey(key) == "image" {
-			wrappedImage = value
-			break
+		if normalizeImageOptionKey(key) != "image" {
+			continue
 		}
+		var ok bool
+		image, ok = value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("Gemini response format image must be an object")
+		}
+		delete(root, key)
+		break
 	}
-	if wrappedImage == nil {
-		return imageConfig, nil
-	}
-	wrappedConfig, ok := wrappedImage.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("Gemini response format image must be an object")
+	if image == nil {
+		return raw, nil
 	}
 
-	if len(imageConfig) == 0 || strings.TrimSpace(string(imageConfig)) == "null" {
-		encoded, err := common.Marshal(wrappedConfig)
+	canonicalImage := make(map[string]any, len(image)+2)
+	for key, value := range image {
+		normalizedKey := normalizeImageOptionKey(key)
+		switch normalizedKey {
+		case "aspectratio", "ratio", "aspect":
+			canonicalImage["aspectRatio"] = value
+		case "imagesize", "resolution", "outputresolution", "exactsize", "quality", "size":
+			canonicalImage["imageSize"] = value
+		default:
+			canonicalImage[key] = value
+		}
+	}
+	if value, ok := findImageOptionValue(canonicalImage, map[string]struct{}{"aspectratio": {}}, 0); ok {
+		normalized, err := normalizeGeminiImageAspectRatio(value)
 		if err != nil {
-			return nil, fmt.Errorf("marshal Gemini response format image: %w", err)
+			return nil, err
 		}
-		return encoded, nil
+		canonicalImage["aspectRatio"] = normalized
 	}
+	if value, ok := findImageOptionValue(canonicalImage, map[string]struct{}{"imagesize": {}}, 0); ok {
+		normalized, err := normalizeGeminiImageSize(value)
+		if err != nil {
+			return nil, err
+		}
+		canonicalImage["imageSize"] = normalized
+	}
+	root["image"] = canonicalImage
 
-	var existingConfig map[string]any
-	if err := common.Unmarshal(imageConfig, &existingConfig); err != nil {
-		return nil, fmt.Errorf("invalid Gemini image config: %w", err)
-	}
-	for key, value := range wrappedConfig {
-		if _, exists := existingConfig[key]; !exists {
-			existingConfig[key] = value
-		}
-	}
-	encoded, err := common.Marshal(existingConfig)
+	encoded, err := common.Marshal(root)
 	if err != nil {
-		return nil, fmt.Errorf("marshal Gemini image config: %w", err)
+		return nil, fmt.Errorf("marshal Gemini response format: %w", err)
 	}
 	return encoded, nil
 }

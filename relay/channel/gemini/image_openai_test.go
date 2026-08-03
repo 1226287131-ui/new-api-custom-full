@@ -163,9 +163,9 @@ func TestConvertGeminiRequestNormalizesResponseFormatImageWrapper(t *testing.T) 
 	require.NoError(t, err)
 	convertedRequest, ok := converted.(*dto.GeminiChatRequest)
 	require.True(t, ok)
-	require.Empty(t, convertedRequest.GenerationConfig.ResponseFormat)
-	require.Equal(t, "9:16", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "aspectRatio").String())
-	require.Equal(t, "2K", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "imageSize").String())
+	require.Equal(t, "9:16", gjson.GetBytes(convertedRequest.GenerationConfig.ResponseFormat, "image.aspectRatio").String())
+	require.Equal(t, "2K", gjson.GetBytes(convertedRequest.GenerationConfig.ResponseFormat, "image.imageSize").String())
+	require.Empty(t, convertedRequest.GenerationConfig.ImageConfig)
 }
 
 func TestConvertOpenAIImageRequestRejectsMultipleCandidates(t *testing.T) {
