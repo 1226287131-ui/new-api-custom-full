@@ -109,3 +109,28 @@ func TestGeminiChatRequestAcceptsSnakeCaseGenerationConfig(t *testing.T) {
 	assert.Equal(t, "9:16", imageConfig["aspect_ratio"])
 	assert.Equal(t, "2K", imageConfig["image_size"])
 }
+
+func TestGeminiChatRequestAcceptsResponseFormatImageWrapper(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"make an image"}]}],
+		"generationConfig":{
+			"responseModalities":["TEXT","IMAGE"],
+			"responseFormat":{
+				"image":{
+					"aspectRatio":"9:16",
+					"imageSize":"2K"
+				}
+			}
+		}
+	}`)
+
+	var req GeminiChatRequest
+	require.NoError(t, common.Unmarshal(raw, &req))
+
+	var responseFormat map[string]any
+	require.NoError(t, common.Unmarshal(req.GenerationConfig.ResponseFormat, &responseFormat))
+	image, ok := responseFormat["image"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "9:16", image["aspectRatio"])
+	assert.Equal(t, "2K", image["imageSize"])
+}

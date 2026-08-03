@@ -273,7 +273,14 @@ func normalizeImageOptionKey(key string) string {
 // strict about the camelCase imageConfig keys, so forwarding the raw object can
 // silently fall back to a square image.
 func normalizeNativeGeminiImageRequest(request *dto.GeminiChatRequest, info *relaycommon.RelayInfo) error {
-	if request == nil || info == nil || !model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+	if request == nil {
+		return nil
+	}
+	if info == nil || !isGeminiImagineModel(info) {
+		// responseFormat is a compatibility wrapper used by some clients. It is
+		// not part of Google's native GenerateContent schema, so never forward it
+		// to ordinary Gemini models.
+		request.GenerationConfig.ResponseFormat = nil
 		return nil
 	}
 
@@ -294,14 +301,110 @@ func normalizeNativeGeminiImageRequest(request *dto.GeminiChatRequest, info *rel
 	}
 	request.GenerationConfig.ResponseModalities = modalities
 
-	imageConfig, err := normalizeNativeGeminiImageConfig(request.GenerationConfig.ImageConfig)
+	imageConfigRaw, err := nativeGeminiImageConfigWithResponseFormat(
+		request.GenerationConfig.ImageConfig,
+		request.GenerationConfig.ResponseFormat,
+	)
+	if err != nil {
+		return err
+	}
+	imageConfig, err := normalizeNativeGeminiImageConfig(imageConfigRaw)
 	if err != nil {
 		return err
 	}
 	if len(imageConfig) > 0 {
 		request.GenerationConfig.ImageConfig = imageConfig
 	}
+	// The wrapper has been consumed and must not be sent to Google.
+	request.GenerationConfig.ResponseFormat = nil
 	return nil
+}
+
+func isGeminiImagineModel(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	names := []string{info.UpstreamModelName, info.OriginModelName}
+	if info.ChannelMeta != nil {
+		names = append(names, info.ChannelMeta.UpstreamModelName)
+	}
+	for _, name := range names {
+		if model_setting.IsGeminiModelSupportImagine(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveGeminiUpstreamModelName(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	if name := strings.TrimSpace(info.UpstreamModelName); name != "" {
+		return name
+	}
+	if info.ChannelMeta != nil {
+		if name := strings.TrimSpace(info.ChannelMeta.UpstreamModelName); name != "" {
+			return name
+		}
+	}
+	return strings.TrimSpace(info.OriginModelName)
+}
+
+// nativeGeminiImageConfigWithResponseFormat accepts the wrapper emitted by
+// Gemini-compatible clients, for example:
+// {"responseFormat":{"image":{"aspectRatio":"9:16","imageSize":"2K"}}}
+// and converts it into the native generationConfig.imageConfig payload.
+func nativeGeminiImageConfigWithResponseFormat(imageConfig, responseFormat json.RawMessage) (json.RawMessage, error) {
+	if len(responseFormat) == 0 || strings.TrimSpace(string(responseFormat)) == "null" {
+		return imageConfig, nil
+	}
+
+	var root map[string]any
+	if err := common.Unmarshal(responseFormat, &root); err != nil {
+		return nil, fmt.Errorf("invalid Gemini response format: %w", err)
+	}
+	if len(root) == 0 {
+		return imageConfig, nil
+	}
+
+	var wrappedImage any
+	for key, value := range root {
+		if normalizeImageOptionKey(key) == "image" {
+			wrappedImage = value
+			break
+		}
+	}
+	if wrappedImage == nil {
+		return imageConfig, nil
+	}
+	wrappedConfig, ok := wrappedImage.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("Gemini response format image must be an object")
+	}
+
+	if len(imageConfig) == 0 || strings.TrimSpace(string(imageConfig)) == "null" {
+		encoded, err := common.Marshal(wrappedConfig)
+		if err != nil {
+			return nil, fmt.Errorf("marshal Gemini response format image: %w", err)
+		}
+		return encoded, nil
+	}
+
+	var existingConfig map[string]any
+	if err := common.Unmarshal(imageConfig, &existingConfig); err != nil {
+		return nil, fmt.Errorf("invalid Gemini image config: %w", err)
+	}
+	for key, value := range wrappedConfig {
+		if _, exists := existingConfig[key]; !exists {
+			existingConfig[key] = value
+		}
+	}
+	encoded, err := common.Marshal(existingConfig)
+	if err != nil {
+		return nil, fmt.Errorf("marshal Gemini image config: %w", err)
+	}
+	return encoded, nil
 }
 
 func normalizeNativeGeminiImageConfig(raw json.RawMessage) (json.RawMessage, error) {

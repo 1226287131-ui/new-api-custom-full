@@ -144,6 +144,30 @@ func TestConvertGeminiRequestNormalizesNativeImageConfig(t *testing.T) {
 	require.Equal(t, "2K", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "imageSize").String())
 }
 
+func TestConvertGeminiRequestNormalizesResponseFormatImageWrapper(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "Nano Banana 2",
+		},
+	}
+	request := &dto.GeminiChatRequest{
+		GenerationConfig: dto.GeminiChatGenerationConfig{
+			ResponseModalities: []string{"TEXT", "IMAGE"},
+			ResponseFormat:     json.RawMessage(`{"image":{"aspectRatio":"9:16","imageSize":"2K"}}`),
+		},
+	}
+
+	converted, err := adaptor.ConvertGeminiRequest(nil, info, request)
+	require.NoError(t, err)
+	convertedRequest, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	require.Empty(t, convertedRequest.GenerationConfig.ResponseFormat)
+	require.Equal(t, "9:16", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "aspectRatio").String())
+	require.Equal(t, "2K", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
 func TestConvertOpenAIImageRequestRejectsMultipleCandidates(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := &relaycommon.RelayInfo{

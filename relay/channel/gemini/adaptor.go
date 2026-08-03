@@ -66,8 +66,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
-	if !strings.HasPrefix(strings.ToLower(info.UpstreamModelName), "imagen") {
-		if !model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+	upstreamModelName := resolveGeminiUpstreamModelName(info)
+	if !strings.HasPrefix(strings.ToLower(upstreamModelName), "imagen") {
+		if !isGeminiImagineModel(info) {
 			return nil, errors.New("not supported model for image generation, expected an Imagen or Gemini image model")
 		}
 		return convertOpenAIImageRequestToGemini(c, request)
