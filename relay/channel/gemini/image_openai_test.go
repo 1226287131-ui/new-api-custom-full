@@ -94,6 +94,56 @@ func TestConvertOpenAIImageRequestToGeminiAcceptsGoogleOptionsAndReferences(t *t
 	require.Equal(t, "turn the references into a product photo", request.Contents[0].Parts[2].Text)
 }
 
+func TestConvertOpenAIImageRequestUsesRatioAndResolutionAliases(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}
+
+	converted, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
+		Model:  "Nano Banana 2",
+		Prompt: "a portrait poster",
+		Size:   "2048x2048",
+		Extra: map[string]json.RawMessage{
+			"ratio":      json.RawMessage(`"9:16"`),
+			"resolution": json.RawMessage(`"2K"`),
+		},
+	})
+	require.NoError(t, err)
+	request, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	require.Equal(t, "9:16", gjson.GetBytes(request.GenerationConfig.ImageConfig, "aspectRatio").String())
+	require.Equal(t, "2K", gjson.GetBytes(request.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
+func TestConvertGeminiRequestNormalizesNativeImageConfig(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "Nano Banana 2",
+		},
+	}
+	request := &dto.GeminiChatRequest{
+		GenerationConfig: dto.GeminiChatGenerationConfig{
+			ResponseModalities: []string{"TEXT"},
+			ImageConfig:        json.RawMessage(`{"aspect_ratio":"9 : 16","image_size":"2048x2048"}`),
+		},
+	}
+
+	converted, err := adaptor.ConvertGeminiRequest(nil, info, request)
+	require.NoError(t, err)
+	convertedRequest, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	require.Equal(t, []string{"TEXT", "IMAGE"}, convertedRequest.GenerationConfig.ResponseModalities)
+	require.Equal(t, "9:16", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "aspectRatio").String())
+	require.Equal(t, "2K", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
 func TestConvertOpenAIImageRequestRejectsMultipleCandidates(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := &relaycommon.RelayInfo{

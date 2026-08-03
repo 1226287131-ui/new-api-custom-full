@@ -25,7 +25,9 @@ func (r *GeminiChatRequest) UnmarshalJSON(data []byte) error {
 	type Alias GeminiChatRequest
 	var aux struct {
 		Alias
-		SystemInstructionSnake *GeminiChatContent `json:"system_instruction,omitempty"`
+		GenerationConfigSnake  *GeminiChatGenerationConfig   `json:"generation_config,omitempty"`
+		SafetySettingsSnake    []GeminiChatSafetySettings    `json:"safety_settings,omitempty"`
+		SystemInstructionSnake *GeminiChatContent             `json:"system_instruction,omitempty"`
 	}
 
 	if err := kitutil.Unmarshal(data, &aux); err != nil {
@@ -33,6 +35,16 @@ func (r *GeminiChatRequest) UnmarshalJSON(data []byte) error {
 	}
 
 	*r = GeminiChatRequest(aux.Alias)
+
+	// Accept snake_case at the request boundary as well as inside
+	// generationConfig. Some Gemini-compatible clients use the snake_case
+	// spelling for the whole request object.
+	if aux.GenerationConfigSnake != nil {
+		r.GenerationConfig = *aux.GenerationConfigSnake
+	}
+	if len(aux.SafetySettingsSnake) > 0 {
+		r.SafetySettings = aux.SafetySettingsSnake
+	}
 
 	if aux.SystemInstructionSnake != nil {
 		r.SystemInstructions = aux.SystemInstructionSnake

@@ -35,6 +35,16 @@ func applyOpenAIGeminiImageConfig(request dto.GeneralOpenAIRequest, geminiReques
 			return fmt.Errorf("unsupported image size %q for Gemini image model", request.Size)
 		}
 	}
+	for _, raw := range []string{request.AspectRatio, request.Ratio} {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		normalized, err := normalizeOpenAIGeminiAspectRatio(raw)
+		if err != nil {
+			return err
+		}
+		aspectRatio = normalized
+	}
 	if raw, ok := findImageConfigOption(request.ExtraBody, "aspect_ratio", "aspectRatio", "ratio"); ok {
 		normalized, err := normalizeOpenAIGeminiAspectRatio(raw)
 		if err != nil {
@@ -46,7 +56,13 @@ func applyOpenAIGeminiImageConfig(request dto.GeneralOpenAIRequest, geminiReques
 		config["aspectRatio"] = aspectRatio
 	}
 
-	imageSize := ""
+	imageSize := request.ImageSize
+	if imageSize == "" {
+		imageSize = request.Resolution
+	}
+	if imageSize == "" {
+		imageSize = request.Quality
+	}
 	if raw, ok := findImageConfigOption(request.ExtraBody, "image_size", "imageSize", "resolution", "output_resolution", "outputResolution", "quality"); ok {
 		imageSize = raw
 	}
@@ -184,8 +200,11 @@ func isOpenAIImageAspectRatio(value string) bool {
 }
 
 func normalizeOpenAIGeminiAspectRatio(raw string) (string, error) {
-	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(raw), " ", ""))
 	if _, ok := openAIGeminiImageAspectRatios[normalized]; !ok {
+		if mapped := openAIImageAspectRatio(normalized); mapped != "" {
+			return mapped, nil
+		}
 		return "", fmt.Errorf("unsupported Gemini image aspect ratio %q", raw)
 	}
 	return normalized, nil

@@ -42,6 +42,9 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 			}
 		}
 	}
+	if err := normalizeNativeGeminiImageRequest(request, info); err != nil {
+		return nil, err
+	}
 	return request, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -14,6 +15,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
@@ -80,7 +82,7 @@ func normalizeOpenAIImageOptions(request dto.ImageRequest) (string, string, erro
 		aspectRatio = "1:1"
 	}
 
-	if raw, ok := findOpenAIImageOption(request.Extra, "aspect_ratio", "aspectRatio", "ratio"); ok {
+	if raw, ok := findOpenAIImageOption(request.Extra, "aspect_ratio", "aspectRatio", "ratio", "aspect"); ok {
 		normalized, err := normalizeGeminiImageAspectRatio(raw)
 		if err != nil {
 			return "", "", err
@@ -93,7 +95,7 @@ func normalizeOpenAIImageOptions(request dto.ImageRequest) (string, string, erro
 	}
 
 	resolution := ""
-	if raw, ok := findOpenAIImageOption(request.Extra, "image_size", "imageSize", "resolution", "output_resolution", "outputResolution"); ok {
+	if raw, ok := findOpenAIImageOption(request.Extra, "image_size", "imageSize", "resolution", "output_resolution", "outputResolution", "exact_size", "exactSize", "quality"); ok {
 		resolution = raw
 	}
 	if resolution == "" && request.Quality != "" {
@@ -148,8 +150,16 @@ func aspectRatioFromOpenAISize(size string) string {
 }
 
 func normalizeGeminiImageAspectRatio(raw string) (string, error) {
-	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized := strings.ToLower(strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(raw)))
 	if _, ok := supportedGeminiImageAspectRatios[normalized]; !ok {
+		if mapped := aspectRatioFromOpenAISize(normalized); mapped != "" {
+			return mapped, nil
+		}
 		return "", fmt.Errorf("unsupported image aspect ratio %q; use 1:1, 2:3, 3:2, 3:4, 4:3, 9:16, 16:9, or 21:9", raw)
 	}
 	return normalized, nil
@@ -256,6 +266,110 @@ func imageOptionScalar(value any) (string, bool) {
 
 func normalizeImageOptionKey(key string) string {
 	return strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(strings.TrimSpace(key)))
+}
+
+// normalizeNativeGeminiImageRequest makes native Gemini requests resilient to
+// clients that use OpenAI-style snake_case names. The upstream Gemini API is
+// strict about the camelCase imageConfig keys, so forwarding the raw object can
+// silently fall back to a square image.
+func normalizeNativeGeminiImageRequest(request *dto.GeminiChatRequest, info *relaycommon.RelayInfo) error {
+	if request == nil || info == nil || !model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+		return nil
+	}
+
+	modalities := request.GenerationConfig.ResponseModalities
+	if len(modalities) == 0 {
+		modalities = []string{"TEXT", "IMAGE"}
+	} else {
+		hasImage := false
+		for _, modality := range modalities {
+			if strings.EqualFold(strings.TrimSpace(modality), "IMAGE") {
+				hasImage = true
+				break
+			}
+		}
+		if !hasImage {
+			modalities = append(modalities, "IMAGE")
+		}
+	}
+	request.GenerationConfig.ResponseModalities = modalities
+
+	imageConfig, err := normalizeNativeGeminiImageConfig(request.GenerationConfig.ImageConfig)
+	if err != nil {
+		return err
+	}
+	if len(imageConfig) > 0 {
+		request.GenerationConfig.ImageConfig = imageConfig
+	}
+	return nil
+}
+
+func normalizeNativeGeminiImageConfig(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return raw, nil
+	}
+
+	var root map[string]any
+	if err := common.Unmarshal(raw, &root); err != nil {
+		return nil, fmt.Errorf("invalid Gemini image config: %w", err)
+	}
+	if len(root) == 0 {
+		return raw, nil
+	}
+
+	wantedAspect := make(map[string]struct{})
+	for _, name := range []string{"aspect_ratio", "aspectRatio", "ratio", "aspect"} {
+		wantedAspect[normalizeImageOptionKey(name)] = struct{}{}
+	}
+	wantedSize := make(map[string]struct{})
+	for _, name := range []string{"image_size", "imageSize", "resolution", "output_resolution", "outputResolution", "exact_size", "exactSize", "quality", "size"} {
+		wantedSize[normalizeImageOptionKey(name)] = struct{}{}
+	}
+
+	var aspectRatio string
+	if value, ok := findImageOptionValue(root, wantedAspect, 0); ok {
+		aspectRatio = value
+	}
+	var imageSize string
+	if value, ok := findImageOptionValue(root, wantedSize, 0); ok {
+		imageSize = value
+	}
+
+	canonical := make(map[string]any, len(root)+2)
+	for key, value := range root {
+		normalizedKey := normalizeImageOptionKey(key)
+		if _, ok := wantedAspect[normalizedKey]; ok {
+			continue
+		}
+		if _, ok := wantedSize[normalizedKey]; ok {
+			continue
+		}
+		canonical[key] = value
+	}
+
+	if aspectRatio != "" {
+		normalized, err := normalizeGeminiImageAspectRatio(aspectRatio)
+		if err != nil {
+			return nil, err
+		}
+		canonical["aspectRatio"] = normalized
+	}
+	if imageSize != "" {
+		normalized, err := normalizeGeminiImageSize(imageSize)
+		if err != nil {
+			return nil, err
+		}
+		canonical["imageSize"] = normalized
+	}
+
+	if len(canonical) == 0 {
+		return nil, nil
+	}
+	encoded, err := common.Marshal(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("marshal Gemini image config: %w", err)
+	}
+	return encoded, nil
 }
 
 func collectOpenAIImageParts(c *gin.Context, request dto.ImageRequest) ([]dto.GeminiPart, error) {

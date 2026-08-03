@@ -76,3 +76,24 @@ func TestOpenAIChatGeminiImageConfigMapsPortraitDimensions(t *testing.T) {
 	require.Equal(t, "3:4", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "aspectRatio").String())
 	require.Equal(t, "1K", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "imageSize").String())
 }
+
+func TestOpenAIChatGeminiImageConfigAcceptsTopLevelAliases(t *testing.T) {
+	request := dto.GeneralOpenAIRequest{
+		Model:       "Nano Banana 2",
+		Messages:    []dto.Message{{Role: "user", Content: "make a story portrait"}},
+		AspectRatio: "9:16",
+		Quality:     "high",
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "Nano Banana 2",
+		},
+	}
+
+	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
+	require.NoError(t, err)
+	require.Equal(t, "9:16", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "aspectRatio").String())
+	require.Equal(t, "2K", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "imageSize").String())
+	require.Equal(t, []string{"TEXT", "IMAGE"}, converted.GenerationConfig.ResponseModalities)
+}
