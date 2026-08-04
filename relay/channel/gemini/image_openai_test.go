@@ -14,6 +14,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -120,6 +121,119 @@ func TestConvertOpenAIImageRequestUsesRatioAndResolutionAliases(t *testing.T) {
 	require.Equal(t, "2K", gjson.GetBytes(request.GenerationConfig.ImageConfig, "imageSize").String())
 }
 
+func TestConvertOpenAIImageRequestSupportsDocumentedStandardRatios(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}
+
+	for _, ratio := range []string{"4:5", "5:4"} {
+		converted, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
+			Model:  "Nano Banana 2",
+			Prompt: "a product poster",
+			Extra:  map[string]json.RawMessage{"aspect_ratio": json.RawMessage(`"` + ratio + `"`)},
+		})
+		require.NoError(t, err)
+		request, ok := converted.(*dto.GeminiChatRequest)
+		require.True(t, ok)
+		require.Equal(t, ratio, gjson.GetBytes(request.GenerationConfig.ImageConfig, "aspectRatio").String())
+	}
+}
+
+func TestConvertOpenAIImageRequestMapsCustomDimensionsToNearestRatio(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}
+
+	converted, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
+		Model:  "Nano Banana 2",
+		Prompt: "a tall poster",
+		Size:   "2318x3320",
+	})
+	require.NoError(t, err)
+	request, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	assert.Equal(t, "2:3", gjson.GetBytes(request.GenerationConfig.ImageConfig, "aspectRatio").String())
+	assert.Equal(t, "2K", gjson.GetBytes(request.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
+func TestConvertOpenAIImageRequestPrefersSizeOverQualityWhenResolutionIsOmitted(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}
+
+	converted, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
+		Model:   "Nano Banana 2",
+		Prompt:  "a cinematic landscape",
+		Size:    "4k",
+		Quality: "auto",
+	})
+	require.NoError(t, err)
+	request, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	assert.Equal(t, "4K", gjson.GetBytes(request.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
+func TestConvertOpenAIImageRequestPrefersOutputResolutionOverSize(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}
+
+	converted, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
+		Model:  "Nano Banana 2",
+		Prompt: "a cinematic landscape",
+		Size:   "4k",
+		Extra: map[string]json.RawMessage{
+			"output_resolution": json.RawMessage(`"2K"`),
+		},
+	})
+	require.NoError(t, err)
+	request, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	assert.Equal(t, "2K", gjson.GetBytes(request.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
+func TestConvertOpenAIImageRequestPreservesAutomaticEditRatio(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeImagesEdits,
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}
+
+	converted, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
+		Model:  "Nano Banana 2",
+		Prompt: "preserve the reference composition",
+		Size:   "auto",
+		Images: json.RawMessage(`["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="]`),
+	})
+	require.NoError(t, err)
+	request, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	assert.Equal(t, "auto", gjson.GetBytes(request.GenerationConfig.ImageConfig, "aspectRatio").String())
+}
+
 func TestConvertGeminiRequestNormalizesNativeImageConfig(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := &relaycommon.RelayInfo{
@@ -168,7 +282,7 @@ func TestConvertGeminiRequestNormalizesResponseFormatImageWrapper(t *testing.T) 
 	require.Empty(t, convertedRequest.GenerationConfig.ImageConfig)
 }
 
-func TestConvertOpenAIImageRequestRejectsMultipleCandidates(t *testing.T) {
+func TestConvertOpenAIImageRequestMapsMultipleCandidates(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := &relaycommon.RelayInfo{
 		RelayMode:       relayconstant.RelayModeImagesGenerations,
@@ -178,12 +292,16 @@ func TestConvertOpenAIImageRequestRejectsMultipleCandidates(t *testing.T) {
 		},
 	}
 
-	_, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
+	converted, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
 		Model:  "nano-banana-2",
 		Prompt: "a cat",
 		N:      common.GetPointer(uint(2)),
 	})
-	require.EqualError(t, err, "Gemini image models currently support n=1 only")
+	require.NoError(t, err)
+	request, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	require.NotNil(t, request.GenerationConfig.CandidateCount)
+	assert.Equal(t, 2, *request.GenerationConfig.CandidateCount)
 }
 
 func TestGeminiNativeImageHandlerConvertsInlineData(t *testing.T) {

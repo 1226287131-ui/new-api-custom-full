@@ -32,24 +32,50 @@ func TestGeminiGenerateContentRequestToOpenAIChatPreservesImageOptions(t *testin
 	require.NoError(t, err)
 	require.NotNil(t, converted)
 	assert.Equal(t, "Nano Banana 2", converted.Model)
-	assert.Equal(t, "9:16", converted.Size)
+	assert.Equal(t, "2k", converted.Size)
 	assert.Equal(t, "9:16", converted.AspectRatio)
-	assert.Equal(t, "9:16", converted.Ratio)
-	assert.Equal(t, "2K", converted.ImageSize)
-	assert.Equal(t, "2K", converted.Resolution)
+	assert.Equal(t, "2K", converted.OutputResolution)
+	assert.Empty(t, converted.Ratio)
+	assert.Empty(t, converted.ImageSize)
+	assert.Empty(t, converted.Resolution)
 
 	var modalities []string
 	require.NoError(t, common.Unmarshal(converted.Modalities, &modalities))
 	assert.Equal(t, []string{"text", "image"}, modalities)
+	assert.Empty(t, converted.ExtraBody)
+}
 
-	var extraBody map[string]any
-	require.NoError(t, common.Unmarshal(converted.ExtraBody, &extraBody))
-	googleBody, ok := extraBody["google"].(map[string]any)
-	require.True(t, ok)
-	imageConfig, ok := googleBody["image_config"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "9:16", imageConfig["aspect_ratio"])
-	assert.Equal(t, "2K", imageConfig["image_size"])
+func TestGeminiGenerateContentRequestToOpenAIChatDoesNotPutAspectRatioInSize(t *testing.T) {
+	request := &dto.GeminiChatRequest{
+		Contents: []dto.GeminiChatContent{{
+			Role:  "user",
+			Parts: []dto.GeminiPart{{Text: "draw a cinematic landscape"}},
+		}},
+		GenerationConfig: dto.GeminiChatGenerationConfig{
+			ResponseModalities: []string{"IMAGE"},
+			ImageConfig:        json.RawMessage(`{"aspectRatio":"16:9","imageSize":"4K"}`),
+		},
+	}
+
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana 2"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "16:9", converted.AspectRatio)
+	assert.Equal(t, "4k", converted.Size)
+	assert.Equal(t, "4K", converted.OutputResolution)
+	assert.NotEqual(t, "16:9", converted.Size)
+
+	body, err := common.Marshal(converted)
+	require.NoError(t, err)
+	var encoded map[string]any
+	require.NoError(t, common.Unmarshal(body, &encoded))
+	assert.Equal(t, "16:9", encoded["aspect_ratio"])
+	assert.Equal(t, "4k", encoded["size"])
+	assert.Equal(t, "4K", encoded["output_resolution"])
+	assert.NotContains(t, encoded, "ratio")
+	assert.NotContains(t, encoded, "image_size")
 }
 
 func TestGeminiGenerateContentRequestToOpenAIChatReadsResponseFormatImageOptions(t *testing.T) {
@@ -70,8 +96,51 @@ func TestGeminiGenerateContentRequestToOpenAIChatReadsResponseFormatImageOptions
 	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, info)
 	require.NoError(t, err)
 	assert.Equal(t, "3:4", converted.AspectRatio)
-	assert.Equal(t, "4K", converted.ImageSize)
+	assert.Equal(t, "4k", converted.Size)
+	assert.Equal(t, "4K", converted.OutputResolution)
 	require.NotEmpty(t, converted.Modalities)
+}
+
+func TestGeminiGenerateContentRequestToOpenAIChatAcceptsBanana2ExtraRatios(t *testing.T) {
+	request := &dto.GeminiChatRequest{
+		Contents: []dto.GeminiChatContent{{
+			Role:  "user",
+			Parts: []dto.GeminiPart{{Text: "draw an ultra-tall poster"}},
+		}},
+		GenerationConfig: dto.GeminiChatGenerationConfig{
+			ResponseModalities: []string{"IMAGE"},
+			ImageConfig:        json.RawMessage(`{"aspectRatio":"1:8","imageSize":"1K"}`),
+		},
+	}
+
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana 2"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "1:8", converted.AspectRatio)
+	assert.Equal(t, "1k", converted.Size)
+}
+
+func TestGeminiGenerateContentRequestToOpenAIChatAcceptsDocumentedStandardRatios(t *testing.T) {
+	for _, ratio := range []string{"4:5", "5:4"} {
+		request := &dto.GeminiChatRequest{
+			Contents: []dto.GeminiChatContent{{
+				Role:  "user",
+				Parts: []dto.GeminiPart{{Text: "draw a poster"}},
+			}},
+			GenerationConfig: dto.GeminiChatGenerationConfig{
+				ResponseModalities: []string{"IMAGE"},
+				ImageConfig:        json.RawMessage(`{"aspectRatio":"` + ratio + `","imageSize":"1K"}`),
+			},
+		}
+		converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &relaycommon.RelayInfo{
+			ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana 2"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, ratio, converted.AspectRatio)
+		assert.Equal(t, "1k", converted.Size)
+	}
 }
 
 func TestGeminiGenerateContentRequestToOpenAIChatDerivesRatioFromDimensions(t *testing.T) {
@@ -103,7 +172,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatDerivesRatioFromDimensions(t *t
 
 			require.NoError(t, err)
 			assert.Equal(t, testCase.wantRatio, converted.AspectRatio)
-			assert.Equal(t, testCase.wantRatio, converted.Ratio)
+			assert.NotEqual(t, testCase.wantRatio, converted.Size)
 		})
 	}
 }

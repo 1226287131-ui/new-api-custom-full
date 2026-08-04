@@ -50,7 +50,20 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 	if !ok {
 		return nil, fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value)
 	}
-	return a.ConvertOpenAIRequest(c, info, openaiRequest)
+	converted, err := a.ConvertOpenAIRequest(c, info, openaiRequest)
+	if err != nil {
+		return nil, err
+	}
+	convertedRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	if !ok {
+		return converted, nil
+	}
+	if imageRequest, isImage, err := buildGeminiImageEndpointRequest(request, convertedRequest, info); err != nil {
+		return nil, err
+	} else if isImage {
+		return imageRequest, nil
+	}
+	return convertedRequest, nil
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
@@ -171,6 +184,13 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		url = strings.Replace(url, "{model}", info.UpstreamModelName, -1)
 		return url, nil
 	default:
+		if info.UseGeminiImageEndpoint && info.ChannelType == constant.ChannelTypeOpenAI {
+			path := "/v1/images/generations"
+			if info.GeminiImageEdit {
+				path = "/v1/images/edits"
+			}
+			return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, path, info.ChannelType), nil
+		}
 		if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
 			info.RelayMode != relayconstant.RelayModeResponses &&
 			info.RelayMode != relayconstant.RelayModeResponsesCompact {

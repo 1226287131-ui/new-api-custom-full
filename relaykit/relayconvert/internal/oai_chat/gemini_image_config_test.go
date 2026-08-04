@@ -4,8 +4,9 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -26,12 +27,7 @@ func TestOpenAIChatGeminiImageConfigAcceptsGoogleCamelCase(t *testing.T) {
 		Messages:  []dto.Message{{Role: "user", Content: "make a portrait"}},
 		ExtraBody: extraBody,
 	}
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "nano-banana-pro-preview",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			UpstreamModelName: "gemini-3-pro-image-preview",
-		},
-	}
+	info := testGeminiImageMeta("nano-banana-pro-preview", "gemini-3-pro-image-preview")
 
 	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
 	require.NoError(t, err)
@@ -46,12 +42,7 @@ func TestOpenAIChatGeminiImageConfigAcceptsSizeRatio(t *testing.T) {
 		Messages: []dto.Message{{Role: "user", Content: "make a portrait"}},
 		Size:     "3:4",
 	}
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "nano-banana-2",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			UpstreamModelName: "gemini-3.1-flash-image-preview",
-		},
-	}
+	info := testGeminiImageMeta("nano-banana-2", "gemini-3.1-flash-image-preview")
 
 	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
 	require.NoError(t, err)
@@ -64,12 +55,7 @@ func TestOpenAIChatGeminiImageConfigMapsPortraitDimensions(t *testing.T) {
 		Messages: []dto.Message{{Role: "user", Content: "make a portrait"}},
 		Size:     "1024x1365",
 	}
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "banana-pro",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			UpstreamModelName: "gemini-3-pro-image-preview",
-		},
-	}
+	info := testGeminiImageMeta("banana-pro", "gemini-3-pro-image-preview")
 
 	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
 	require.NoError(t, err)
@@ -84,16 +70,90 @@ func TestOpenAIChatGeminiImageConfigAcceptsTopLevelAliases(t *testing.T) {
 		AspectRatio: "9:16",
 		Quality:     "high",
 	}
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "Nano Banana 2",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			UpstreamModelName: "Nano Banana 2",
-		},
-	}
+	info := testGeminiImageMeta("Nano Banana 2", "Nano Banana 2")
 
 	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
 	require.NoError(t, err)
 	require.Equal(t, "9:16", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "aspectRatio").String())
 	require.Equal(t, "2K", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "imageSize").String())
 	require.Equal(t, []string{"TEXT", "IMAGE"}, converted.GenerationConfig.ResponseModalities)
+}
+
+func TestOpenAIChatGeminiImageConfigMapsDocumentedResolutionAndAutoRatio(t *testing.T) {
+	request := dto.GeneralOpenAIRequest{
+		Model:            "Nano Banana 2",
+		Messages:         []dto.Message{{Role: "user", Content: "preserve the reference composition"}},
+		Size:             "4k",
+		AspectRatio:      "auto",
+		OutputResolution: "4K",
+	}
+	info := testGeminiImageMeta("Nano Banana 2", "Nano Banana 2")
+
+	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
+	require.NoError(t, err)
+	require.Equal(t, "auto", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "aspectRatio").String())
+	require.Equal(t, "4K", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
+func TestOpenAIChatGeminiImageConfigAcceptsBanana2ExtraRatios(t *testing.T) {
+	request := dto.GeneralOpenAIRequest{
+		Model:       "Nano Banana 2",
+		Messages:    []dto.Message{{Role: "user", Content: "draw an ultra-wide banner"}},
+		AspectRatio: "8:1",
+	}
+	info := testGeminiImageMeta("Nano Banana 2", "Nano Banana 2")
+
+	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
+	require.NoError(t, err)
+	require.Equal(t, "8:1", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "aspectRatio").String())
+}
+
+func TestOpenAIChatGeminiImageConfigAcceptsDocumentedStandardRatios(t *testing.T) {
+	for _, ratio := range []string{"4:5", "5:4"} {
+		request := dto.GeneralOpenAIRequest{
+			Model:       "Nano Banana 2",
+			Messages:    []dto.Message{{Role: "user", Content: "draw a poster"}},
+			AspectRatio: ratio,
+		}
+		info := testGeminiImageMeta("Nano Banana 2", "Nano Banana 2")
+		converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
+		require.NoError(t, err)
+		assert.Equal(t, ratio, gjson.GetBytes(converted.GenerationConfig.ImageConfig, "aspectRatio").String())
+	}
+}
+
+func TestOpenAIChatGeminiImageConfigPrefersSizeOverQuality(t *testing.T) {
+	request := dto.GeneralOpenAIRequest{
+		Model:    "Nano Banana 2",
+		Messages: []dto.Message{{Role: "user", Content: "draw a landscape"}},
+		Size:     "4k",
+		Quality:  "auto",
+	}
+	info := testGeminiImageMeta("Nano Banana 2", "Nano Banana 2")
+
+	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
+	require.NoError(t, err)
+	assert.Equal(t, "4K", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
+func TestOpenAIChatGeminiImageConfigPrefersOutputResolutionOverSize(t *testing.T) {
+	request := dto.GeneralOpenAIRequest{
+		Model:            "Nano Banana 2",
+		Messages:         []dto.Message{{Role: "user", Content: "draw a landscape"}},
+		Size:             "4k",
+		OutputResolution: "2K",
+	}
+	info := testGeminiImageMeta("Nano Banana 2", "Nano Banana 2")
+
+	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
+	require.NoError(t, err)
+	assert.Equal(t, "2K", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
+func testGeminiImageMeta(origin, upstream string) *convmeta.Values {
+	return &convmeta.Values{
+		OriginModelName:     origin,
+		UpstreamModelName:   upstream,
+		ChannelMetaAttached: true,
+	}
 }

@@ -95,6 +95,11 @@ type RelayInfo struct {
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool
+	// UseGeminiImageEndpoint marks a native Gemini image request that is being
+	// bridged through an OpenAI-compatible channel. The response format remains
+	// Gemini, but the upstream request uses the OpenAI Images API.
+	UseGeminiImageEndpoint bool
+	GeminiImageEdit        bool
 	IsPlayground           bool
 	UsePrice               bool
 	RelayMode              int

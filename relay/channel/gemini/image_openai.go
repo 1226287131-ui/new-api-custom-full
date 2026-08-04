@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -26,14 +28,21 @@ const maxGeminiInlineImageBytes = 20 * 1024 * 1024
 var geminiMarkdownImageURLPattern = regexp.MustCompile(`(?i)!\[[^\]]*\]\(\s*(?:<)?(https?://[^\s)>]+)(?:>)?(?:\s+["'][^)]*["'])?\s*\)`)
 
 var supportedGeminiImageAspectRatios = map[string]struct{}{
+	"auto": {},
 	"1:1":  {},
 	"2:3":  {},
 	"3:2":  {},
 	"3:4":  {},
 	"4:3":  {},
+	"4:5":  {},
+	"5:4":  {},
 	"9:16": {},
 	"16:9": {},
 	"21:9": {},
+	"1:8":  {},
+	"1:4":  {},
+	"4:1":  {},
+	"8:1":  {},
 }
 
 func convertOpenAIImageRequestToGemini(c *gin.Context, request dto.ImageRequest) (*dto.GeminiChatRequest, error) {
@@ -41,8 +50,10 @@ func convertOpenAIImageRequestToGemini(c *gin.Context, request dto.ImageRequest)
 		return nil, fmt.Errorf("prompt is required for Gemini image generation")
 	}
 
-	if request.N != nil && *request.N > 1 {
-		return nil, fmt.Errorf("Gemini image models currently support n=1 only")
+	if request.N != nil {
+		if *request.N == 0 || *request.N > dto.MaxImageN {
+			return nil, fmt.Errorf("n must be between 1 and %d for Gemini image models", dto.MaxImageN)
+		}
 	}
 
 	aspectRatio, imageSize, err := normalizeOpenAIImageOptions(request)
@@ -67,7 +78,7 @@ func convertOpenAIImageRequestToGemini(c *gin.Context, request dto.ImageRequest)
 		return nil, fmt.Errorf("marshal Gemini image config: %w", err)
 	}
 
-	return &dto.GeminiChatRequest{
+	geminiRequest := &dto.GeminiChatRequest{
 		Contents: []dto.GeminiChatContent{{
 			Role:  "user",
 			Parts: parts,
@@ -76,7 +87,12 @@ func convertOpenAIImageRequestToGemini(c *gin.Context, request dto.ImageRequest)
 			ResponseModalities: []string{"TEXT", "IMAGE"},
 			ImageConfig:        imageConfigJSON,
 		},
-	}, nil
+	}
+	if request.N != nil {
+		candidateCount := int(*request.N)
+		geminiRequest.GenerationConfig.CandidateCount = &candidateCount
+	}
+	return geminiRequest, nil
 }
 
 func normalizeOpenAIImageOptions(request dto.ImageRequest) (string, string, error) {
@@ -98,14 +114,14 @@ func normalizeOpenAIImageOptions(request dto.ImageRequest) (string, string, erro
 	}
 
 	resolution := ""
-	if raw, ok := findOpenAIImageOption(request.Extra, "image_size", "imageSize", "resolution", "output_resolution", "outputResolution", "exact_size", "exactSize", "quality"); ok {
+	if raw, ok := findOpenAIImageOption(request.Extra, "output_resolution", "outputResolution", "image_size", "imageSize", "resolution", "exact_size", "exactSize", "quality"); ok {
 		resolution = raw
-	}
-	if resolution == "" && request.Quality != "" {
-		resolution = request.Quality
 	}
 	if resolution == "" && request.Size != "" && !isAspectRatio(request.Size) && request.Size != "auto" {
 		resolution = request.Size
+	}
+	if resolution == "" && request.Quality != "" {
+		resolution = request.Quality
 	}
 	if resolution == "" {
 		return aspectRatio, "", nil
@@ -120,8 +136,11 @@ func normalizeOpenAIImageOptions(request dto.ImageRequest) (string, string, erro
 
 func aspectRatioFromOpenAISize(size string) string {
 	normalized := strings.ToLower(strings.TrimSpace(size))
-	if normalized == "" || normalized == "auto" {
+	if normalized == "" {
 		return ""
+	}
+	if normalized == "auto" {
+		return "auto"
 	}
 	if isAspectRatio(normalized) {
 		if _, ok := supportedGeminiImageAspectRatios[normalized]; ok {
@@ -147,9 +166,33 @@ func aspectRatioFromOpenAISize(size string) string {
 		return "16:9"
 	case "1344x576", "2560x1080":
 		return "21:9"
-	default:
+	}
+
+	parts := strings.Split(normalized, "x")
+	if len(parts) != 2 {
 		return ""
 	}
+	width, widthErr := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	height, heightErr := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return ""
+	}
+
+	ratio := width / height
+	bestRatio := ""
+	bestDifference := math.MaxFloat64
+	for _, candidate := range []string{"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9", "1:8", "1:4", "4:1", "8:1"} {
+		candidateParts := strings.Split(candidate, ":")
+		candidateWidth, _ := strconv.ParseFloat(candidateParts[0], 64)
+		candidateHeight, _ := strconv.ParseFloat(candidateParts[1], 64)
+		candidateRatio := candidateWidth / candidateHeight
+		difference := math.Abs(ratio-candidateRatio) / candidateRatio
+		if difference < bestDifference {
+			bestDifference = difference
+			bestRatio = candidate
+		}
+	}
+	return bestRatio
 }
 
 func normalizeGeminiImageAspectRatio(raw string) (string, error) {
@@ -163,7 +206,7 @@ func normalizeGeminiImageAspectRatio(raw string) (string, error) {
 		if mapped := aspectRatioFromOpenAISize(normalized); mapped != "" {
 			return mapped, nil
 		}
-		return "", fmt.Errorf("unsupported image aspect ratio %q; use 1:1, 2:3, 3:2, 3:4, 4:3, 9:16, 16:9, or 21:9", raw)
+		return "", fmt.Errorf("unsupported image aspect ratio %q; use the supported Banana ratios including 4:5, 5:4, 1:8, 1:4, 4:1, and 8:1", raw)
 	}
 	return normalized, nil
 }
@@ -207,11 +250,13 @@ func findOpenAIImageOption(extra map[string]json.RawMessage, names ...string) (s
 			root[key] = value
 		}
 	}
-	wanted := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		wanted[normalizeImageOptionKey(name)] = struct{}{}
+		wanted := map[string]struct{}{normalizeImageOptionKey(name): {}}
+		if value, ok := findImageOptionValue(root, wanted, 0); ok {
+			return value, true
+		}
 	}
-	return findImageOptionValue(root, wanted, 0)
+	return "", false
 }
 
 func findImageOptionValue(value any, wanted map[string]struct{}, depth int) (string, bool) {
@@ -220,6 +265,13 @@ func findImageOptionValue(value any, wanted map[string]struct{}, depth int) (str
 	}
 
 	if object, ok := value.(map[string]any); ok {
+		for key, child := range object {
+			if _, ok := wanted[normalizeImageOptionKey(key)]; ok {
+				if scalar, ok := imageOptionScalar(child); ok {
+					return scalar, true
+				}
+			}
+		}
 		// Prefer Google's nested image config over unrelated vendor fields.
 		for _, preferred := range []string{"extra_body", "google", "generation_config", "generationConfig", "image_config", "imageConfig", "parameters"} {
 			for key, child := range object {
@@ -227,13 +279,6 @@ func findImageOptionValue(value any, wanted map[string]struct{}, depth int) (str
 					if found, ok := findImageOptionValue(child, wanted, depth+1); ok {
 						return found, true
 					}
-				}
-			}
-		}
-		for key, child := range object {
-			if _, ok := wanted[normalizeImageOptionKey(key)]; ok {
-				if scalar, ok := imageOptionScalar(child); ok {
-					return scalar, true
 				}
 			}
 		}

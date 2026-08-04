@@ -15,14 +15,21 @@ import (
 )
 
 var geminiToOpenAIImageAspectRatios = map[string]struct{}{
+	"auto": {},
 	"1:1":  {},
 	"2:3":  {},
 	"3:2":  {},
 	"3:4":  {},
 	"4:3":  {},
+	"4:5":  {},
+	"5:4":  {},
 	"9:16": {},
 	"16:9": {},
 	"21:9": {},
+	"1:8":  {},
+	"1:4":  {},
+	"4:1":  {},
+	"8:1":  {},
 }
 
 // applyGeminiImageOptionsToOpenAIRequest keeps the image-specific part of a
@@ -54,14 +61,15 @@ func applyGeminiImageOptionsToOpenAIRequest(geminiRequest *dto.GeminiChatRequest
 	if err != nil {
 		return err
 	}
+	// OpenAI's `size` is the resolution tier or an exact width x height. The
+	// aspect ratio is a separate field; putting `16:9` in `size` makes some
+	// gateways ignore the requested 4K tier and fall back to their default.
 	if aspectRatio != "" {
-		openAIRequest.Size = aspectRatio
 		openAIRequest.AspectRatio = aspectRatio
-		openAIRequest.Ratio = aspectRatio
 	}
 	if imageSize != "" {
-		openAIRequest.ImageSize = imageSize
-		openAIRequest.Resolution = imageSize
+		openAIRequest.Size = strings.ToLower(imageSize)
+		openAIRequest.OutputResolution = imageSize
 	}
 
 	imageRequested := geminiResponseRequestsImage(geminiRequest.GenerationConfig.ResponseModalities) ||
@@ -76,7 +84,20 @@ func applyGeminiImageOptionsToOpenAIRequest(geminiRequest *dto.GeminiChatRequest
 	// image responses may include a short text part as well.
 	openAIRequest.Modalities = json.RawMessage(`["text","image"]`)
 
-	if len(config) == 0 {
+	// Keep only provider-specific options that are not represented by the
+	// documented OpenAI fields above. Do not synthesize a `google.image_config`
+	// object for the canonical aspect/size values, because it can introduce a
+	// second, conflicting source of truth in OpenAI-compatible gateways.
+	providerConfig := make(map[string]any)
+	for key, value := range config {
+		switch normalizeGeminiImageKey(key) {
+		case "aspectratio", "ratio", "aspect", "imagesize", "resolution", "outputresolution", "exactsize", "quality", "size":
+			continue
+		default:
+			providerConfig[key] = value
+		}
+	}
+	if len(providerConfig) == 0 {
 		return nil
 	}
 	extraBody := make(map[string]any)
@@ -87,19 +108,8 @@ func applyGeminiImageOptionsToOpenAIRequest(geminiRequest *dto.GeminiChatRequest
 	}
 	googleBody := ensureObject(extraBody, "google")
 	imageConfig := ensureObject(googleBody, "image_config")
-	for key, value := range config {
-		switch normalizeGeminiImageKey(key) {
-		case "aspectratio", "ratio", "aspect", "imagesize", "resolution", "outputresolution", "exactsize", "quality", "size":
-			continue
-		default:
-			imageConfig[key] = value
-		}
-	}
-	if aspectRatio != "" {
-		imageConfig["aspect_ratio"] = aspectRatio
-	}
-	if imageSize != "" {
-		imageConfig["image_size"] = imageSize
+	for key, value := range providerConfig {
+		imageConfig[key] = value
 	}
 	googleBody["image_config"] = imageConfig
 	extraBody["google"] = googleBody
@@ -178,19 +188,8 @@ func normalizeGeminiToOpenAIImageConfig(config map[string]any) (string, string, 
 	if len(config) == 0 {
 		return "", "", nil
 	}
-	aspectRaw, _ := findGeminiImageConfigScalar(config, map[string]struct{}{
-		"aspectratio": {},
-		"ratio":       {},
-		"aspect":      {},
-	}, 0)
-	imageSizeRaw, _ := findGeminiImageConfigScalar(config, map[string]struct{}{
-		"imagesize":        {},
-		"resolution":       {},
-		"outputresolution": {},
-		"exactsize":        {},
-		"quality":          {},
-		"size":             {},
-	}, 0)
+	aspectRaw, _ := findGeminiImageConfigScalarByKeys(config, []string{"aspectRatio", "aspect_ratio", "ratio", "aspect"})
+	imageSizeRaw, _ := findGeminiImageConfigScalarByKeys(config, []string{"imageSize", "image_size", "outputResolution", "output_resolution", "resolution", "exactSize", "exact_size", "size", "quality"})
 	dimensionSize := geminiImageDimensionSize(config)
 	if aspectRaw == "" && dimensionSize != "" {
 		aspectRaw = dimensionSize
@@ -281,6 +280,15 @@ func findGeminiImageConfigScalar(value any, wanted map[string]struct{}, depth in
 	return "", false
 }
 
+func findGeminiImageConfigScalarByKeys(value any, keys []string) (string, bool) {
+	for _, key := range keys {
+		if found, ok := findGeminiImageConfigScalar(value, map[string]struct{}{normalizeGeminiImageKey(key): {}}, 0); ok {
+			return found, true
+		}
+	}
+	return "", false
+}
+
 func geminiImageConfigScalar(value any) (string, bool) {
 	switch typed := value.(type) {
 	case string:
@@ -328,7 +336,7 @@ func geminiToOpenAIDimensionAspectRatio(raw string) string {
 	ratio := width / height
 	bestRatio := ""
 	bestDifference := math.MaxFloat64
-	for _, candidate := range []string{"1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"} {
+	for _, candidate := range []string{"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9", "1:8", "1:4", "4:1", "8:1"} {
 		candidateParts := strings.Split(candidate, ":")
 		candidateWidth, _ := strconv.ParseFloat(candidateParts[0], 64)
 		candidateHeight, _ := strconv.ParseFloat(candidateParts[1], 64)
@@ -339,7 +347,7 @@ func geminiToOpenAIDimensionAspectRatio(raw string) string {
 			bestRatio = candidate
 		}
 	}
-	if bestDifference <= 0.03 {
+	if bestDifference < math.MaxFloat64 {
 		return bestRatio
 	}
 	return ""

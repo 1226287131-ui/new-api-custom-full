@@ -2,6 +2,7 @@ package oaichat
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -10,14 +11,21 @@ import (
 )
 
 var openAIGeminiImageAspectRatios = map[string]struct{}{
+	"auto": {},
 	"1:1":  {},
 	"2:3":  {},
 	"3:2":  {},
 	"3:4":  {},
 	"4:3":  {},
+	"4:5":  {},
+	"5:4":  {},
 	"9:16": {},
 	"16:9": {},
 	"21:9": {},
+	"1:8":  {},
+	"1:4":  {},
+	"4:1":  {},
+	"8:1":  {},
 }
 
 func applyOpenAIGeminiImageConfig(request dto.GeneralOpenAIRequest, geminiRequest *dto.GeminiChatRequest) error {
@@ -31,7 +39,7 @@ func applyOpenAIGeminiImageConfig(request dto.GeneralOpenAIRequest, geminiReques
 	aspectRatio := ""
 	if request.Size != "" {
 		aspectRatio = openAIImageAspectRatio(request.Size)
-		if aspectRatio == "" && !strings.EqualFold(strings.TrimSpace(request.Size), "auto") {
+		if aspectRatio == "" && !isOpenAIImageResolution(request.Size) && !strings.EqualFold(strings.TrimSpace(request.Size), "auto") {
 			return fmt.Errorf("unsupported image size %q for Gemini image model", request.Size)
 		}
 	}
@@ -56,18 +64,21 @@ func applyOpenAIGeminiImageConfig(request dto.GeneralOpenAIRequest, geminiReques
 		config["aspectRatio"] = aspectRatio
 	}
 
-	imageSize := request.ImageSize
+	imageSize := request.OutputResolution
+	if imageSize == "" {
+		imageSize = request.ImageSize
+	}
 	if imageSize == "" {
 		imageSize = request.Resolution
 	}
-	if imageSize == "" {
-		imageSize = request.Quality
-	}
-	if raw, ok := findImageConfigOption(request.ExtraBody, "image_size", "imageSize", "resolution", "output_resolution", "outputResolution", "quality"); ok {
+	if raw, ok := findImageConfigOption(request.ExtraBody, "output_resolution", "outputResolution", "image_size", "imageSize", "resolution", "quality"); ok {
 		imageSize = raw
 	}
 	if imageSize == "" && request.Size != "" && !isOpenAIImageAspectRatio(request.Size) && !strings.EqualFold(strings.TrimSpace(request.Size), "auto") {
 		imageSize = request.Size
+	}
+	if imageSize == "" {
+		imageSize = request.Quality
 	}
 	if imageSize != "" {
 		normalized, err := normalizeOpenAIGeminiImageSize(imageSize)
@@ -110,11 +121,13 @@ func findImageConfigOption(raw []byte, names ...string) (string, bool) {
 	if err := common.Unmarshal(raw, &root); err != nil {
 		return "", false
 	}
-	wanted := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		wanted[normalizeImageConfigKey(name)] = struct{}{}
+		wanted := map[string]struct{}{normalizeImageConfigKey(name): {}}
+		if value, ok := findImageConfigValue(root, wanted, 0); ok {
+			return value, true
+		}
 	}
-	return findImageConfigValue(root, wanted, 0)
+	return "", false
 }
 
 func findImageConfigValue(value interface{}, wanted map[string]struct{}, depth int) (string, bool) {
@@ -122,17 +135,17 @@ func findImageConfigValue(value interface{}, wanted map[string]struct{}, depth i
 		return "", false
 	}
 	if object, ok := value.(map[string]interface{}); ok {
-		for _, preferred := range []string{"extra_body", "google", "generation_config", "generationConfig", "image_config", "imageConfig", "parameters"} {
-			if child, exists := firstImageConfigValue(object, preferred); exists {
-				if found, ok := findImageConfigValue(child, wanted, depth+1); ok {
-					return found, true
-				}
-			}
-		}
 		for key, child := range object {
 			if _, exists := wanted[normalizeImageConfigKey(key)]; exists {
 				if scalar, ok := imageConfigScalar(child); ok {
 					return scalar, true
+				}
+			}
+		}
+		for _, preferred := range []string{"extra_body", "google", "generation_config", "generationConfig", "image_config", "imageConfig", "parameters"} {
+			if child, exists := firstImageConfigValue(object, preferred); exists {
+				if found, ok := findImageConfigValue(child, wanted, depth+1); ok {
+					return found, true
 				}
 			}
 		}
@@ -189,14 +202,47 @@ func openAIImageAspectRatio(size string) string {
 		return "16:9"
 	case "1344x576", "2560x1080":
 		return "21:9"
-	default:
+	}
+
+	parts := strings.Split(normalized, "x")
+	if len(parts) != 2 {
 		return ""
 	}
+	width, widthErr := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	height, heightErr := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return ""
+	}
+
+	ratio := width / height
+	bestRatio := ""
+	bestDifference := math.MaxFloat64
+	for _, candidate := range []string{"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9", "1:8", "1:4", "4:1", "8:1"} {
+		candidateParts := strings.Split(candidate, ":")
+		candidateWidth, _ := strconv.ParseFloat(candidateParts[0], 64)
+		candidateHeight, _ := strconv.ParseFloat(candidateParts[1], 64)
+		candidateRatio := candidateWidth / candidateHeight
+		difference := math.Abs(ratio-candidateRatio) / candidateRatio
+		if difference < bestDifference {
+			bestDifference = difference
+			bestRatio = candidate
+		}
+	}
+	return bestRatio
 }
 
 func isOpenAIImageAspectRatio(value string) bool {
 	parts := strings.Split(strings.TrimSpace(value), ":")
 	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
+}
+
+func isOpenAIImageResolution(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1k", "2k", "4k", "hd", "high", "standard", "medium", "low":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeOpenAIGeminiAspectRatio(raw string) (string, error) {
