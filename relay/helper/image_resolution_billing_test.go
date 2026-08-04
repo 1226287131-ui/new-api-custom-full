@@ -3,12 +3,33 @@ package helper
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/sjson"
 )
+
+func TestResolveImageResolutionBillingUsesNormalizedGeminiMetadata(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"draw a landscape"}]}],
+		"generationConfig":{"quality":"standard"},
+		"responseModalities":["TEXT"],
+		"quality":"standard",
+		"resolution":"4k",
+		"aspectRatio":"16:9",
+		"n":1
+	}`)
+	var request dto.GeminiChatRequest
+	require.NoError(t, common.Unmarshal(raw, &request))
+
+	billing, err := resolveImageResolutionBilling(billingexpr.RequestInput{}, request.GetTokenCountMeta())
+	require.NoError(t, err)
+	require.Equal(t, ratio_setting.ImageResolutionTier4K, billing.Tier)
+	require.Equal(t, float64(1), billing.Count)
+}
 
 func TestResolveImageResolutionBilling(t *testing.T) {
 	tests := []struct {
@@ -120,6 +141,24 @@ func TestResolveImageResolutionBilling(t *testing.T) {
 			body:      `{"extra_body":{"parameters":{"output_resolution":"4k","num_images":2}}}`,
 			wantTier:  ratio_setting.ImageResolutionTier4K,
 			wantCount: 2,
+		},
+		{
+			name:      "Gemini generation config direct output resolution",
+			body:      `{"generationConfig":{"outputResolution":"4K"}}`,
+			wantTier:  ratio_setting.ImageResolutionTier4K,
+			wantCount: 1,
+		},
+		{
+			name:      "Gemini response format image resolution",
+			body:      `{"generationConfig":{"responseFormat":{"image":{"imageSize":"4K"}}}}`,
+			wantTier:  ratio_setting.ImageResolutionTier4K,
+			wantCount: 1,
+		},
+		{
+			name:      "OpenAI quality does not override explicit resolution",
+			body:      `{"resolution":"4K","quality":"high"}`,
+			wantTier:  ratio_setting.ImageResolutionTier4K,
+			wantCount: 1,
 		},
 		{
 			name:      "explicit dimensions fields",

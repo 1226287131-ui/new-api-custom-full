@@ -2,6 +2,7 @@ package dto
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -33,6 +34,10 @@ func (r *GeminiChatRequest) UnmarshalJSON(data []byte) error {
 	if err := kitutil.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+	var raw map[string]json.RawMessage
+	if err := kitutil.Unmarshal(data, &raw); err != nil {
+		return err
+	}
 
 	*r = GeminiChatRequest(aux.Alias)
 
@@ -48,6 +53,56 @@ func (r *GeminiChatRequest) UnmarshalJSON(data []byte) error {
 
 	if aux.SystemInstructionSnake != nil {
 		r.SystemInstructions = aux.SystemInstructionSnake
+	}
+
+	// Some Gemini-compatible clients send image options and response modalities
+	// at the request level. Fold those aliases into the canonical generation
+	// config before any relay adaptor or billing code sees the request.
+	if len(r.GenerationConfig.ResponseModalities) == 0 {
+		if rawModalities, ok := findGeminiRawField(raw, "responseModalities"); ok {
+			var modalities []string
+			if err := kitutil.Unmarshal(rawModalities, &modalities); err != nil {
+				return fmt.Errorf("invalid Gemini response modalities: %w", err)
+			}
+			r.GenerationConfig.ResponseModalities = modalities
+		}
+	}
+	if r.GenerationConfig.CandidateCount == nil {
+		for _, key := range []string{"candidateCount", "candidate_count", "n", "numImages", "num_images"} {
+			rawCount, ok := findGeminiRawField(raw, key)
+			if !ok {
+				continue
+			}
+			var count int
+			if err := kitutil.Unmarshal(rawCount, &count); err != nil {
+				return fmt.Errorf("invalid Gemini image count at %s: %w", key, err)
+			}
+			r.GenerationConfig.CandidateCount = &count
+			break
+		}
+	}
+
+	imageSources := []map[string]json.RawMessage{raw}
+	if rawResponseFormat, ok := findGeminiRawField(raw, "responseFormat"); ok {
+		var responseFormat map[string]json.RawMessage
+		if err := kitutil.Unmarshal(rawResponseFormat, &responseFormat); err != nil {
+			return fmt.Errorf("invalid Gemini response format: %w", err)
+		}
+		imageSources = append(imageSources, responseFormat)
+		if len(r.GenerationConfig.ResponseFormat) == 0 {
+			r.GenerationConfig.ResponseFormat = rawResponseFormat
+		}
+	}
+	imageConfig, err := mergeGeminiImageConfigAliases(r.GenerationConfig.ImageConfig, imageSources...)
+	if err != nil {
+		return err
+	}
+	imageConfig, err = finalizeGeminiImageConfigQuality(imageConfig)
+	if err != nil {
+		return err
+	}
+	if len(imageConfig) > 0 {
+		r.GenerationConfig.ImageConfig = imageConfig
 	}
 
 	return nil
@@ -111,11 +166,16 @@ func (r *GeminiChatRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	}
 
 	inputText := strings.Join(inputTexts, "\n")
-	return &types.TokenCountMeta{
-		CombineText: inputText,
-		Files:       files,
-		MaxTokens:   maxTokens,
+	meta := &types.TokenCountMeta{
+		CombineText:     inputText,
+		Files:           files,
+		MaxTokens:       maxTokens,
+		ImageResolution: geminiImageConfigResolution(r.GenerationConfig.ImageConfig),
 	}
+	if r.GenerationConfig.CandidateCount != nil && *r.GenerationConfig.CandidateCount > 0 {
+		meta.BillingRatios = map[string]float64{"n": float64(*r.GenerationConfig.CandidateCount)}
+	}
+	return meta
 }
 
 func (r *GeminiChatRequest) IsStream(c *http.Request) bool {
@@ -391,6 +451,10 @@ func (c *GeminiChatGenerationConfig) UnmarshalJSON(data []byte) error {
 	if err := kitutil.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+	var raw map[string]json.RawMessage
+	if err := kitutil.Unmarshal(data, &raw); err != nil {
+		return err
+	}
 
 	*c = GeminiChatGenerationConfig(aux.Alias)
 
@@ -448,6 +512,22 @@ func (c *GeminiChatGenerationConfig) UnmarshalJSON(data []byte) error {
 	}
 	if len(aux.ResponseFormatSnake) > 0 {
 		c.ResponseFormat = aux.ResponseFormatSnake
+	}
+
+	imageSources := []map[string]json.RawMessage{raw}
+	if rawResponseFormat, ok := findGeminiRawField(raw, "responseFormat"); ok {
+		var responseFormat map[string]json.RawMessage
+		if err := kitutil.Unmarshal(rawResponseFormat, &responseFormat); err != nil {
+			return fmt.Errorf("invalid Gemini response format: %w", err)
+		}
+		imageSources = append(imageSources, responseFormat)
+	}
+	imageConfig, err := mergeGeminiImageConfigAliases(c.ImageConfig, imageSources...)
+	if err != nil {
+		return err
+	}
+	if len(imageConfig) > 0 {
+		c.ImageConfig = imageConfig
 	}
 
 	return nil

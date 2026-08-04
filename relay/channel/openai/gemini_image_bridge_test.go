@@ -73,6 +73,50 @@ func TestConvertGeminiNativeTextImageUsesOpenAIImagesEndpoint(t *testing.T) {
 	assert.NotContains(t, encoded, "messages")
 }
 
+func TestConvertCanvasTopLevelGeminiImageOptionsUsesRequestedFourK(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"A cinematic mountain landscape"}]}],
+		"generationConfig":{"temperature":0.4,"responseMimeType":"text/plain"},
+		"responseModalities":["TEXT"],
+		"quality":"standard",
+		"resolution":"4k",
+		"aspectRatio":"16:9",
+		"n":1
+	}`)
+	var request dto.GeminiChatRequest
+	require.NoError(t, json.Unmarshal(raw, &request))
+
+	info := &relaycommon.RelayInfo{
+		RelayFormat:     types.RelayFormatGemini,
+		RelayMode:       relayconstant.RelayModeGemini,
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeOpenAI,
+			ChannelBaseUrl:    "https://upstream.example",
+			UpstreamModelName: "Nano Banana 2",
+		},
+	}
+
+	converted, err := (&Adaptor{}).ConvertGeminiRequest(nil, info, &request)
+	require.NoError(t, err)
+	payload, ok := converted.(*geminiImageEndpointRequest)
+	require.True(t, ok)
+	assert.Equal(t, "16:9", payload.AspectRatio)
+	assert.Equal(t, "4k", payload.Size)
+	assert.Equal(t, "4K", payload.OutputResolution)
+	require.NotNil(t, payload.N)
+	assert.Equal(t, 1, *payload.N)
+
+	body, err := geminiImageEndpointRequestBody(payload)
+	require.NoError(t, err)
+	var encoded map[string]any
+	require.NoError(t, json.Unmarshal(body, &encoded))
+	assert.Equal(t, "16:9", encoded["aspect_ratio"])
+	assert.Equal(t, "4k", encoded["size"])
+	assert.Equal(t, "4K", encoded["output_resolution"])
+	assert.NotContains(t, encoded, "quality")
+}
+
 func TestConvertGeminiNativeReferenceImageUsesOpenAIEditsEndpoint(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := &relaycommon.RelayInfo{

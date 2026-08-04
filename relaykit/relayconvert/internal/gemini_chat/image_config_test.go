@@ -196,3 +196,48 @@ func TestGeminiGenerateContentRequestToOpenAIChatLeavesTextModelsUnchanged(t *te
 	assert.Empty(t, converted.AspectRatio)
 	assert.Empty(t, converted.ImageSize)
 }
+
+func TestGeminiGenerateContentRequestToOpenAIChatNormalizesTopLevelResolution(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"draw a 4K landscape"}]}],
+		"responseModalities":["IMAGE"],
+		"aspectRatio":"16:9",
+		"resolution":"4k"
+	}`)
+
+	var request dto.GeminiChatRequest
+	require.NoError(t, common.Unmarshal(raw, &request))
+
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana 2"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "16:9", converted.AspectRatio)
+	assert.Equal(t, "4k", converted.Size)
+	assert.Equal(t, "4K", converted.OutputResolution)
+
+	body, err := common.Marshal(converted)
+	require.NoError(t, err)
+	var encoded map[string]any
+	require.NoError(t, common.Unmarshal(body, &encoded))
+	assert.Equal(t, "16:9", encoded["aspect_ratio"])
+	assert.Equal(t, "4k", encoded["size"])
+	assert.Equal(t, "4K", encoded["output_resolution"])
+}
+
+func TestGeminiGenerateContentRequestToOpenAIChatMapsQualityAliasToResolution(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"draw an ultra detailed image"}]}],
+		"generationConfig":{"quality":"ultra","aspect_ratio":"9:16"}
+	}`)
+
+	var request dto.GeminiChatRequest
+	require.NoError(t, common.Unmarshal(raw, &request))
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana Pro"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "9:16", converted.AspectRatio)
+	assert.Equal(t, "4k", converted.Size)
+	assert.Equal(t, "4K", converted.OutputResolution)
+}

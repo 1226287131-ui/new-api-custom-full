@@ -79,6 +79,14 @@ Optional environment variables:
   non-streaming Banana image requests use `/v1/images/generations` or
   `/v1/images/edits` with the documented OpenAI fields, while ordinary Gemini
   vision/text requests and streaming calls keep `/v1/chat/completions`.
+- Normalizes the top-level image options emitted by common canvas clients
+  (`resolution`, `aspectRatio`, `quality`, `n`, and `responseModalities`) into
+  the native `generationConfig` shape before conversion. An explicit
+  resolution always wins over the UI quality alias, so `resolution: 4k` cannot
+  be downgraded by a simultaneous `quality: standard` field.
+- Carries the normalized Gemini image tier and candidate count into billing
+  metadata, keeping pricing aligned even when the relay reconstructs the
+  request body between parsing and upstream conversion.
   Markdown images, content-item images, `message.images`, data URLs, and Images
   API payloads are converted back to Gemini `inlineData` responses.
 - Derives supported Gemini aspect ratios from canvas-style `width`/`height` or

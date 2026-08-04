@@ -134,3 +134,94 @@ func TestGeminiChatRequestAcceptsResponseFormatImageWrapper(t *testing.T) {
 	assert.Equal(t, "9:16", image["aspectRatio"])
 	assert.Equal(t, "2K", image["imageSize"])
 }
+
+func TestGeminiChatRequestNormalizesTopLevelImageAliases(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"make a landscape image"}]}],
+		"responseModalities":["TEXT","IMAGE"],
+		"aspectRatio":"16:9",
+		"resolution":"4k",
+		"n":1
+	}`)
+
+	var req GeminiChatRequest
+	require.NoError(t, common.Unmarshal(raw, &req))
+	assert.Equal(t, []string{"TEXT", "IMAGE"}, req.GenerationConfig.ResponseModalities)
+	require.NotNil(t, req.GenerationConfig.CandidateCount)
+	assert.Equal(t, 1, *req.GenerationConfig.CandidateCount)
+
+	var imageConfig map[string]any
+	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	assert.Equal(t, "16:9", imageConfig["aspectRatio"])
+	assert.Equal(t, "4k", imageConfig["imageSize"])
+	meta := req.GetTokenCountMeta()
+	assert.Equal(t, "4k", meta.ImageResolution)
+	assert.Equal(t, float64(1), meta.BillingRatios["n"])
+}
+
+func TestGeminiChatRequestMapsQualityWhenResolutionIsMissing(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"make a detailed image"}]}],
+		"generationConfig":{"quality":"ultra","aspect_ratio":"9:16"}
+	}`)
+
+	var req GeminiChatRequest
+	require.NoError(t, common.Unmarshal(raw, &req))
+
+	var imageConfig map[string]any
+	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	assert.Equal(t, "9:16", imageConfig["aspectRatio"])
+	assert.Equal(t, "4K", imageConfig["imageSize"])
+}
+
+func TestGeminiChatRequestExplicitResolutionWinsOverQualityAcrossLevels(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"make a 4K image"}]}],
+		"generationConfig":{"quality":"standard"},
+		"quality":"standard",
+		"resolution":"4k",
+		"aspectRatio":"16:9"
+	}`)
+
+	var req GeminiChatRequest
+	require.NoError(t, common.Unmarshal(raw, &req))
+
+	var imageConfig map[string]any
+	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	assert.Equal(t, "16:9", imageConfig["aspectRatio"])
+	assert.Equal(t, "4k", imageConfig["imageSize"])
+	assert.Equal(t, "standard", imageConfig["quality"])
+}
+
+func TestGeminiChatRequestQualityAutoDoesNotForceOneK(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"make an image"}]}],
+		"quality":"auto",
+		"aspectRatio":"16:9"
+	}`)
+
+	var req GeminiChatRequest
+	require.NoError(t, common.Unmarshal(raw, &req))
+
+	var imageConfig map[string]any
+	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	assert.Equal(t, "16:9", imageConfig["aspectRatio"])
+	assert.Equal(t, "auto", imageConfig["quality"])
+	assert.NotContains(t, imageConfig, "imageSize")
+}
+
+func TestGeminiChatRequestAcceptsTopLevelResponseFormatImage(t *testing.T) {
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"make an image"}]}],
+		"response_format":{"image":{"image_size":"4K","aspect_ratio":"3:4"}}
+	}`)
+
+	var req GeminiChatRequest
+	require.NoError(t, common.Unmarshal(raw, &req))
+	require.NotEmpty(t, req.GenerationConfig.ResponseFormat)
+
+	var imageConfig map[string]any
+	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	assert.Equal(t, "4K", imageConfig["image_size"])
+	assert.Equal(t, "3:4", imageConfig["aspect_ratio"])
+}
