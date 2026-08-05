@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +40,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatPreservesImageOptions(t *testin
 	assert.Empty(t, converted.Resolution)
 
 	var modalities []string
-	require.NoError(t, common.Unmarshal(converted.Modalities, &modalities))
+	require.NoError(t, kitutil.Unmarshal(converted.Modalities, &modalities))
 	assert.Equal(t, []string{"text", "image"}, modalities)
 	assert.Empty(t, converted.ExtraBody)
 }
@@ -67,10 +67,10 @@ func TestGeminiGenerateContentRequestToOpenAIChatDoesNotPutAspectRatioInSize(t *
 	assert.Equal(t, "4K", converted.OutputResolution)
 	assert.NotEqual(t, "16:9", converted.Size)
 
-	body, err := common.Marshal(converted)
+	body, err := kitutil.Marshal(converted)
 	require.NoError(t, err)
 	var encoded map[string]any
-	require.NoError(t, common.Unmarshal(body, &encoded))
+	require.NoError(t, kitutil.Unmarshal(body, &encoded))
 	assert.Equal(t, "16:9", encoded["aspect_ratio"])
 	assert.Equal(t, "4k", encoded["size"])
 	assert.Equal(t, "4K", encoded["output_resolution"])
@@ -206,7 +206,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatNormalizesTopLevelResolution(t 
 	}`)
 
 	var request dto.GeminiChatRequest
-	require.NoError(t, common.Unmarshal(raw, &request))
+	require.NoError(t, kitutil.Unmarshal(raw, &request))
 
 	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana 2"},
@@ -216,10 +216,10 @@ func TestGeminiGenerateContentRequestToOpenAIChatNormalizesTopLevelResolution(t 
 	assert.Equal(t, "4k", converted.Size)
 	assert.Equal(t, "4K", converted.OutputResolution)
 
-	body, err := common.Marshal(converted)
+	body, err := kitutil.Marshal(converted)
 	require.NoError(t, err)
 	var encoded map[string]any
-	require.NoError(t, common.Unmarshal(body, &encoded))
+	require.NoError(t, kitutil.Unmarshal(body, &encoded))
 	assert.Equal(t, "16:9", encoded["aspect_ratio"])
 	assert.Equal(t, "4k", encoded["size"])
 	assert.Equal(t, "4K", encoded["output_resolution"])
@@ -232,7 +232,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatMapsQualityAliasToResolution(t 
 	}`)
 
 	var request dto.GeminiChatRequest
-	require.NoError(t, common.Unmarshal(raw, &request))
+	require.NoError(t, kitutil.Unmarshal(raw, &request))
 	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana Pro"},
 	})

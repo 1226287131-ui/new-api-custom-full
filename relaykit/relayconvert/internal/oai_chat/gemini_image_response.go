@@ -9,12 +9,11 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	relaymedia "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/media"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/types"
-	"github.com/QuantumNous/new-api/setting/model_setting"
 )
 
 // OpenAI-compatible image gateways commonly put generated images in one of
@@ -50,9 +49,9 @@ func openAIMessageToGeminiParts(c context.Context, message dto.Message, info con
 		// A few gateways decode content into a concrete slice/map type instead
 		// of []any. Re-normalize that uncommon shape without changing DTOs.
 		if content != nil {
-			if raw, err := common.Marshal(content); err == nil {
+			if raw, err := kitutil.Marshal(content); err == nil {
 				var items []any
-				if common.Unmarshal(raw, &items) == nil {
+				if kitutil.Unmarshal(raw, &items) == nil {
 					for _, item := range items {
 						parts, err = appendOpenAIResponseContentItem(c, parts, item, info)
 						if err != nil {
@@ -145,7 +144,7 @@ func appendOpenAIResponseTextParts(c context.Context, parts []dto.GeminiPart, te
 	// content of a chat completion instead of using an image content item.
 	if isGeminiImagineResponse(info) && strings.HasPrefix(trimmed, "{") {
 		var object map[string]any
-		if common.Unmarshal([]byte(trimmed), &object) == nil {
+		if kitutil.Unmarshal([]byte(trimmed), &object) == nil {
 			if source, mimeType, ok := openAIImageSourceFromValue(object); ok {
 				return appendOpenAIImagePart(c, parts, source, mimeType)
 			}
@@ -328,7 +327,7 @@ func isGeminiImagineResponse(info convmeta.Meta) bool {
 		convmeta.UpstreamModelName(info),
 		info.GetOriginModelName(),
 	} {
-		if model_setting.IsGeminiModelSupportImagine(model) {
+		if convmeta.OptionsOf(info).Gemini.SupportsImagineModel(model) {
 			return true
 		}
 	}

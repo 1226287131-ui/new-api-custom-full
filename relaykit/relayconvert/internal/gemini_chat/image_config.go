@@ -8,10 +8,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
-	"github.com/QuantumNous/new-api/setting/model_setting"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
 var geminiToOpenAIImageAspectRatios = map[string]struct{}{
@@ -43,7 +42,7 @@ func applyGeminiImageOptionsToOpenAIRequest(geminiRequest *dto.GeminiChatRequest
 
 	config := make(map[string]any)
 	if len(geminiRequest.GenerationConfig.ImageConfig) > 0 {
-		if err := common.Unmarshal(geminiRequest.GenerationConfig.ImageConfig, &config); err != nil {
+		if err := kitutil.Unmarshal(geminiRequest.GenerationConfig.ImageConfig, &config); err != nil {
 			return fmt.Errorf("invalid Gemini image config: %w", err)
 		}
 	}
@@ -74,7 +73,7 @@ func applyGeminiImageOptionsToOpenAIRequest(geminiRequest *dto.GeminiChatRequest
 
 	imageRequested := geminiResponseRequestsImage(geminiRequest.GenerationConfig.ResponseModalities) ||
 		aspectRatio != "" || imageSize != "" || len(responseFormatConfig) > 0 ||
-		model_setting.IsGeminiModelSupportImagine(geminiToOpenAIModelName(openAIRequest, info))
+		convmeta.OptionsOf(info).Gemini.SupportsImagineModel(geminiToOpenAIModelName(openAIRequest, info))
 	if !imageRequested {
 		return nil
 	}
@@ -102,7 +101,7 @@ func applyGeminiImageOptionsToOpenAIRequest(geminiRequest *dto.GeminiChatRequest
 	}
 	extraBody := make(map[string]any)
 	if len(openAIRequest.ExtraBody) > 0 {
-		if err := common.Unmarshal(openAIRequest.ExtraBody, &extraBody); err != nil {
+		if err := kitutil.Unmarshal(openAIRequest.ExtraBody, &extraBody); err != nil {
 			return fmt.Errorf("invalid OpenAI extra_body: %w", err)
 		}
 	}
@@ -113,7 +112,7 @@ func applyGeminiImageOptionsToOpenAIRequest(geminiRequest *dto.GeminiChatRequest
 	}
 	googleBody["image_config"] = imageConfig
 	extraBody["google"] = googleBody
-	encoded, err := common.Marshal(extraBody)
+	encoded, err := kitutil.Marshal(extraBody)
 	if err != nil {
 		return fmt.Errorf("marshal OpenAI image extra_body: %w", err)
 	}
@@ -150,7 +149,7 @@ func geminiResponseFormatImageConfig(raw json.RawMessage) (map[string]any, error
 		return nil, nil
 	}
 	var root map[string]any
-	if err := common.Unmarshal(raw, &root); err != nil {
+	if err := kitutil.Unmarshal(raw, &root); err != nil {
 		return nil, fmt.Errorf("invalid Gemini response format: %w", err)
 	}
 	if len(root) == 0 {

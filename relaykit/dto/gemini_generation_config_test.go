@@ -101,11 +101,11 @@ func TestGeminiChatRequestAcceptsSnakeCaseGenerationConfig(t *testing.T) {
 	}`)
 
 	var req GeminiChatRequest
-	require.NoError(t, common.Unmarshal(raw, &req))
+	require.NoError(t, kitutil.Unmarshal(raw, &req))
 	assert.Equal(t, []string{"IMAGE"}, req.GenerationConfig.ResponseModalities)
 
 	var imageConfig map[string]any
-	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	require.NoError(t, kitutil.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
 	assert.Equal(t, "9:16", imageConfig["aspect_ratio"])
 	assert.Equal(t, "2K", imageConfig["image_size"])
 }
@@ -125,10 +125,10 @@ func TestGeminiChatRequestAcceptsResponseFormatImageWrapper(t *testing.T) {
 	}`)
 
 	var req GeminiChatRequest
-	require.NoError(t, common.Unmarshal(raw, &req))
+	require.NoError(t, kitutil.Unmarshal(raw, &req))
 
 	var responseFormat map[string]any
-	require.NoError(t, common.Unmarshal(req.GenerationConfig.ResponseFormat, &responseFormat))
+	require.NoError(t, kitutil.Unmarshal(req.GenerationConfig.ResponseFormat, &responseFormat))
 	image, ok := responseFormat["image"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "9:16", image["aspectRatio"])
@@ -145,13 +145,13 @@ func TestGeminiChatRequestNormalizesTopLevelImageAliases(t *testing.T) {
 	}`)
 
 	var req GeminiChatRequest
-	require.NoError(t, common.Unmarshal(raw, &req))
+	require.NoError(t, kitutil.Unmarshal(raw, &req))
 	assert.Equal(t, []string{"TEXT", "IMAGE"}, req.GenerationConfig.ResponseModalities)
 	require.NotNil(t, req.GenerationConfig.CandidateCount)
 	assert.Equal(t, 1, *req.GenerationConfig.CandidateCount)
 
 	var imageConfig map[string]any
-	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	require.NoError(t, kitutil.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
 	assert.Equal(t, "16:9", imageConfig["aspectRatio"])
 	assert.Equal(t, "4k", imageConfig["imageSize"])
 	meta := req.GetTokenCountMeta()
@@ -166,10 +166,10 @@ func TestGeminiChatRequestMapsQualityWhenResolutionIsMissing(t *testing.T) {
 	}`)
 
 	var req GeminiChatRequest
-	require.NoError(t, common.Unmarshal(raw, &req))
+	require.NoError(t, kitutil.Unmarshal(raw, &req))
 
 	var imageConfig map[string]any
-	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	require.NoError(t, kitutil.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
 	assert.Equal(t, "9:16", imageConfig["aspectRatio"])
 	assert.Equal(t, "4K", imageConfig["imageSize"])
 }
@@ -184,10 +184,10 @@ func TestGeminiChatRequestExplicitResolutionWinsOverQualityAcrossLevels(t *testi
 	}`)
 
 	var req GeminiChatRequest
-	require.NoError(t, common.Unmarshal(raw, &req))
+	require.NoError(t, kitutil.Unmarshal(raw, &req))
 
 	var imageConfig map[string]any
-	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	require.NoError(t, kitutil.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
 	assert.Equal(t, "16:9", imageConfig["aspectRatio"])
 	assert.Equal(t, "4k", imageConfig["imageSize"])
 	assert.Equal(t, "standard", imageConfig["quality"])
@@ -201,10 +201,10 @@ func TestGeminiChatRequestQualityAutoDoesNotForceOneK(t *testing.T) {
 	}`)
 
 	var req GeminiChatRequest
-	require.NoError(t, common.Unmarshal(raw, &req))
+	require.NoError(t, kitutil.Unmarshal(raw, &req))
 
 	var imageConfig map[string]any
-	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	require.NoError(t, kitutil.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
 	assert.Equal(t, "16:9", imageConfig["aspectRatio"])
 	assert.Equal(t, "auto", imageConfig["quality"])
 	assert.NotContains(t, imageConfig, "imageSize")
@@ -217,11 +217,11 @@ func TestGeminiChatRequestAcceptsTopLevelResponseFormatImage(t *testing.T) {
 	}`)
 
 	var req GeminiChatRequest
-	require.NoError(t, common.Unmarshal(raw, &req))
+	require.NoError(t, kitutil.Unmarshal(raw, &req))
 	require.NotEmpty(t, req.GenerationConfig.ResponseFormat)
 
 	var imageConfig map[string]any
-	require.NoError(t, common.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
+	require.NoError(t, kitutil.Unmarshal(req.GenerationConfig.ImageConfig, &imageConfig))
 	assert.Equal(t, "4K", imageConfig["image_size"])
 	assert.Equal(t, "3:4", imageConfig["aspect_ratio"])
 }

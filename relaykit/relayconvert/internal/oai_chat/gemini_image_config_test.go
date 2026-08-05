@@ -3,16 +3,16 @@ package oaichat
 import (
 	"testing"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
 
 func TestOpenAIChatGeminiImageConfigAcceptsGoogleCamelCase(t *testing.T) {
-	extraBody, err := common.Marshal(map[string]any{
+	extraBody, err := kitutil.Marshal(map[string]any{
 		"google": map[string]any{
 			"imageConfig": map[string]any{
 				"aspectRatio": "3:4",

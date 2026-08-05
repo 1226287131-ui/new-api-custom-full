@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
 var openAIGeminiImageAspectRatios = map[string]struct{}{
@@ -31,7 +31,7 @@ var openAIGeminiImageAspectRatios = map[string]struct{}{
 func applyOpenAIGeminiImageConfig(request dto.GeneralOpenAIRequest, geminiRequest *dto.GeminiChatRequest) error {
 	config := make(map[string]interface{})
 	if len(geminiRequest.GenerationConfig.ImageConfig) > 0 {
-		if err := common.Unmarshal(geminiRequest.GenerationConfig.ImageConfig, &config); err != nil {
+		if err := kitutil.Unmarshal(geminiRequest.GenerationConfig.ImageConfig, &config); err != nil {
 			return fmt.Errorf("invalid Gemini image config: %w", err)
 		}
 	}
@@ -91,7 +91,7 @@ func applyOpenAIGeminiImageConfig(request dto.GeneralOpenAIRequest, geminiReques
 	if len(config) == 0 {
 		return nil
 	}
-	imageConfig, err := common.Marshal(config)
+	imageConfig, err := kitutil.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("marshal Gemini image config: %w", err)
 	}
@@ -118,7 +118,7 @@ func findImageConfigOption(raw []byte, names ...string) (string, bool) {
 		return "", false
 	}
 	var root map[string]interface{}
-	if err := common.Unmarshal(raw, &root); err != nil {
+	if err := kitutil.Unmarshal(raw, &root); err != nil {
 		return "", false
 	}
 	for _, name := range names {

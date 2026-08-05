@@ -142,7 +142,7 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 		}
 	}
 
-	if model_setting.IsGeminiModelSupportImagine(upstreamModelName) {
+	if opts.Gemini.SupportsImagineModel(upstreamModelName) {
 		if err := applyOpenAIGeminiImageConfig(textRequest, &geminiRequest); err != nil {
 			return nil, err
 		}
