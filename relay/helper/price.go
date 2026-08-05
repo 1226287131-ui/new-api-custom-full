@@ -311,7 +311,6 @@ func HasModelBillingConfig(modelName string) bool {
 	return ok && strings.TrimSpace(expr) != ""
 }
 
-func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo hosttypes.GroupRatioInfo) (hosttypes.PriceData, error) {
 // ResolveTaskBillingPrice selects the configured task price after the adaptor
 // has normalized the request. It intentionally runs before
 // ModelPriceHelperPerCall because the selected resolution price is the base
