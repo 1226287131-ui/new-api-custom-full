@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	kittypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/QuantumNous/new-api/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/sjson"
 )
@@ -35,7 +36,7 @@ func TestResolveImageResolutionBilling(t *testing.T) {
 	tests := []struct {
 		name      string
 		body      string
-		meta      *types.TokenCountMeta
+		meta      *kittypes.TokenCountMeta
 		wantTier  string
 		wantCount float64
 		wantError bool
@@ -193,7 +194,7 @@ func TestResolveImageResolutionBilling(t *testing.T) {
 		{
 			name:      "multipart metadata takes precedence",
 			body:      `{}`,
-			meta:      &types.TokenCountMeta{ImageResolution: "4096x4096", BillingRatios: map[string]float64{"n": 2}},
+			meta:      &kittypes.TokenCountMeta{ImageResolution: "4096x4096", BillingRatios: map[string]float64{"n": 2}},
 			wantTier:  ratio_setting.ImageResolutionTier4K,
 			wantCount: 2,
 		},
@@ -298,7 +299,7 @@ func TestResolveImageResolutionBillingSupportsEveryCountPath(t *testing.T) {
 }
 
 func TestValidateOutboundImageBilling(t *testing.T) {
-	priceData := types.PriceData{
+	priceData := hosttypes.PriceData{
 		ImageResolutionTier:  ratio_setting.ImageResolutionTier4K,
 		ImageGenerationCount: 3,
 	}
@@ -330,7 +331,7 @@ func TestValidateOutboundImageBilling(t *testing.T) {
 }
 
 func TestValidateOutboundImageBillingUsesFrozenPreConsumeCount(t *testing.T) {
-	priceData := types.PriceData{
+	priceData := hosttypes.PriceData{
 		ImageResolutionTier:  ratio_setting.ImageResolutionTier4K,
 		ImageGenerationCount: 3,
 	}

@@ -7,10 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
+	kittypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/QuantumNous/new-api/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/tidwall/gjson"
 )
 
@@ -305,10 +306,10 @@ func parseImageBillingCount(value string) (float64, error) {
 	}
 	count, err := strconv.ParseFloat(value, 64)
 	if err != nil || math.IsNaN(count) || math.IsInf(count, 0) || count != math.Trunc(count) {
-		return 0, fmt.Errorf("image count must be an integer between 1 and %d", dto.MaxImageN)
+		return 0, fmt.Errorf("image count must be an integer between 1 and %d", kitdto.MaxImageN)
 	}
-	if count < 1 || count > dto.MaxImageN {
-		return 0, fmt.Errorf("image count must be an integer between 1 and %d", dto.MaxImageN)
+	if count < 1 || count > kitdto.MaxImageN {
+		return 0, fmt.Errorf("image count must be an integer between 1 and %d", kitdto.MaxImageN)
 	}
 	return count, nil
 }
@@ -354,7 +355,7 @@ func addImageCountSignal(billing *imageResolutionBilling, selectedSource *string
 	return nil
 }
 
-func resolveImageResolutionBilling(input billingexpr.RequestInput, meta *types.TokenCountMeta) (imageResolutionBilling, error) {
+func resolveImageResolutionBilling(input billingexpr.RequestInput, meta *kittypes.TokenCountMeta) (imageResolutionBilling, error) {
 	billing := imageResolutionBilling{
 		Tier:  ratio_setting.ImageResolutionTier1K,
 		Count: 1,
@@ -428,7 +429,7 @@ func resolveImageResolutionBilling(input billingexpr.RequestInput, meta *types.T
 	return billing, nil
 }
 
-func ValidateOutboundImageBilling(body []byte, priceData types.PriceData) error {
+func ValidateOutboundImageBilling(body []byte, priceData hosttypes.PriceData) error {
 	if priceData.ImageResolutionTier == "" {
 		return nil
 	}
