@@ -340,6 +340,22 @@ func HasUnfinishedSyncTasks() bool {
 	return err == nil && id != 0
 }
 
+// GetByOnlyTaskId loads a task without requiring the owning user. It is used
+// exclusively by the public, capability-style video cache URL; callers still
+// validate task status, channel type, and cache availability before serving it.
+func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
+	if taskId == "" {
+		return nil, false, nil
+	}
+	var task *Task
+	err := DB.Where("task_id = ?", taskId).First(&task).Error
+	exist, err := RecordExist(err)
+	if err != nil {
+		return nil, false, err
+	}
+	return task, exist, nil
+}
+
 func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
