@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/QuantumNous/new-api/common"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
 // mergeGeminiImageConfigAliases folds the image options used by common
@@ -19,7 +19,7 @@ import (
 func mergeGeminiImageConfigAliases(existing json.RawMessage, sources ...map[string]json.RawMessage) (json.RawMessage, error) {
 	config := make(map[string]json.RawMessage)
 	if len(existing) > 0 && strings.TrimSpace(string(existing)) != "null" {
-		if err := common.Unmarshal(existing, &config); err != nil {
+		if err := kitutil.Unmarshal(existing, &config); err != nil {
 			return nil, fmt.Errorf("invalid Gemini image config: %w", err)
 		}
 	}
@@ -35,7 +35,7 @@ func mergeGeminiImageConfigAliases(existing json.RawMessage, sources ...map[stri
 	if len(config) == 0 {
 		return nil, nil
 	}
-	return common.Marshal(config)
+	return kitutil.Marshal(config)
 }
 
 func finalizeGeminiImageConfigQuality(configRaw json.RawMessage) (json.RawMessage, error) {
@@ -43,13 +43,13 @@ func finalizeGeminiImageConfigQuality(configRaw json.RawMessage) (json.RawMessag
 		return configRaw, nil
 	}
 	var config map[string]json.RawMessage
-	if err := common.Unmarshal(configRaw, &config); err != nil {
+	if err := kitutil.Unmarshal(configRaw, &config); err != nil {
 		return nil, fmt.Errorf("invalid Gemini image config: %w", err)
 	}
 	if err := applyGeminiImageQualityFallback(config); err != nil {
 		return nil, err
 	}
-	return common.Marshal(config)
+	return kitutil.Marshal(config)
 }
 
 func mergeGeminiImageConfigSource(target, source map[string]json.RawMessage) error {
@@ -60,13 +60,13 @@ func mergeGeminiImageConfigSource(target, source map[string]json.RawMessage) err
 		if !ok {
 			continue
 		}
-		if common.GetJsonType(raw) != "object" {
+		if kitutil.GetJsonType(raw) != "object" {
 			// `image` is also used by some clients as a single image URL;
 			// only an object can contain image-generation options.
 			continue
 		}
 		var nested map[string]json.RawMessage
-		if err := common.Unmarshal(raw, &nested); err != nil {
+		if err := kitutil.Unmarshal(raw, &nested); err != nil {
 			return fmt.Errorf("invalid Gemini image options at %s: %w", wrapper, err)
 		}
 		mergeGeminiImageConfigObject(target, nested)
@@ -186,7 +186,7 @@ func geminiImageConfigResolution(configRaw json.RawMessage) string {
 		return ""
 	}
 	var config map[string]json.RawMessage
-	if err := common.Unmarshal(configRaw, &config); err != nil {
+	if err := kitutil.Unmarshal(configRaw, &config); err != nil {
 		return ""
 	}
 	for _, key := range []string{"imageSize", "image_size", "outputResolution", "output_resolution", "resolution", "exactSize", "exact_size", "size"} {
@@ -195,7 +195,7 @@ func geminiImageConfigResolution(configRaw json.RawMessage) string {
 			continue
 		}
 		var value string
-		if err := common.Unmarshal(raw, &value); err == nil && strings.TrimSpace(value) != "" {
+		if err := kitutil.Unmarshal(raw, &value); err == nil && strings.TrimSpace(value) != "" {
 			return strings.TrimSpace(value)
 		}
 	}
@@ -215,11 +215,11 @@ func geminiImageConfigDimension(config map[string]json.RawMessage, keys ...strin
 			continue
 		}
 		var number json.Number
-		if err := common.Unmarshal(raw, &number); err == nil && strings.TrimSpace(number.String()) != "" {
+		if err := kitutil.Unmarshal(raw, &number); err == nil && strings.TrimSpace(number.String()) != "" {
 			return number.String()
 		}
 		var value string
-		if err := common.Unmarshal(raw, &value); err == nil && strings.TrimSpace(value) != "" {
+		if err := kitutil.Unmarshal(raw, &value); err == nil && strings.TrimSpace(value) != "" {
 			return strings.TrimSpace(value)
 		}
 	}
@@ -277,7 +277,7 @@ func normalizeGeminiImageOptionKey(key string) string {
 
 func geminiQualityResolution(raw json.RawMessage) (json.RawMessage, error) {
 	var quality string
-	if err := common.Unmarshal(raw, &quality); err != nil {
+	if err := kitutil.Unmarshal(raw, &quality); err != nil {
 		// Non-string quality is left for the normal converter/validator to
 		// reject if it is otherwise relevant.
 		return nil, nil
@@ -293,5 +293,5 @@ func geminiQualityResolution(raw json.RawMessage) (json.RawMessage, error) {
 	default:
 		return nil, nil
 	}
-	return common.Marshal(resolution)
+	return kitutil.Marshal(resolution)
 }
