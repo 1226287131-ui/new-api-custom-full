@@ -50,6 +50,105 @@ export const apiKeySchema = z.object({
 
 export type ApiKey = z.infer<typeof apiKeySchema>
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function asString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback
+}
+
+function asFiniteNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return fallback
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') return value
+  if (value === 1 || value === '1' || value === 'true') return true
+  if (value === 0 || value === '0' || value === 'false') return false
+  return fallback
+}
+
+/**
+ * Converts legacy or partially populated token rows into a renderable shape.
+ * A single old row must not take down the whole key-management page.
+ */
+export function normalizeApiKey(value: unknown): ApiKey | null {
+  const parsed = apiKeySchema.safeParse(value)
+  if (parsed.success) return parsed.data
+  if (!isRecord(value)) return null
+
+  const id = asFiniteNumber(value.id, 0)
+  if (!Number.isInteger(id) || id <= 0) return null
+
+  const autoGroups = Array.isArray(value.auto_groups)
+    ? value.auto_groups.filter(
+        (group): group is string => typeof group === 'string'
+      )
+    : null
+
+  return {
+    id,
+    name: asString(value.name),
+    key: asString(value.key),
+    status: asFiniteNumber(value.status, 0),
+    remain_quota: asFiniteNumber(value.remain_quota, 0),
+    used_quota: asFiniteNumber(value.used_quota, 0),
+    unlimited_quota: asBoolean(value.unlimited_quota),
+    expired_time: asFiniteNumber(value.expired_time, -1),
+    created_time: asFiniteNumber(value.created_time, 0),
+    accessed_time: asFiniteNumber(value.accessed_time, 0),
+    group: asString(value.group),
+    auto_groups: autoGroups,
+    cross_group_retry: asBoolean(value.cross_group_retry),
+    model_limits_enabled: asBoolean(value.model_limits_enabled),
+    model_limits: asString(value.model_limits),
+    allow_ips: asString(value.allow_ips),
+  }
+}
+
+export function normalizeGetApiKeysResponse(
+  value: unknown,
+  fallbackPage = 1,
+  fallbackPageSize = 10
+): GetApiKeysResponse {
+  if (!isRecord(value) || value.success !== true || !isRecord(value.data)) {
+    return {
+      success: false,
+      message: isRecord(value) ? asString(value.message) : undefined,
+    }
+  }
+
+  const rawItems = value.data.items
+  const items = Array.isArray(rawItems)
+    ? rawItems
+        .map(normalizeApiKey)
+        .filter((item): item is ApiKey => item !== null)
+    : []
+
+  return {
+    success: true,
+    message: asString(value.message) || undefined,
+    data: {
+      items,
+      total: Math.max(0, Math.trunc(asFiniteNumber(value.data.total, 0))),
+      page: Math.max(
+        1,
+        Math.trunc(asFiniteNumber(value.data.page, fallbackPage))
+      ),
+      page_size: Math.max(
+        1,
+        Math.trunc(asFiniteNumber(value.data.page_size, fallbackPageSize))
+      ),
+    },
+  }
+}
+
 // ============================================================================
 // API Request/Response Types
 // ============================================================================

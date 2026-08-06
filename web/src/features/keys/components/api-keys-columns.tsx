@@ -20,6 +20,8 @@ import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 
+import { BadgeCell } from '@/components/data-table'
+import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
@@ -195,7 +197,8 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
       header: t('Group'),
       cell: ({ row }) => {
         const apiKey = row.original
-        const group = row.getValue('group') as string
+        const rawGroup = row.getValue('group')
+        const group = typeof rawGroup === 'string' ? rawGroup : ''
         const groups = group
           .split(',')
           .map((item) => item.trim())

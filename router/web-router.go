@@ -1,7 +1,9 @@
 package router
 
 import (
+	"crypto/sha256"
 	"embed"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -24,15 +26,31 @@ func SetWebRouter(router *gin.Engine, assets WebAssets) {
 
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
 	router.Use(middleware.GlobalWebRateLimit())
-	router.Use(middleware.Cache())
+	router.Use(middleware.Cache(frontendCacheVersion(assets.IndexPage)))
 	router.Use(static.Serve("/", frontendFS))
 	router.NoRoute(func(c *gin.Context) {
 		c.Set(middleware.RouteTagKey, "web")
-		if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
+		path := c.Request.URL.Path
+		if strings.HasPrefix(path, "/v1") || strings.HasPrefix(path, "/api") || isFrontendAssetPath(path) {
+			c.Header("Cache-Control", "no-store, no-cache, must-revalidate, private, max-age=0")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
 			controller.RelayNotFound(c)
 			return
 		}
-		c.Header("Cache-Control", "no-cache")
 		c.Data(http.StatusOK, "text/html; charset=utf-8", assets.IndexPage)
 	})
+}
+
+func frontendCacheVersion(indexPage []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(indexPage))
+}
+
+func isFrontendAssetPath(path string) bool {
+	return path == "/static" ||
+		strings.HasPrefix(path, "/static/") ||
+		path == "/assets" ||
+		strings.HasPrefix(path, "/assets/") ||
+		path == "/logo.png" ||
+		path == "/favicon.ico"
 }
