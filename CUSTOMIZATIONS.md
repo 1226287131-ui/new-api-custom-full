@@ -98,6 +98,14 @@ Optional environment variables:
 - Existing Imagen models continue to use the original `predict` request path;
   only Gemini `generateContent` image models use this bridge.
 
+## Optional login Session limits
+
+- Allows `USER_SESSION_ACTIVE_LIMIT=0` to disable the per-user active Session
+  limit.
+- Allows `USER_SESSION_ISSUANCE_LIMIT=0` to disable the per-user Session
+  issuance limit while retaining normal Session expiry and cleanup.
+- Negative and invalid values still fall back to the secure defaults.
+
 ## Sora-compatible video relay
 
 - Adds channel type `59` for the NewAPI video task adapter.
