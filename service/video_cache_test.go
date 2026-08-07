@@ -252,6 +252,23 @@ func TestVideoCacheSourceForTaskKeepsExternalContentEndpoint(t *testing.T) {
 	assert.Equal(t, "Bearer provider-key", source.Headers.Get("Authorization"))
 }
 
+func TestVideoCacheSourceForTaskUsesGrokContentEndpoint(t *testing.T) {
+	baseURL := "https://upstream.example/"
+	task := &model.Task{
+		TaskID: "task_public",
+		PrivateData: model.TaskPrivateData{
+			Key:            "provider-key",
+			UpstreamTaskID: "provider-task",
+		},
+	}
+	channel := &model.Channel{Type: constant.ChannelTypeGrokVideo, BaseURL: &baseURL}
+
+	source, err := VideoCacheSourceForTask(task, channel)
+	require.NoError(t, err)
+	assert.Equal(t, "https://upstream.example/v1/videos/provider-task/content", source.URL)
+	assert.Equal(t, "Bearer provider-key", source.Headers.Get("Authorization"))
+}
+
 func TestVideoCacheSourceIgnoresNonURLFailureReason(t *testing.T) {
 	baseURL := "https://upstream.example"
 	task := &model.Task{

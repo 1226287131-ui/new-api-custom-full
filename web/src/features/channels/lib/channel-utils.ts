@@ -54,6 +54,7 @@ export function getChannelTypeIcon(type: number): string {
     58: 'NewAPI', // Advanced Custom
     59: 'NewAPI', // NewAPI Video
     60: 'OpenAI', // Openai Video
+    63: 'Grok', // Grok Video
     61: 'Sub2API', // Sub2API
     62: 'NewAPI', // New API
     3: 'Azure', // Azure

@@ -72,7 +72,8 @@ func VideoCacheSourceForTask(task *model.Task, channel *model.Channel) (VideoCac
 	case constant.ChannelTypeOpenAI,
 		constant.ChannelTypeSora,
 		constant.ChannelTypeNewAPIVideo,
-		constant.ChannelTypeOpenAIVideo:
+		constant.ChannelTypeOpenAIVideo,
+		constant.ChannelTypeGrokVideo:
 		if key != "" {
 			headers.Set("Authorization", "Bearer "+key)
 		}
@@ -84,7 +85,8 @@ func VideoCacheSourceForTask(task *model.Task, channel *model.Channel) (VideoCac
 		switch channel.Type {
 		case constant.ChannelTypeOpenAI,
 			constant.ChannelTypeSora,
-			constant.ChannelTypeOpenAIVideo:
+			constant.ChannelTypeOpenAIVideo,
+			constant.ChannelTypeGrokVideo:
 			upstreamTaskID := strings.TrimSpace(task.GetUpstreamTaskID())
 			if baseURL != "" && upstreamTaskID != "" {
 				candidate = strings.TrimRight(baseURL, "/") + "/v1/videos/" + url.PathEscape(upstreamTaskID) + "/content"

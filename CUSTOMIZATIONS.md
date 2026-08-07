@@ -152,6 +152,22 @@ Optional environment variables:
 - Does not forward the provider Bearer credential to cross-origin CDN result
   URLs.
 
+## Grok Video native relay
+
+- Adds the independent `Grok Video` channel type `63` without changing the
+  existing NewAPI Video or Openai Video adaptors.
+- Accepts the native Grok `POST /v1/videos` multipart contract: `model`,
+  `prompt`, `aspect_ratio`, `seconds`, `resolution`, and an optional PNG
+  `input_reference` file.
+- Uses deterministic defaults of `16:9`, `5` seconds, and `720p` when the
+  optional provider fields are omitted, so per-second and per-resolution task
+  billing remain predictable.
+- Polls `GET /v1/videos/{task_id}` and downloads completed results through the
+  authenticated `GET /v1/videos/{task_id}/content` endpoint before a task is
+  marked successful.
+- Returns only the local shareable `/video-cache/{task_id}.mp4` result URL and
+  retains the video under the existing 48-hour cache cleanup policy.
+
 ## Build
 
 The upstream `Dockerfile` remains unchanged. `Dockerfile.custom` uses locked
@@ -167,6 +183,7 @@ docker build -f Dockerfile.custom -t newapi-custom:full .
 go test ./relay/helper ./relay/channel/gemini ./setting/ratio_setting
 go test ./relay/channel/task/newapivideo ./service ./model
 go test ./relay/channel/task/openaivideo ./relay/channel/task/newapivideo ./relay/channel/task/sora
+go test ./relay/channel/task/grokvideo ./service
 
 cd web/default
 bun run typecheck

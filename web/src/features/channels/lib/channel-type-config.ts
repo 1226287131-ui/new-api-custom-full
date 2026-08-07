@@ -164,6 +164,16 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'seedance-2.0 or an upstream model mapping',
     },
   },
+  63: {
+    id: 63,
+    name: CHANNEL_TYPES[63],
+    icon: 'grok',
+    hints: {
+      baseUrl: 'Grok Video upstream base URL',
+      key: 'Bearer API key',
+      models: 'grok-imagine-video or an upstream model mapping',
+    },
+  },
   61: {
     id: 61,
     name: CHANNEL_TYPES[61],
