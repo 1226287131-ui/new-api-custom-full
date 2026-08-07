@@ -39,16 +39,16 @@ var ModelList = []string{
 }
 
 type normalizedVideoRequest struct {
-	request           relaycommon.TaskSubmitReq
-	action            string
-	aspectRatio       string
-	resolution        string
-	hasInputReference bool
+	request             relaycommon.TaskSubmitReq
+	action              string
+	aspectRatio         string
+	resolution          string
+	inputReferenceCount int
 }
 
 // TaskAdaptor implements the native Grok video multipart contract. It is kept
 // separate from the JSON-based Openai Video adaptor because Grok requires the
-// optional image reference to be uploaded as a multipart file.
+// optional image references to be uploaded as multipart files.
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	apiKey  string
@@ -108,14 +108,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 
 	if _, exists := form.Value["input_reference"]; exists {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("input_reference must be uploaded as a PNG file"), "invalid_input_reference", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(fmt.Errorf("input_reference must be uploaded as a file"), "invalid_input_reference", http.StatusBadRequest)
 	}
 	files := form.File["input_reference"]
-	if len(files) > 1 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("only one input_reference file is supported"), "invalid_input_reference", http.StatusBadRequest)
-	}
-	if len(files) == 1 && files[0].Size == 0 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("input_reference file is empty"), "invalid_input_reference", http.StatusBadRequest)
+	for index, fileHeader := range files {
+		if fileHeader == nil || fileHeader.Size == 0 {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("input_reference file %d is empty", index+1), "invalid_input_reference", http.StatusBadRequest)
+		}
 	}
 
 	request := relaycommon.TaskSubmitReq{
@@ -130,18 +129,18 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		},
 	}
 	action := constant.TaskActionTextGenerate
-	if len(files) == 1 {
+	if len(files) > 0 {
 		action = constant.TaskActionGenerate
 	}
 
 	info.Action = action
 	c.Set("task_request", request)
 	c.Set(normalizedRequestContextKey, &normalizedVideoRequest{
-		request:           request,
-		action:            action,
-		aspectRatio:       aspectRatio,
-		resolution:        resolution,
-		hasInputReference: len(files) == 1,
+		request:             request,
+		action:              action,
+		aspectRatio:         aspectRatio,
+		resolution:          resolution,
+		inputReferenceCount: len(files),
 	})
 	return nil
 }
@@ -208,14 +207,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	files := form.File["input_reference"]
-	if normalized.hasInputReference {
-		if len(files) != 1 {
-			return nil, fmt.Errorf("input_reference file is missing")
+	if len(files) != normalized.inputReferenceCount {
+		return nil, fmt.Errorf("input_reference file count changed")
+	}
+	for index, fileHeader := range files {
+		if fileHeader == nil || fileHeader.Size == 0 {
+			return nil, fmt.Errorf("input_reference file %d is empty", index+1)
 		}
-		fileHeader := files[0]
 		file, err := fileHeader.Open()
 		if err != nil {
-			return nil, fmt.Errorf("open input_reference file: %w", err)
+			return nil, fmt.Errorf("open input_reference file %d: %w", index+1, err)
 		}
 
 		fileContentType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
@@ -231,18 +232,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		part, partErr := writer.CreatePart(partHeader)
 		if partErr != nil {
 			_ = file.Close()
-			return nil, fmt.Errorf("create input_reference multipart part: %w", partErr)
+			return nil, fmt.Errorf("create input_reference multipart part %d: %w", index+1, partErr)
 		}
 		_, copyErr := io.Copy(part, file)
 		closeErr := file.Close()
 		if copyErr != nil {
-			return nil, fmt.Errorf("copy input_reference file: %w", copyErr)
+			return nil, fmt.Errorf("copy input_reference file %d: %w", index+1, copyErr)
 		}
 		if closeErr != nil {
-			return nil, fmt.Errorf("close input_reference file: %w", closeErr)
+			return nil, fmt.Errorf("close input_reference file %d: %w", index+1, closeErr)
 		}
-	} else if len(files) != 0 {
-		return nil, fmt.Errorf("unexpected input_reference file")
 	}
 
 	if err := writer.Close(); err != nil {

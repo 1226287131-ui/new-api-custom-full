@@ -2,6 +2,7 @@ package grokvideo
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -38,15 +39,15 @@ func newGrokVideoRequestContext(t *testing.T, body *bytes.Buffer, contentType st
 	return c, adaptor, info
 }
 
-func grokMultipartBody(t *testing.T, fields map[string]string, inputReference []byte) (*bytes.Buffer, string) {
+func grokMultipartBody(t *testing.T, fields map[string]string, inputReferences [][]byte) (*bytes.Buffer, string) {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	for key, value := range fields {
 		require.NoError(t, writer.WriteField(key, value))
 	}
-	if inputReference != nil {
-		part, err := writer.CreateFormFile("input_reference", "reference.png")
+	for index, inputReference := range inputReferences {
+		part, err := writer.CreateFormFile("input_reference", fmt.Sprintf("reference-%d.png", index+1))
 		require.NoError(t, err)
 		_, err = part.Write(inputReference)
 		require.NoError(t, err)
@@ -62,7 +63,7 @@ func TestGrokVideoBuildRequestForwardsNativeMultipartContract(t *testing.T) {
 		"aspect_ratio": "9:16",
 		"seconds":      "8",
 		"resolution":   "1080p",
-	}, []byte("png-reference-data"))
+	}, [][]byte{[]byte("png-reference-data")})
 	c, adaptor, info := newGrokVideoRequestContext(t, body, contentType)
 
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
@@ -104,6 +105,59 @@ func TestGrokVideoBuildRequestForwardsNativeMultipartContract(t *testing.T) {
 	assert.Equal(t, 8, requestData.Duration)
 	assert.Equal(t, "608x1080", requestData.Size)
 	assert.Equal(t, "1080p", requestData.Metadata["resolution"])
+}
+
+func TestGrokVideoBuildRequestForwardsAllRepeatedInputReferenceFiles(t *testing.T) {
+	inputReferences := make([][]byte, 16)
+	for index := range inputReferences {
+		inputReferences[index] = []byte(fmt.Sprintf("reference-image-%d", index+1))
+	}
+	body, contentType := grokMultipartBody(t, map[string]string{
+		"model":  "grok-imagine-video",
+		"prompt": "Use every reference image.",
+	}, inputReferences)
+	c, adaptor, info := newGrokVideoRequestContext(t, body, contentType)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	assert.Equal(t, constant.TaskActionGenerate, info.Action)
+
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+
+	request, err := http.NewRequest(http.MethodPost, "https://upstream.example/v1/videos", nil)
+	require.NoError(t, err)
+	require.NoError(t, adaptor.BuildRequestHeader(c, request, info))
+	_, params, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	form, err := multipart.NewReader(bytes.NewReader(encoded), params["boundary"]).ReadForm(1024 * 1024)
+	require.NoError(t, err)
+	defer form.RemoveAll()
+
+	require.Len(t, form.File["input_reference"], len(inputReferences))
+	for index, fileHeader := range form.File["input_reference"] {
+		file, err := fileHeader.Open()
+		require.NoError(t, err)
+		contents, err := io.ReadAll(file)
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+		assert.Equal(t, inputReferences[index], contents)
+	}
+}
+
+func TestGrokVideoValidationRejectsAnyEmptyInputReferenceFile(t *testing.T) {
+	body, contentType := grokMultipartBody(t, map[string]string{
+		"model":  "grok-imagine-video",
+		"prompt": "Animate these images.",
+	}, [][]byte{[]byte("valid-reference"), []byte{}})
+	c, adaptor, info := newGrokVideoRequestContext(t, body, contentType)
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.NotNil(t, taskErr.Error)
+	assert.Contains(t, taskErr.Error.Error(), "input_reference file 2 is empty")
 }
 
 func TestGrokVideoValidationRejectsUnsupportedDuration(t *testing.T) {
