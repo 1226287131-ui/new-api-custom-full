@@ -500,7 +500,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if ch.Type == constant.ChannelTypeNewAPIVideo && taskResult.Url == "" {
 		taskResult.Url = ExtractVideoResultURL(responseBody)
 	}
-	if ch.Type == constant.ChannelTypeNewAPIVideo || ch.Type == constant.ChannelTypeOpenAIVideo {
+	if ch.Type == constant.ChannelTypeNewAPIVideo || ch.Type == constant.ChannelTypeOpenAIVideo || ch.Type == constant.ChannelTypeMiniMaxVideo {
 		normalizeNewAPIVideoTaskResult(baseURL, taskResult)
 	}
 	if taskResult.Url != "" && !strings.HasPrefix(strings.ToLower(taskResult.Url), "data:") {

@@ -31,7 +31,7 @@ export type ImageResolutionTier = '1K' | '2K' | '4K'
 
 export type ImageResolutionPrices = Record<ImageResolutionTier, number>
 
-export type TaskResolution = '480p' | '720p' | '1080p' | '4k'
+export type TaskResolution = '480p' | '720p' | '1080p' | '1440p' | '4k'
 
 export type TaskBillingPriceConfig = {
   mode: 'per-request' | 'per-second'

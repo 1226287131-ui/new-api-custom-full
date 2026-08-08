@@ -174,6 +174,16 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'grok-imagine-video or an upstream model mapping',
     },
   },
+  64: {
+    id: 64,
+    name: CHANNEL_TYPES[64],
+    icon: 'minimax',
+    hints: {
+      baseUrl: 'MiniMax Video upstream base URL',
+      key: 'Bearer API key',
+      models: 'MiniMax video models or an upstream model mapping',
+    },
+  },
   61: {
     id: 61,
     name: CHANNEL_TYPES[61],

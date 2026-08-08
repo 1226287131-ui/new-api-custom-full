@@ -95,7 +95,7 @@ type ModelPricingSheetProps = {
   isSaving?: boolean
 }
 
-const taskResolutions: TaskResolution[] = ['480p', '720p', '1080p', '4k']
+const taskResolutions: TaskResolution[] = ['480p', '720p', '1080p', '1440p', '4k']
 
 type ParsedTaskBillingPricing = {
   mode: 'per-request' | 'per-second'
@@ -108,6 +108,7 @@ function emptyTaskResolutionPrices(): Record<TaskResolution, string> {
     '480p': '',
     '720p': '',
     '1080p': '',
+    '1440p': '',
     '4k': '',
   }
 }

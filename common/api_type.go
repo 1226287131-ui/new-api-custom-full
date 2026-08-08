@@ -85,7 +85,7 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeOpenAI
 	case constant.ChannelTypeOpenAIVideo:
 		apiType = constant.APITypeOpenAI
-	case constant.ChannelTypeGrokVideo:
+	case constant.ChannelTypeGrokVideo, constant.ChannelTypeMiniMaxVideo:
 		apiType = constant.APITypeOpenAI
 	}
 	if apiType == -1 {

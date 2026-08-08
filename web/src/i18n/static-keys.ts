@@ -213,6 +213,7 @@ export const STATIC_I18N_KEYS = [
   // Models section-registry nav (dynamic titleKey)
   'Grok',
   'Grok Video',
+  'MiniMax Video',
 
   // Channel Affinity section
   'Channel Affinity',

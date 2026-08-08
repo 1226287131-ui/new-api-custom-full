@@ -168,6 +168,24 @@ Optional environment variables:
 - Returns only the local shareable `/video-cache/{task_id}.mp4` result URL and
   retains the video under the existing 48-hour cache cleanup policy.
 
+## MiniMax Video native relay
+
+- Adds the independent `MiniMax Video` channel type `64` without changing the
+  existing video adaptors.
+- Submits the native JSON contract to `POST /v1/videos` with `model`, `prompt`,
+  `seconds` (5–15), `size` (`3360x1440`, `2560x1440`, `1920x1440`,
+  `1440x1440`, `1440x1920`, or `1440x2560`), `audio`, and an optional `images`
+  array containing up to five HTTP(S) image URLs.
+- Accepts numeric or integer-string `seconds` values from clients and emits the
+  string form required by the current upstream decoder.
+- Reference videos, reference audio, file fields, and unknown request fields
+  are rejected explicitly so they cannot be silently misrouted upstream.
+- Polls `GET /v1/videos/{task_id}` and uses the authenticated
+  `/v1/videos/{task_id}/content` endpoint as the fallback cache source when the
+  provider does not return a separate result URL.
+- Exposes completed videos only through the local `/video-cache/{task_id}.mp4`
+  URL and removes cached files after 48 hours.
+
 ## Build
 
 The upstream `Dockerfile` remains unchanged. `Dockerfile.custom` uses locked

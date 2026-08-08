@@ -66,10 +66,11 @@ const (
 	// Keep the existing custom video IDs stable. Upstream introduced these
 	// channel types later using 59 and 60, so the upstream-only types use the
 	// next available IDs here.
-	ChannelTypeSub2API   = 61
-	ChannelTypeNewAPI    = 62
-	ChannelTypeGrokVideo = 63
-	ChannelTypeDummy     // this one is only for count, do not add any channel after this
+	ChannelTypeSub2API      = 61
+	ChannelTypeNewAPI       = 62
+	ChannelTypeGrokVideo    = 63
+	ChannelTypeMiniMaxVideo = 64
+	ChannelTypeDummy        // this one is only for count, do not add any channel after this
 
 )
 
@@ -138,6 +139,7 @@ var ChannelBaseURLs = []string{
 	"",                                          //61
 	"",                                          //62
 	"",                                          //63
+	"",                                          //64
 }
 
 var ChannelTypeNames = map[int]string{
@@ -201,6 +203,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSub2API:        "Sub2API",
 	ChannelTypeNewAPI:         "New API",
 	ChannelTypeGrokVideo:      "Grok Video",
+	ChannelTypeMiniMaxVideo:   "MiniMax Video",
 }
 
 // IsVideoTaskChannelType reports whether a channel is handled by the async
@@ -222,7 +225,8 @@ func IsVideoTaskChannelType(channelType int) bool {
 		ChannelTypeSora,
 		ChannelTypeNewAPIVideo,
 		ChannelTypeOpenAIVideo,
-		ChannelTypeGrokVideo:
+		ChannelTypeGrokVideo,
+		ChannelTypeMiniMaxVideo:
 		return true
 	default:
 		return false
@@ -239,7 +243,7 @@ func IsVideoTaskPlatform(platform TaskPlatform) bool {
 	case "openai", "ali", "gemini", "minimax", "vertexai", "vertex",
 		"volcengine", "kling", "jimeng", "vidu", "doubaovideo", "doubao-video",
 		"sora", "newapi-video", "newapi_video", "openai-video", "openai_video",
-		"grok-video", "grok_video":
+		"grok-video", "grok_video", "minimax-video", "minimax_video":
 		return true
 	default:
 		return false

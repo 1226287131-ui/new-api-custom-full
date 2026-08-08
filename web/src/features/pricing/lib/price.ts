@@ -43,6 +43,7 @@ export const TASK_RESOLUTION_TIERS = [
   '480p',
   '720p',
   '1080p',
+  '1440p',
   '4k',
 ] as const satisfies readonly TaskResolution[]
 

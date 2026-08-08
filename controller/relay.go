@@ -610,7 +610,7 @@ func RelayTask(c *gin.Context) {
 		service.LogTaskConsumption(c, relayInfo)
 
 		task := model.InitTask(result.Platform, relayInfo)
-		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo || relayInfo.ChannelType == constant.ChannelTypeOpenAIVideo || relayInfo.ChannelType == constant.ChannelTypeGrokVideo {
+		if relayInfo.ChannelType == constant.ChannelTypeNewAPIVideo || relayInfo.ChannelType == constant.ChannelTypeOpenAIVideo || relayInfo.ChannelType == constant.ChannelTypeGrokVideo || relayInfo.ChannelType == constant.ChannelTypeMiniMaxVideo {
 			if request, requestErr := relaycommon.GetTaskRequest(c); requestErr == nil {
 				task.Properties.VideoSeconds = request.Seconds
 				task.Properties.VideoSize = request.Size

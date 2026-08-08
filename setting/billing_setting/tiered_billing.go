@@ -127,6 +127,8 @@ func NormalizeTaskBillingResolution(value string) string {
 	switch value {
 	case "4k", "2160p", "3840x2160", "2160x3840", "2160x2160":
 		return "4k"
+	case "1440p", "3360x1440", "2560x1440", "1920x1440", "1440x1440", "1440x1920", "1440x2560":
+		return "1440p"
 	case "1080p", "1920x1080", "1080x1920", "1792x1024", "1024x1792", "1080x1080":
 		return "1080p"
 	case "720p", "1280x720", "720x1280", "1024x1024":
