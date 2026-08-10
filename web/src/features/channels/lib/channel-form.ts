@@ -20,6 +20,7 @@ import { z } from 'zod'
 
 import {
   CHANNEL_TYPE_NEW_API,
+  CHANNEL_TYPE_OPENAI_VIDEO,
   CHANNEL_STATUS,
   ERROR_MESSAGES,
   MODEL_FETCHABLE_TYPES,
@@ -261,6 +262,7 @@ export const channelFormSchema = z
     pass_through_body_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
+    openai_video_profile: z.enum(['auto', 'seedance-2.5']).optional(),
     // Type-specific settings (stored in settings JSON)
     is_enterprise_account: z.boolean().optional(), // OpenRouter specific
     vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
@@ -433,6 +435,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   pass_through_body_enabled: false,
   system_prompt: '',
   system_prompt_override: false,
+  openai_video_profile: 'auto',
   // Type-specific settings
   is_enterprise_account: false,
   vertex_key_type: 'json',
@@ -473,6 +476,7 @@ export function transformChannelToFormDefaults(
     pass_through_body_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
+    openai_video_profile: 'auto' as 'auto' | 'seedance-2.5',
   }
 
   if (channel.setting) {
@@ -487,11 +491,14 @@ export function transformChannelToFormDefaults(
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
         http_protocol: protocol,
-        http2_connection_shards:
-          protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
+        http2_connection_shards: protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
+        openai_video_profile:
+          parsed.openai_video_profile === 'seedance-2.5'
+            ? 'seedance-2.5'
+            : 'auto',
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -622,6 +629,13 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
     settingObj.http_protocol = HTTP_PROTOCOL_HTTP1
   } else if (shards > 1) {
     settingObj.http2_connection_shards = shards
+  }
+
+  if (
+    formData.type === CHANNEL_TYPE_OPENAI_VIDEO &&
+    formData.openai_video_profile === 'seedance-2.5'
+  ) {
+    settingObj.openai_video_profile = 'seedance-2.5'
   }
 
   return JSON.stringify(settingObj)

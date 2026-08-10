@@ -161,7 +161,8 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     hints: {
       baseUrl: 'Openai Video upstream base URL',
       key: 'Bearer API key',
-      models: 'seedance-2.0 or an upstream model mapping',
+      models:
+        'Any downstream video model; use model mapping for the upstream deployment',
     },
   },
   63: {

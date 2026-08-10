@@ -140,6 +140,7 @@ import {
   ADD_MODE_OPTIONS,
   CHANNEL_STATUS_LABELS,
   CHANNEL_TYPE_OPTIONS,
+  CHANNEL_TYPE_OPENAI_VIDEO,
   CHANNEL_TYPE_WARNINGS,
   ERROR_MESSAGES,
   FIELD_DESCRIPTIONS,
@@ -4094,6 +4095,62 @@ export function ChannelMutateDrawer({
                                 />
                               )}
 
+                              {currentType === CHANNEL_TYPE_OPENAI_VIDEO && (
+                                <FormField
+                                  control={form.control}
+                                  name='openai_video_profile'
+                                  render={({ field }) => (
+                                    <FormItem className='px-4 py-3'>
+                                      <FormLabel>
+                                        {t('Openai Video Profile')}
+                                      </FormLabel>
+                                      <Select
+                                        items={[
+                                          {
+                                            value: 'auto',
+                                            label: t('Auto (model aliases)'),
+                                          },
+                                          {
+                                            value: 'seedance-2.5',
+                                            label: t(
+                                              'Seedance 2.5 (unrestricted model names)'
+                                            ),
+                                          },
+                                        ]}
+                                        value={field.value || 'auto'}
+                                        onValueChange={field.onChange}
+                                      >
+                                        <FormControl>
+                                          <SelectTrigger>
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent
+                                          alignItemWithTrigger={false}
+                                        >
+                                          <SelectGroup>
+                                            <SelectItem value='auto'>
+                                              {t('Auto (model aliases)')}
+                                            </SelectItem>
+                                            <SelectItem value='seedance-2.5'>
+                                              {t(
+                                                'Seedance 2.5 (unrestricted model names)'
+                                              )}
+                                            </SelectItem>
+                                          </SelectGroup>
+                                        </SelectContent>
+                                      </Select>
+                                      <FormDescription>
+                                        {t(
+                                          'When enabled, every downstream model on this channel uses the Seedance 2.5 request contract. Model mapping still controls the upstream model name.'
+                                        )}
+                                      </FormDescription>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              )}
+
                               <FormField
                                 control={form.control}
                                 name='thinking_to_content'
@@ -4233,9 +4290,7 @@ export function ChannelMutateDrawer({
                                         <SelectValue />
                                       </SelectTrigger>
                                     </FormControl>
-                                    <SelectContent
-                                      alignItemWithTrigger={false}
-                                    >
+                                    <SelectContent alignItemWithTrigger={false}>
                                       <SelectGroup>
                                         <SelectItem value='auto'>
                                           {t('Auto')}

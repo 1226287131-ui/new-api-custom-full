@@ -2,6 +2,7 @@ package openaivideo
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -155,6 +156,168 @@ func TestBuildRequestBodySupportsSeedanceReferenceAliasesAndAspectRatio(t *testi
 	assert.Equal(t, 0.5, upstreamPayload["grid_strength"])
 	assert.NotContains(t, upstreamPayload, "aspect_ratio")
 	assert.NotContains(t, upstreamPayload, "reference_image_urls")
+}
+
+func TestVideoV3BuildsNativeMultimodalContentAndUses720p(t *testing.T) {
+	images := make([]string, 30)
+	for index := range images {
+		images[index] = fmt.Sprintf("https://images.example/reference-%02d.png", index)
+	}
+	videos := make([]string, 10)
+	audios := make([]string, 10)
+	for index := range videos {
+		videos[index] = fmt.Sprintf("https://videos.example/reference-%02d.mp4", index)
+	}
+	for index := range audios {
+		audios[index] = fmt.Sprintf("https://audios.example/reference-%02d.mp3", index)
+	}
+
+	upstreamPayload, c, adaptor, _ := buildOpenAIVideoRequestBody(t, map[string]any{
+		"model":          "video-v3",
+		"prompt":         "animate all reference media with a smooth camera move",
+		"duration":       30,
+		"size":           "1024x576",
+		"resolution":     "1080p",
+		"images":         images,
+		"videos":         videos,
+		"audios":         audios,
+		"generate_audio": false,
+		"seed":           -1,
+	})
+
+	assert.Equal(t, float64(30), upstreamPayload["duration"])
+	assert.Equal(t, "16:9", upstreamPayload["ratio"])
+	assert.Equal(t, "720p", upstreamPayload["resolution"])
+	assert.Equal(t, false, upstreamPayload["generate_audio"])
+	assert.Equal(t, float64(-1), upstreamPayload["seed"])
+	assert.NotContains(t, upstreamPayload, "prompt")
+	assert.NotContains(t, upstreamPayload, "images")
+	assert.NotContains(t, upstreamPayload, "videos")
+	assert.NotContains(t, upstreamPayload, "audios")
+
+	content, ok := upstreamPayload["content"].([]any)
+	require.True(t, ok)
+	assert.Len(t, content, 1+len(images)+len(videos)+len(audios))
+	assert.Equal(t, "text", content[0].(map[string]any)["type"])
+	assert.Equal(t, "image_url", content[1].(map[string]any)["type"])
+	assert.Equal(t, "video_url", content[1+len(images)].(map[string]any)["type"])
+	assert.Equal(t, "audio_url", content[1+len(images)+len(videos)].(map[string]any)["type"])
+
+	request, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, 30, request.Duration)
+	assert.Equal(t, "30", request.Seconds)
+	assert.Equal(t, "1280x720", request.Size)
+	assert.Equal(t, "720p", request.Metadata["resolution"])
+	assert.Equal(t, "seedance-2.5", request.Metadata["video_profile"])
+	assert.Equal(t, float64(30), adaptor.EstimateBilling(c, nil)["seconds"])
+}
+
+func TestVideoV3AcceptsNativeContentAndInputReferenceArray(t *testing.T) {
+	nativeContent := []any{
+		map[string]any{"type": "text", "text": "animate the reference subject"},
+		map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://images.example/reference.png"}},
+		map[string]any{"type": "video_url", "video_url": map[string]any{"url": "https://videos.example/reference.mp4"}},
+		map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "https://audios.example/reference.mp3"}},
+	}
+	upstreamPayload, _, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
+		"model":      "video-v3",
+		"content":    nativeContent,
+		"seconds":    "4",
+		"ratio":      "auto",
+		"resolution": "720p",
+	})
+
+	assert.Equal(t, float64(4), upstreamPayload["duration"])
+	assert.Equal(t, "auto", upstreamPayload["ratio"])
+	assert.Equal(t, "720p", upstreamPayload["resolution"])
+	assert.Equal(t, nativeContent, upstreamPayload["content"])
+	assert.NotContains(t, upstreamPayload, "prompt")
+	assert.NotContains(t, upstreamPayload, "images")
+
+	inputPayload := map[string]any{
+		"model":           "video-v3",
+		"prompt":          "animate the reference images",
+		"seconds":         "4",
+		"input_reference": []string{"https://images.example/one.png", "https://images.example/two.png"},
+		"resolution":      "720p",
+		"ratio":           "9:16",
+	}
+	upstreamPayload, _, _, _ = buildOpenAIVideoRequestBody(t, inputPayload)
+	assert.Equal(t, []any{"https://images.example/one.png", "https://images.example/two.png"}, upstreamPayload["images"])
+	assert.NotContains(t, upstreamPayload, "input_reference")
+}
+
+func TestSeedance25ChannelProfileAcceptsCustomDownstreamModelName(t *testing.T) {
+	requestBody, err := common.Marshal(map[string]any{
+		"model":      "my-customer-video-model",
+		"prompt":     "animate the reference subject",
+		"duration":   30,
+		"ratio":      "9:16",
+		"resolution": "1080p",
+		"images":     []string{"https://images.example/reference.png"},
+	})
+	require.NoError(t, err)
+
+	c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
+	info.ChannelSetting.OpenAIVideoProfile = "seedance-2.5"
+	info.UpstreamModelName = "provider-sd25-deployment"
+	c.Set("model_mapping", `{"my-customer-video-model":"provider-sd25-deployment"}`)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var upstreamPayload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &upstreamPayload))
+	assert.Equal(t, "provider-sd25-deployment", upstreamPayload["model"])
+	assert.Equal(t, float64(30), upstreamPayload["duration"])
+	assert.Equal(t, "9:16", upstreamPayload["ratio"])
+	assert.Equal(t, "720p", upstreamPayload["resolution"])
+	request, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "seedance-2.5", request.Metadata["video_profile"])
+}
+
+func TestVideoV3RejectsOutOfRangeDurationAndReferenceCounts(t *testing.T) {
+	images := make([]string, 31)
+	videos := make([]string, 11)
+	audios := make([]string, 11)
+	for index := range images {
+		images[index] = fmt.Sprintf("https://images.example/%d.png", index)
+	}
+	for index := range videos {
+		videos[index] = fmt.Sprintf("https://videos.example/%d.mp4", index)
+	}
+	for index := range audios {
+		audios[index] = fmt.Sprintf("https://audios.example/%d.mp3", index)
+	}
+
+	tests := []struct {
+		name string
+		body map[string]any
+		code string
+	}{
+		{name: "duration below minimum", body: map[string]any{"model": "video-v3", "prompt": "x", "duration": 3}, code: "invalid_duration"},
+		{name: "duration above maximum", body: map[string]any{"model": "video-v3", "prompt": "x", "duration": 31}, code: "invalid_duration"},
+		{name: "too many images", body: map[string]any{"model": "video-v3", "prompt": "x", "images": images}, code: "invalid_images"},
+		{name: "too many videos", body: map[string]any{"model": "video-v3", "prompt": "x", "videos": videos}, code: "invalid_videos"},
+		{name: "too many audios", body: map[string]any{"model": "video-v3", "prompt": "x", "audios": audios}, code: "invalid_audios"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requestBody, err := common.Marshal(test.body)
+			require.NoError(t, err)
+			c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.Equal(t, test.code, taskErr.Code)
+		})
+	}
 }
 
 func TestFast720pAllowsImageOnlyRequestsAndRemovesPromptWhenAbsent(t *testing.T) {

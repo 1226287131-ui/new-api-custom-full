@@ -152,6 +152,28 @@ Optional environment variables:
 - Does not forward the provider Bearer credential to cross-origin CDN result
   URLs.
 
+### Seedance 2.5 profile for Openai Video
+
+- For a 60 `Openai Video` channel, select **Seedance 2.5 (unrestricted model
+  names)** in Channel Extra Settings. This activates the SD2.5 contract for
+  every downstream model on that channel, so downstream model aliases are not
+  restricted. Use ordinary channel model mapping to select the upstream
+  deployment name.
+- Existing channels retain the former name-based fallback for `video-v3`,
+  `seedance-2.5`, and `sd2.5`, preserving backward compatibility.
+- Accepts integer `duration` or string/integer `seconds` from 4 through 30;
+  omitted duration defaults to 4 seconds.
+- Enforces 720p output metadata and billing even when a client sends another
+  resolution alias, while accepting the documented `auto` and fixed aspect
+  ratios.
+- Supports up to 30 image, 10 video, and 10 audio references. URL-based
+  `input_reference` arrays are accepted; recognizable video and audio file
+  extensions are classified as their corresponding media type.
+- Accepts the native `content[]` contract (`text`, `image_url`, `video_url`,
+  `audio_url`). When a client uses separate `videos` or `audios` arrays, the
+  adaptor converts the request into the native `content[]` format required by
+  the upstream.
+
 ## Grok Video native relay
 
 - Adds the independent `Grok Video` channel type `63` without changing the
