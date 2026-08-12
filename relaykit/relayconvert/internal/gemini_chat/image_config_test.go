@@ -57,8 +57,9 @@ func TestGeminiGenerateContentRequestToOpenAIChatDoesNotPutAspectRatioInSize(t *
 		},
 	}
 
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &relaycommon.RelayInfo{
-		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana 2"},
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &convmeta.Values{
+		UpstreamModelName:   "Nano Banana 2",
+		ChannelMetaAttached: true,
 	})
 
 	require.NoError(t, err)
@@ -113,8 +114,9 @@ func TestGeminiGenerateContentRequestToOpenAIChatAcceptsBanana2ExtraRatios(t *te
 		},
 	}
 
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &relaycommon.RelayInfo{
-		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana 2"},
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &convmeta.Values{
+		UpstreamModelName:   "Nano Banana 2",
+		ChannelMetaAttached: true,
 	})
 
 	require.NoError(t, err)
@@ -134,8 +136,9 @@ func TestGeminiGenerateContentRequestToOpenAIChatAcceptsDocumentedStandardRatios
 				ImageConfig:        json.RawMessage(`{"aspectRatio":"` + ratio + `","imageSize":"1K"}`),
 			},
 		}
-		converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &relaycommon.RelayInfo{
-			ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana 2"},
+		converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &convmeta.Values{
+			UpstreamModelName:   "Nano Banana 2",
+			ChannelMetaAttached: true,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, ratio, converted.AspectRatio)
@@ -208,8 +211,9 @@ func TestGeminiGenerateContentRequestToOpenAIChatNormalizesTopLevelResolution(t 
 	var request dto.GeminiChatRequest
 	require.NoError(t, kitutil.Unmarshal(raw, &request))
 
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &relaycommon.RelayInfo{
-		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana 2"},
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &convmeta.Values{
+		UpstreamModelName:   "Nano Banana 2",
+		ChannelMetaAttached: true,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "16:9", converted.AspectRatio)
@@ -233,8 +237,9 @@ func TestGeminiGenerateContentRequestToOpenAIChatMapsQualityAliasToResolution(t 
 
 	var request dto.GeminiChatRequest
 	require.NoError(t, kitutil.Unmarshal(raw, &request))
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &relaycommon.RelayInfo{
-		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "Nano Banana Pro"},
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &convmeta.Values{
+		UpstreamModelName:   "Nano Banana Pro",
+		ChannelMetaAttached: true,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "9:16", converted.AspectRatio)

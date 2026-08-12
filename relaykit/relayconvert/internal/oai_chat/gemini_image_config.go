@@ -71,7 +71,7 @@ func applyOpenAIGeminiImageConfig(request dto.GeneralOpenAIRequest, geminiReques
 	if imageSize == "" {
 		imageSize = request.Resolution
 	}
-	if raw, ok := findImageConfigOption(request.ExtraBody, "output_resolution", "outputResolution", "image_size", "imageSize", "resolution", "quality"); ok {
+	if raw, ok := findImageConfigOption(request.ExtraBody, "output_resolution", "outputResolution", "image_size", "imageSize", "resolution", "exact_size", "exactSize", "size"); ok {
 		imageSize = raw
 	}
 	if imageSize == "" && request.Size != "" && !isOpenAIImageAspectRatio(request.Size) && !strings.EqualFold(strings.TrimSpace(request.Size), "auto") {
@@ -79,6 +79,11 @@ func applyOpenAIGeminiImageConfig(request dto.GeneralOpenAIRequest, geminiReques
 	}
 	if imageSize == "" {
 		imageSize = request.Quality
+	}
+	if imageSize == "" {
+		if raw, ok := findImageConfigOption(request.ExtraBody, "quality"); ok {
+			imageSize = raw
+		}
 	}
 	if imageSize != "" {
 		normalized, err := normalizeOpenAIGeminiImageSize(imageSize)

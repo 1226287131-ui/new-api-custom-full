@@ -150,10 +150,33 @@ func TestOpenAIChatGeminiImageConfigPrefersOutputResolutionOverSize(t *testing.T
 	assert.Equal(t, "2K", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "imageSize").String())
 }
 
+func TestOpenAIChatGeminiImageConfigExplicitSizeBeatsExtraQuality(t *testing.T) {
+	extraBody, err := kitutil.Marshal(map[string]any{
+		"quality": "standard",
+	})
+	require.NoError(t, err)
+	request := dto.GeneralOpenAIRequest{
+		Model:     "Nano Banana 2",
+		Messages:  []dto.Message{{Role: "user", Content: "draw a landscape"}},
+		Size:      "4K",
+		ExtraBody: extraBody,
+	}
+	info := testGeminiImageMeta("Nano Banana 2", "Nano Banana 2")
+
+	converted, err := OpenAIChatRequestToGeminiGenerateContent(nil, request, info)
+	require.NoError(t, err)
+	assert.Equal(t, "4K", gjson.GetBytes(converted.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
 func testGeminiImageMeta(origin, upstream string) *convmeta.Values {
 	return &convmeta.Values{
 		OriginModelName:     origin,
 		UpstreamModelName:   upstream,
 		ChannelMetaAttached: true,
+		Options: &convmeta.Options{
+			Gemini: convmeta.GeminiOptions{
+				SupportsImagine: func(string) bool { return true },
+			},
+		},
 	}
 }

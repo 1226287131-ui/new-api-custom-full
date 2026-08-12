@@ -188,6 +188,60 @@ func TestConvertOpenAIImageRequestPrefersSizeOverQualityWhenResolutionIsOmitted(
 	assert.Equal(t, "4K", gjson.GetBytes(request.GenerationConfig.ImageConfig, "imageSize").String())
 }
 
+func TestConvertOpenAIImageRequestExtraQualityDoesNotOverrideExplicitSize(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}
+
+	converted, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
+		Model:   "Nano Banana 2",
+		Prompt:  "a cinematic landscape",
+		Size:    "4K",
+		Quality: "standard",
+		Extra: map[string]json.RawMessage{
+			"quality": json.RawMessage(`"standard"`),
+		},
+	})
+	require.NoError(t, err)
+	request, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	require.Equal(t, "4K", gjson.GetBytes(request.GenerationConfig.ImageConfig, "imageSize").String())
+}
+
+func TestConvertGeminiRequestMatchesNativeBananaFourKPayload(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "Nano Banana 2",
+		},
+	}
+	var request dto.GeminiChatRequest
+	raw := []byte(`{
+		"contents":[{"role":"user","parts":[{"text":"A cute orange tabby cat sitting on a sunlit wooden windowsill, detailed orange fur, warm natural sunlight, realistic photography, horizontal composition"}]}],
+		"generationConfig":{
+			"responseModalities":["IMAGE"],
+			"imageConfig":{"aspectRatio":"16:9","imageSize":"4K"}
+		}
+	}`)
+	require.NoError(t, common.Unmarshal(raw, &request))
+
+	converted, err := adaptor.ConvertGeminiRequest(nil, info, &request)
+	require.NoError(t, err)
+	convertedRequest, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	body, err := common.Marshal(convertedRequest)
+	require.NoError(t, err)
+	require.Equal(t, "16:9", gjson.GetBytes(body, "generationConfig.imageConfig.aspectRatio").String())
+	require.Equal(t, "4K", gjson.GetBytes(body, "generationConfig.imageConfig.imageSize").String())
+	require.Equal(t, "IMAGE", gjson.GetBytes(body, "generationConfig.responseModalities.0").String())
+}
+
 func TestConvertOpenAIImageRequestPrefersOutputResolutionOverSize(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := &relaycommon.RelayInfo{
@@ -258,6 +312,31 @@ func TestConvertGeminiRequestNormalizesNativeImageConfig(t *testing.T) {
 	require.Equal(t, "2K", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "imageSize").String())
 }
 
+func TestConvertGeminiRequestExplicitImageSizeWinsOverQuality(t *testing.T) {
+	adaptor := &Adaptor{}
+	for _, model := range []string{"Nano Banana 2", "Nano Banana Pro"} {
+		info := &relaycommon.RelayInfo{
+			OriginModelName: model,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				UpstreamModelName: model,
+			},
+		}
+		request := &dto.GeminiChatRequest{
+			GenerationConfig: dto.GeminiChatGenerationConfig{
+				ResponseModalities: []string{"IMAGE"},
+				ImageConfig:        json.RawMessage(`{"aspectRatio":"16:9","imageSize":"4K","quality":"standard"}`),
+			},
+		}
+
+		converted, err := adaptor.ConvertGeminiRequest(nil, info, request)
+		require.NoError(t, err)
+		convertedRequest, ok := converted.(*dto.GeminiChatRequest)
+		require.True(t, ok)
+		require.Equal(t, "16:9", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "aspectRatio").String())
+		require.Equal(t, "4K", gjson.GetBytes(convertedRequest.GenerationConfig.ImageConfig, "imageSize").String())
+	}
+}
+
 func TestConvertGeminiRequestNormalizesResponseFormatImageWrapper(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := &relaycommon.RelayInfo{
@@ -280,6 +359,29 @@ func TestConvertGeminiRequestNormalizesResponseFormatImageWrapper(t *testing.T) 
 	require.Equal(t, "9:16", gjson.GetBytes(convertedRequest.GenerationConfig.ResponseFormat, "image.aspectRatio").String())
 	require.Equal(t, "2K", gjson.GetBytes(convertedRequest.GenerationConfig.ResponseFormat, "image.imageSize").String())
 	require.Empty(t, convertedRequest.GenerationConfig.ImageConfig)
+}
+
+func TestConvertGeminiRequestResponseFormatExplicitImageSizeWinsOverQuality(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "Nano Banana 2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "Nano Banana 2",
+		},
+	}
+	request := &dto.GeminiChatRequest{
+		GenerationConfig: dto.GeminiChatGenerationConfig{
+			ResponseModalities: []string{"IMAGE"},
+			ResponseFormat:     json.RawMessage(`{"image":{"aspectRatio":"9:16","imageSize":"4K","quality":"standard"}}`),
+		},
+	}
+
+	converted, err := adaptor.ConvertGeminiRequest(nil, info, request)
+	require.NoError(t, err)
+	convertedRequest, ok := converted.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	require.Equal(t, "9:16", gjson.GetBytes(convertedRequest.GenerationConfig.ResponseFormat, "image.aspectRatio").String())
+	require.Equal(t, "4K", gjson.GetBytes(convertedRequest.GenerationConfig.ResponseFormat, "image.imageSize").String())
 }
 
 func TestConvertOpenAIImageRequestMapsMultipleCandidates(t *testing.T) {

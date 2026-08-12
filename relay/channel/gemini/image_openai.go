@@ -17,9 +17,9 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -114,7 +114,9 @@ func normalizeOpenAIImageOptions(request dto.ImageRequest) (string, string, erro
 	}
 
 	resolution := ""
-	if raw, ok := findOpenAIImageOption(request.Extra, "output_resolution", "outputResolution", "image_size", "imageSize", "resolution", "exact_size", "exactSize", "quality"); ok {
+	// Explicit resolution fields are authoritative. Keep quality separate as a
+	// fallback so an unrelated quality=standard cannot downgrade size=4K.
+	if raw, ok := findOpenAIImageOption(request.Extra, "output_resolution", "outputResolution", "image_size", "imageSize", "resolution", "exact_size", "exactSize"); ok {
 		resolution = raw
 	}
 	if resolution == "" && request.Size != "" && !isAspectRatio(request.Size) && request.Size != "auto" {
@@ -122,6 +124,11 @@ func normalizeOpenAIImageOptions(request dto.ImageRequest) (string, string, erro
 	}
 	if resolution == "" && request.Quality != "" {
 		resolution = request.Quality
+	}
+	if resolution == "" {
+		if raw, ok := findOpenAIImageOption(request.Extra, "quality"); ok {
+			resolution = raw
+		}
 	}
 	if resolution == "" {
 		return aspectRatio, "", nil
@@ -299,6 +306,20 @@ func findImageOptionValue(value any, wanted map[string]struct{}, depth int) (str
 	return "", false
 }
 
+// findImageOptionValueByPriority searches each semantic alias independently.
+// This is important when a request contains both an explicit resolution
+// (imageSize/resolution) and a fallback quality (standard/high): a map walk
+// over one combined alias set would make the result depend on JSON map order.
+func findImageOptionValueByPriority(value any, names []string, depth int) (string, bool) {
+	for _, name := range names {
+		wanted := map[string]struct{}{normalizeImageOptionKey(name): {}}
+		if found, ok := findImageOptionValue(value, wanted, depth); ok {
+			return found, true
+		}
+	}
+	return "", false
+}
+
 func imageOptionScalar(value any) (string, bool) {
 	switch typed := value.(type) {
 	case string:
@@ -430,22 +451,30 @@ func normalizeNativeGeminiResponseFormat(raw json.RawMessage) (json.RawMessage, 
 	for key, value := range image {
 		normalizedKey := normalizeImageOptionKey(key)
 		switch normalizedKey {
-		case "aspectratio", "ratio", "aspect":
-			canonicalImage["aspectRatio"] = value
-		case "imagesize", "resolution", "outputresolution", "exactsize", "quality", "size":
-			canonicalImage["imageSize"] = value
+		case "aspectratio", "ratio", "aspect",
+			"imagesize", "resolution", "outputresolution", "exactsize", "quality", "size":
+			// Re-added below using an explicit alias priority. This avoids
+			// random map iteration deciding whether quality or imageSize wins.
 		default:
 			canonicalImage[key] = value
 		}
 	}
-	if value, ok := findImageOptionValue(canonicalImage, map[string]struct{}{"aspectratio": {}}, 0); ok {
+	if value, ok := findImageOptionValueByPriority(image, []string{"aspectRatio", "aspect_ratio", "ratio", "aspect"}, 0); ok {
 		normalized, err := normalizeGeminiImageAspectRatio(value)
 		if err != nil {
 			return nil, err
 		}
 		canonicalImage["aspectRatio"] = normalized
 	}
-	if value, ok := findImageOptionValue(canonicalImage, map[string]struct{}{"imagesize": {}}, 0); ok {
+	resolutionNames := []string{"imageSize", "image_size", "resolution", "outputResolution", "output_resolution", "exactSize", "exact_size", "size"}
+	if value, ok := findImageOptionValueByPriority(image, resolutionNames, 0); ok {
+		normalized, err := normalizeGeminiImageSize(value)
+		if err != nil {
+			return nil, err
+		}
+		canonicalImage["imageSize"] = normalized
+	} else if value, ok := findImageOptionValueByPriority(image, []string{"quality"}, 0); ok {
+		// quality is only a fallback. An explicit imageSize must always win.
 		normalized, err := normalizeGeminiImageSize(value)
 		if err != nil {
 			return nil, err
@@ -488,7 +517,12 @@ func normalizeNativeGeminiImageConfig(raw json.RawMessage) (json.RawMessage, err
 		aspectRatio = value
 	}
 	var imageSize string
-	if value, ok := findImageOptionValue(root, wantedSize, 0); ok {
+	resolutionNames := []string{"imageSize", "image_size", "resolution", "outputResolution", "output_resolution", "exactSize", "exact_size", "size"}
+	if value, ok := findImageOptionValueByPriority(root, resolutionNames, 0); ok {
+		imageSize = value
+	} else if value, ok := findImageOptionValueByPriority(root, []string{"quality"}, 0); ok {
+		// quality is a fallback alias and must not override an explicit
+		// imageSize/resolution value.
 		imageSize = value
 	}
 
