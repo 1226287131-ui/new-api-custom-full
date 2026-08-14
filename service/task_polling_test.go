@@ -193,6 +193,9 @@ func (a *completedVideoPollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ 
 func TestUpdateVideoSingleTaskDoesNotPublishBeforeCacheSucceeds(t *testing.T) {
 	truncate(t)
 	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	previousTimeout := constant.TaskTerminalErrorTimeoutMinutes
+	constant.TaskTerminalErrorTimeoutMinutes = 30
+	t.Cleanup(func() { constant.TaskTerminalErrorTimeoutMinutes = previousTimeout })
 
 	const channelID = 451
 	seedTaskPollingChannel(t, channelID, true)
@@ -253,6 +256,42 @@ func TestUpdateVideoSingleTaskPublishesOnlyCachedVideo(t *testing.T) {
 	assert.Equal(t, taskcommon.BuildPublicVideoURL(task.TaskID), saved.PrivateData.ResultURL)
 	assert.NotContains(t, string(saved.Data), "data:video")
 	assert.FileExists(t, filepath.Join(cacheDir, task.TaskID+".mp4"))
+}
+
+func TestUpdateVideoSingleTaskFailsExpiredCacheError(t *testing.T) {
+	truncate(t)
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+
+	const channelID = 453
+	seedTaskPollingChannel(t, channelID, true)
+	channel, err := model.CacheGetChannel(channelID)
+	require.NoError(t, err)
+	task := seedPollingTask(t, channelID, "task_cache_expired", "upstream_cache_expired")
+	task.SubmitTime = time.Now().Add(-2 * time.Minute).Unix()
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("submit_time", task.SubmitTime).Error)
+
+	previousTimeout := constant.TaskTerminalErrorTimeoutMinutes
+	constant.TaskTerminalErrorTimeoutMinutes = 1
+	t.Cleanup(func() { constant.TaskTerminalErrorTimeoutMinutes = previousTimeout })
+
+	adaptor := &completedVideoPollingAdaptor{
+		result: relaycommon.TaskInfo{
+			Status:   model.TaskStatusSuccess,
+			Progress: "100%",
+			Url:      "ftp://provider.example/video.mp4",
+		},
+		body: []byte(`{"status":"succeed","url":"ftp://provider.example/video.mp4"}`),
+	}
+
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, channel, task.GetUpstreamTaskID(), map[string]*model.Task{
+		task.GetUpstreamTaskID(): task,
+	}))
+
+	var saved model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), saved.Status)
+	assert.Equal(t, taskcommon.ProgressComplete, saved.Progress)
+	assert.Contains(t, saved.FailReason, "failed to cache completed video")
 }
 
 func TestUpdateVideoTasksDefaultSleepWaitsBetweenTasks(t *testing.T) {
@@ -604,4 +643,23 @@ func TestTaskTerminalErrorExpiredCanBeDisabled(t *testing.T) {
 
 	now := time.Now().Unix()
 	assert.False(t, taskTerminalErrorExpired(&model.Task{SubmitTime: now - 24*60*60}, now))
+}
+
+func TestTerminalVideoTaskStatusReason(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "root unknown", body: `{"status":"unknown"}`, want: "upstream task status is unknown"},
+		{name: "nested expired", body: `{"data":{"status":"expired"}}`, want: "upstream task status is expired"},
+		{name: "active", body: `{"status":"processing"}`, want: ""},
+		{name: "malformed", body: `{`, want: ""},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, terminalVideoTaskStatusReason([]byte(test.body)))
+		})
+	}
 }

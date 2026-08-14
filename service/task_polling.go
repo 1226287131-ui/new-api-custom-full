@@ -509,15 +509,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if taskResult.RemoteUrl != "" && !strings.HasPrefix(strings.ToLower(taskResult.RemoteUrl), "data:") {
 		taskResult.RemoteUrl = ResolveVideoResultURL(baseURL, taskResult.RemoteUrl)
 	}
-	if taskResult.TerminalError && taskResult.Status != model.TaskStatusSuccess && taskResult.Status != model.TaskStatusFailure && taskTerminalErrorExpired(task, now) {
-		logger.LogWarn(ctx, fmt.Sprintf("Task %s exceeded terminal error timeout: %s", task.TaskID, taskResult.Reason))
-		taskResult.Status = model.TaskStatusFailure
-		taskResult.Progress = taskcommon.ProgressComplete
-		if strings.TrimSpace(taskResult.Reason) == "" {
-			taskResult.Reason = "upstream reported a terminal error without a usable video result"
-		}
-	}
-
 	if taskResult.Status == "" {
 		//taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
 		errorResult := &dto.GeneralErrorResponse{}
@@ -539,6 +530,38 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			}
 		}
 	}
+	if taskResult.Status == "" {
+		// Do not leave a malformed or undocumented terminal response in progress
+		// forever. It gets a short recovery window below before it is failed.
+		taskResult = &relaycommon.TaskInfo{
+			Status:        model.TaskStatusInProgress,
+			Progress:      taskcommon.ProgressInProgress,
+			TerminalError: true,
+			Reason:        "upstream returned an unrecognized task status",
+		}
+	}
+	if taskResult.Status != model.TaskStatusSuccess && taskResult.Status != model.TaskStatusFailure {
+		if reason := terminalVideoTaskStatusReason(responseBody); reason != "" {
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.TerminalError = true
+			taskResult.Reason = reason
+		}
+		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError && resp.StatusCode != http.StatusTooManyRequests {
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.TerminalError = true
+			if taskResult.Reason == "" {
+				taskResult.Reason = fmt.Sprintf("upstream rejected task status lookup with HTTP %d", resp.StatusCode)
+			}
+		}
+	}
+	if taskResult.TerminalError && taskResult.Status != model.TaskStatusSuccess && taskResult.Status != model.TaskStatusFailure && taskTerminalErrorExpired(task, now) {
+		logger.LogWarn(ctx, fmt.Sprintf("Task %s exceeded terminal error timeout: %s", task.TaskID, taskResult.Reason))
+		taskResult.Status = model.TaskStatusFailure
+		taskResult.Progress = taskcommon.ProgressComplete
+		if strings.TrimSpace(taskResult.Reason) == "" {
+			taskResult.Reason = "upstream reported a terminal error without a usable video result"
+		}
+	}
 
 	localVideoURL := ""
 	if constant.IsVideoTaskChannelType(ch.Type) && taskResult.Status == model.TaskStatusSuccess {
@@ -551,14 +574,23 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 		if _, cacheErr := CacheVideoTaskResult(ctx, task, ch, videoSourceURL); cacheErr != nil {
 			// A completed provider result is not public until the local copy exists.
-			// Keeping it in progress lets the normal poller retry transient download
-			// failures without exposing the provider URL.
+			// Keep it in progress only for the terminal-error recovery window. A
+			// permanently invalid source must settle and refund instead of retrying
+			// forever without exposing the provider URL.
 			logger.LogError(ctx, fmt.Sprintf("Failed to cache video task %s locally: %s", task.TaskID, cacheErr.Error()))
-			taskResult.Status = model.TaskStatusInProgress
-			taskResult.Progress = "95%"
-			taskResult.Reason = ""
-			taskResult.TerminalError = false
-			task.PrivateData.ResultURL = ""
+			cacheReason := fmt.Sprintf("failed to cache completed video: %s", cacheErr)
+			if taskTerminalErrorExpired(task, now) {
+				taskResult.Status = model.TaskStatusFailure
+				taskResult.Progress = taskcommon.ProgressComplete
+				taskResult.Reason = cacheReason
+				taskResult.TerminalError = false
+			} else {
+				taskResult.Status = model.TaskStatusInProgress
+				taskResult.Progress = "95%"
+				taskResult.Reason = cacheReason
+				taskResult.TerminalError = true
+				task.PrivateData.ResultURL = ""
+			}
 		} else {
 			MarkVideoTaskCached(task)
 			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
@@ -903,6 +935,32 @@ func taskTerminalErrorExpired(task *model.Task, now int64) bool {
 		startedAt = task.CreatedAt
 	}
 	return startedAt > 0 && now >= startedAt+int64(timeoutMinutes)*60
+}
+
+func terminalVideoTaskStatusReason(body []byte) string {
+	var response map[string]any
+	if err := common.Unmarshal(body, &response); err != nil {
+		return ""
+	}
+
+	candidates := []map[string]any{response}
+	for _, key := range []string{"data", "task", "result"} {
+		if nested, ok := response[key].(map[string]any); ok {
+			candidates = append(candidates, nested)
+		}
+	}
+	for _, candidate := range candidates {
+		status, ok := candidate["status"].(string)
+		if !ok {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(status))
+		switch normalized {
+		case "unknown", "not_found", "notfound", "expired", "deleted", "gone":
+			return "upstream task status is " + normalized
+		}
+	}
+	return ""
 }
 
 func findVideoResultURL(node any) string {

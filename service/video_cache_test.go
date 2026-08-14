@@ -231,10 +231,11 @@ func TestVideoCacheSourceForTaskUsesContentEndpointAndBearer(t *testing.T) {
 	assert.Equal(t, "Bearer provider-key", source.Headers.Get("Authorization"))
 }
 
-func TestVideoCacheSourceForTaskKeepsExternalContentEndpoint(t *testing.T) {
+func TestVideoCacheSourceForTaskDoesNotSendCredentialsToExternalResultURL(t *testing.T) {
 	previousServerAddress := system_setting.ServerAddress
 	system_setting.ServerAddress = "https://api.example"
 	t.Cleanup(func() { system_setting.ServerAddress = previousServerAddress })
+	baseURL := "https://gateway.example"
 
 	task := &model.Task{
 		TaskID: "task_public",
@@ -244,12 +245,12 @@ func TestVideoCacheSourceForTaskKeepsExternalContentEndpoint(t *testing.T) {
 			ResultURL:      "https://upstream.example/v1/videos/provider-task/content",
 		},
 	}
-	channel := &model.Channel{Type: constant.ChannelTypeNewAPIVideo}
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAIVideo, BaseURL: &baseURL}
 
 	source, err := VideoCacheSourceForTask(task, channel)
 	require.NoError(t, err)
 	assert.Equal(t, "https://upstream.example/v1/videos/provider-task/content", source.URL)
-	assert.Equal(t, "Bearer provider-key", source.Headers.Get("Authorization"))
+	assert.Empty(t, source.Headers.Get("Authorization"))
 }
 
 func TestVideoCacheSourceForTaskUsesGrokContentEndpoint(t *testing.T) {

@@ -52,34 +52,6 @@ func VideoCacheSourceForTask(task *model.Task, channel *model.Channel) (VideoCac
 		candidate = ResolveVideoResultURL(baseURL, candidate)
 	}
 
-	headers := make(http.Header)
-	switch channel.Type {
-	case constant.ChannelTypeAli,
-		constant.ChannelTypeMiniMax,
-		constant.ChannelTypeVolcEngine,
-		constant.ChannelTypeDoubaoVideo:
-		if key != "" {
-			headers.Set("Authorization", "Bearer "+key)
-		}
-	case constant.ChannelTypeGemini:
-		if key != "" {
-			headers.Set("x-goog-api-key", key)
-		}
-	case constant.ChannelTypeVidu:
-		if key != "" {
-			headers.Set("Authorization", "Token "+key)
-		}
-	case constant.ChannelTypeOpenAI,
-		constant.ChannelTypeSora,
-		constant.ChannelTypeNewAPIVideo,
-		constant.ChannelTypeOpenAIVideo,
-		constant.ChannelTypeGrokVideo,
-		constant.ChannelTypeMiniMaxVideo:
-		if key != "" {
-			headers.Set("Authorization", "Bearer "+key)
-		}
-	}
-
 	// Sora-compatible providers do not return a separate download URL. Their
 	// authenticated content endpoint is a valid cache source.
 	if candidate == "" && dataURL == "" {
@@ -99,12 +71,63 @@ func VideoCacheSourceForTask(task *model.Task, channel *model.Channel) (VideoCac
 	if dataURL == "" && candidate == "" {
 		return VideoCacheSource{}, fmt.Errorf("video cache source is unavailable for task %s", task.TaskID)
 	}
+	headers := videoCacheSourceHeaders(channel.Type, key)
+	if !videoCacheSourceUsesChannelCredentials(baseURL, candidate) {
+		// A cross-origin result URL is normally a signed CDN/object-storage URL.
+		// Forwarding the provider key breaks signature validation and leaks it to
+		// an unrelated host.
+		headers = make(http.Header)
+	}
 	return VideoCacheSource{
 		URL:     candidate,
 		DataURL: dataURL,
 		Headers: headers,
 		Proxy:   channel.GetSetting().Proxy,
 	}, nil
+}
+
+func videoCacheSourceHeaders(channelType int, key string) http.Header {
+	headers := make(http.Header)
+	if key == "" {
+		return headers
+	}
+
+	switch channelType {
+	case constant.ChannelTypeAli,
+		constant.ChannelTypeMiniMax,
+		constant.ChannelTypeVolcEngine,
+		constant.ChannelTypeDoubaoVideo:
+		headers.Set("Authorization", "Bearer "+key)
+	case constant.ChannelTypeGemini:
+		headers.Set("x-goog-api-key", key)
+	case constant.ChannelTypeVidu:
+		headers.Set("Authorization", "Token "+key)
+	case constant.ChannelTypeOpenAI,
+		constant.ChannelTypeSora,
+		constant.ChannelTypeNewAPIVideo,
+		constant.ChannelTypeOpenAIVideo,
+		constant.ChannelTypeGrokVideo,
+		constant.ChannelTypeMiniMaxVideo:
+		headers.Set("Authorization", "Bearer "+key)
+	}
+	return headers
+}
+
+func videoCacheSourceUsesChannelCredentials(baseURL string, sourceURL string) bool {
+	sourceURL = strings.TrimSpace(sourceURL)
+	if sourceURL == "" || strings.HasPrefix(strings.ToLower(sourceURL), "data:") {
+		return false
+	}
+
+	source, err := url.Parse(sourceURL)
+	if err != nil || !source.IsAbs() || source.Host == "" {
+		return true
+	}
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || !base.IsAbs() || base.Host == "" {
+		return false
+	}
+	return strings.EqualFold(source.Host, base.Host)
 }
 
 // CacheVideoTask caches a completed task using the source resolver above.
