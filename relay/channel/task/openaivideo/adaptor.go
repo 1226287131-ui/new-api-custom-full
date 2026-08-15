@@ -271,7 +271,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		delete(upstreamPayload, key)
 	}
 	if profile.nativeMultimodalMode {
-		for _, key := range []string{"content", "prompt", "images", "videos", "audios"} {
+		for _, key := range []string{"content", "images", "videos", "audios"} {
 			delete(upstreamPayload, key)
 		}
 	}
@@ -288,6 +288,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	if usesMultimodalContent {
 		upstreamPayload["content"] = upstreamContent
+		// The SD2.5 gateway requires a top-level prompt even when content carries text.
+		upstreamPayload["prompt"] = prompt
 	} else {
 		if prompt != "" {
 			upstreamPayload["prompt"] = prompt

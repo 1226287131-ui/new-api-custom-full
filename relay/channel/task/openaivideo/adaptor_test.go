@@ -190,7 +190,7 @@ func TestVideoV3BuildsNativeMultimodalContentAndUses720p(t *testing.T) {
 	assert.Equal(t, "720p", upstreamPayload["resolution"])
 	assert.Equal(t, false, upstreamPayload["generate_audio"])
 	assert.Equal(t, float64(-1), upstreamPayload["seed"])
-	assert.NotContains(t, upstreamPayload, "prompt")
+	assert.Equal(t, "animate all reference media with a smooth camera move", upstreamPayload["prompt"])
 	assert.NotContains(t, upstreamPayload, "images")
 	assert.NotContains(t, upstreamPayload, "videos")
 	assert.NotContains(t, upstreamPayload, "audios")
@@ -232,7 +232,7 @@ func TestVideoV3AcceptsNativeContentAndInputReferenceArray(t *testing.T) {
 	assert.Equal(t, "auto", upstreamPayload["ratio"])
 	assert.Equal(t, "720p", upstreamPayload["resolution"])
 	assert.Equal(t, nativeContent, upstreamPayload["content"])
-	assert.NotContains(t, upstreamPayload, "prompt")
+	assert.Equal(t, "animate the reference subject", upstreamPayload["prompt"])
 	assert.NotContains(t, upstreamPayload, "images")
 
 	inputPayload := map[string]any{
