@@ -194,14 +194,20 @@ Optional environment variables:
 
 - Adds the independent `MiniMax Video` channel type `64` without changing the
   existing video adaptors.
-- Submits the native JSON contract to `POST /v1/videos` with `model`, `prompt`,
-  `seconds` (5–15), `size` (`3360x1440`, `2560x1440`, `1920x1440`,
-  `1440x1440`, `1440x1920`, or `1440x2560`), `audio`, and an optional `images`
-  array containing up to five HTTP(S) image URLs.
-- Accepts numeric or integer-string `seconds` values from clients and emits the
-  string form required by the current upstream decoder.
-- Reference videos, reference audio, file fields, and unknown request fields
-  are rejected explicitly so they cannot be silently misrouted upstream.
+- Supports the documented `POST /v1/videos` JSON and multipart contracts with
+  `model`, `prompt`, `seconds`/`duration` (1-300, default 5), `size`, `audio`,
+  `prompt_enhance`, `resolution`, `clarity`, `aspect_ratio`, `megapixels`, and
+  `metadata.multiple`.
+- Accepts image references (`input_reference`, `image`, `images`,
+  `reference_images`), video references (`reference_video`, `reference_videos`),
+  video companion audio (`reference_video_audio`, `reference_video_audios`),
+  and independent audio (`reference_audio`, `reference_audios`) in one request.
+  JSON accepts public HTTP(S) URLs; multipart accepts the corresponding repeated
+  file fields. Limits are 9 images, 3 videos, 3 companion audio files, and 3
+  independent audio files per request.
+- Normalizes legacy `video_urls` and `audio_urls` aliases, de-duplicates media,
+  validates URL and multipart file inputs, and applies the configured SSRF
+  protection before accepting a remote reference URL.
 - Polls `GET /v1/videos/{task_id}` and uses the authenticated
   `/v1/videos/{task_id}/content` endpoint as the fallback cache source when the
   provider does not return a separate result URL.
