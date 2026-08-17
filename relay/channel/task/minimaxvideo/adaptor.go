@@ -32,10 +32,12 @@ const (
 	normalizedRequestContextKey = "minimax_video_normalized_request"
 	multipartContentTypeContext = "minimax_video_multipart_content_type"
 
-	maxDurationSeconds = 300
+	minDurationSeconds = 4
+	maxDurationSeconds = 15
 	maxReferenceImages = 9
 	maxReferenceVideos = 3
 	maxReferenceAudios = 3
+	firstLastFrameMode = "first_last_frame"
 )
 
 var ModelList = []string{
@@ -58,7 +60,7 @@ var (
 )
 
 var supportedTopLevelFields = map[string]struct{}{
-	"model": {}, "prompt": {}, "prompt_enhance": {}, "seconds": {}, "duration": {},
+	"model": {}, "mode": {}, "prompt": {}, "prompt_enhance": {}, "seconds": {}, "duration": {},
 	"size": {}, "audio": {}, "metadata": {}, "resolution": {}, "clarity": {},
 	"aspect_ratio": {}, "megapixels": {},
 }
@@ -184,10 +186,19 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := validateMediaURLs(media); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_reference_media", http.StatusBadRequest)
 	}
+	mode, modeProvided, err := normalizeMode(payload, metadata)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_mode", http.StatusBadRequest)
+	}
+	if err := validateMode(mode, modeProvided, media); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_mode", http.StatusBadRequest)
+	}
 
 	upstreamPayload := buildNormalizedJSONPayload(
 		modelName,
 		prompt,
+		mode,
+		modeProvided,
 		duration,
 		durationProvided,
 		size,
@@ -213,6 +224,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		"reference_video_count":       media.videoCount(),
 		"reference_video_audio_count": media.videoAudioCount(),
 		"reference_audio_count":       media.audioCount(),
+	}
+	if modeProvided {
+		requestMetadata["mode"] = mode
 	}
 	if len(media.images) > 0 {
 		requestMetadata["images"] = media.images
@@ -365,6 +379,7 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 	}{
 		{name: "model", value: taskcommon.DefaultString(info.UpstreamModelName, normalized.request.Model), set: true},
 		{name: "prompt", value: normalized.request.Prompt, set: true},
+		{name: "mode", value: payloadStringValue(normalized.payload, "mode"), set: hasPayloadValue(normalized.payload, "mode")},
 		{name: "seconds", value: normalized.request.Seconds, set: true},
 		{name: "duration", value: normalized.request.Seconds, set: hasPayloadValue(normalized.payload, "duration")},
 		{name: "size", value: normalized.request.Size, set: hasPayloadValue(normalized.payload, "size")},
@@ -603,12 +618,47 @@ func normalizeDuration(payload, metadata map[string]any) (int, bool, error) {
 	}
 	duration, err := parseInteger(value)
 	if err != nil {
-		return 0, true, fmt.Errorf("duration/seconds must be an integer between 1 and %d", maxDurationSeconds)
+		return 0, true, fmt.Errorf("duration/seconds must be an integer between %d and %d", minDurationSeconds, maxDurationSeconds)
 	}
-	if duration < 1 || duration > maxDurationSeconds {
-		return 0, true, fmt.Errorf("duration/seconds must be between 1 and %d", maxDurationSeconds)
+	if duration < minDurationSeconds || duration > maxDurationSeconds {
+		return 0, true, fmt.Errorf("duration/seconds must be between %d and %d", minDurationSeconds, maxDurationSeconds)
 	}
 	return duration, true, nil
+}
+
+func normalizeMode(payload, metadata map[string]any) (string, bool, error) {
+	value, provided := firstValue(payload, metadata, "mode")
+	if !provided {
+		return "", false, nil
+	}
+	mode, ok := value.(string)
+	if !ok {
+		return "", true, fmt.Errorf("mode must be a string")
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return "", false, nil
+	}
+	if mode != firstLastFrameMode {
+		return "", true, fmt.Errorf("mode must be %q when provided", firstLastFrameMode)
+	}
+	return mode, true, nil
+}
+
+func validateMode(mode string, provided bool, media mediaReferences) error {
+	if !provided {
+		return nil
+	}
+	if mode != firstLastFrameMode {
+		return fmt.Errorf("mode must be %q when provided", firstLastFrameMode)
+	}
+	if media.imageCount() != 2 {
+		return fmt.Errorf("first_last_frame mode requires exactly two reference images")
+	}
+	if media.videoCount() > 0 || media.videoAudioCount() > 0 || media.audioCount() > 0 {
+		return fmt.Errorf("first_last_frame mode does not support reference videos or audio")
+	}
+	return nil
 }
 
 func normalizeSize(payload, metadata map[string]any) (string, bool, error) {
@@ -707,7 +757,7 @@ func parseAudio(payload, metadata map[string]any) (bool, error) {
 }
 
 func buildNormalizedJSONPayload(
-	modelName, prompt string,
+	modelName, prompt, mode string, modeProvided bool,
 	duration int, durationProvided bool,
 	size string, sizeProvided bool,
 	aspectRatio string, aspectRatioProvided bool,
@@ -724,6 +774,9 @@ func buildNormalizedJSONPayload(
 		"prompt":  prompt,
 		"seconds": strconv.Itoa(duration),
 		"audio":   audio,
+	}
+	if modeProvided {
+		payload["mode"] = mode
 	}
 	// Emit duration as an integer as well as the legacy string seconds field.
 	// Upstream versions accept either form; sending the same normalized value

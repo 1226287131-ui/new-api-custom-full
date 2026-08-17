@@ -195,9 +195,14 @@ Optional environment variables:
 - Adds the independent `MiniMax Video` channel type `64` without changing the
   existing video adaptors.
 - Supports the documented `POST /v1/videos` JSON and multipart contracts with
-  `model`, `prompt`, `seconds`/`duration` (1-300, default 5), `size`, `audio`,
+  `model`, `prompt`, `seconds`/`duration` (4-15, default 5), `size`, `audio`,
   `prompt_enhance`, `resolution`, `clarity`, `aspect_ratio`, `megapixels`, and
   `metadata.multiple`.
+- Supports `mode: "first_last_frame"` for exactly two ordered reference images:
+  the first image is used as the first frame and the second image as the last
+  frame. This mode rejects reference videos, reference audio, and companion
+  audio; two ordinary reference images without `mode` remain a normal
+  multi-reference request.
 - Accepts image references (`input_reference`, `image`, `images`,
   `reference_images`), video references (`reference_video`, `reference_videos`),
   video companion audio (`reference_video_audio`, `reference_video_audios`),

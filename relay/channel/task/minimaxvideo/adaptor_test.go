@@ -96,6 +96,7 @@ func TestMiniMaxVideoJSONForwardsAllReferenceMediaTogether(t *testing.T) {
 	assert.Equal(t, "让人物根据参考素材自然起舞", upstream["prompt"])
 	assert.Equal(t, "10", upstream["seconds"])
 	assert.Equal(t, float64(10), upstream["duration"])
+	assert.NotContains(t, upstream, "mode")
 	assert.Equal(t, "1920x1080", upstream["size"])
 	assert.Equal(t, true, upstream["prompt_enhance"])
 	assert.Equal(t, "1080P", upstream["resolution"])
@@ -131,6 +132,33 @@ func TestMiniMaxVideoJSONForwardsAllReferenceMediaTogether(t *testing.T) {
 	assert.Equal(t, 2, request.Metadata["reference_video_count"])
 	assert.Equal(t, 2, request.Metadata["reference_video_audio_count"])
 	assert.Equal(t, 3, request.Metadata["reference_audio_count"])
+}
+
+func TestMiniMaxVideoJSONSupportsFirstLastFrameMode(t *testing.T) {
+	c, adaptor, info := newMiniMaxVideoJSONContext(t, `{
+  "model": "minimax_h3",
+  "prompt": "让镜头从首帧平滑过渡到尾帧",
+  "mode": "first_last_frame",
+  "duration": 15,
+  "input_reference": [
+    "https://example.com/first.png",
+    "https://example.com/last.png"
+  ]
+}`)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	request := mustTaskRequest(t, c)
+	assert.Equal(t, 15, request.Duration)
+	assert.Equal(t, "first_last_frame", request.Metadata["mode"])
+
+	upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
+	assert.Equal(t, "first_last_frame", upstream["mode"])
+	assert.Equal(t, "15", upstream["seconds"])
+	assert.Equal(t, float64(15), upstream["duration"])
+	assert.Equal(t, []any{
+		"https://example.com/first.png",
+		"https://example.com/last.png",
+	}, upstream["images"])
 }
 
 func TestMiniMaxVideoDurationPriorityAndDefaults(t *testing.T) {
@@ -218,6 +246,40 @@ func TestMiniMaxVideoMultipartForwardsMixedReferenceFiles(t *testing.T) {
 	assertMultipartFileContent(t, form, "reference_audio", []byte("audio-bytes"))
 }
 
+func TestMiniMaxVideoMultipartSupportsFirstLastFrameMode(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "minimax_h3"))
+	require.NoError(t, writer.WriteField("prompt", "从首帧过渡到尾帧"))
+	require.NoError(t, writer.WriteField("mode", "first_last_frame"))
+	require.NoError(t, writer.WriteField("seconds", "4"))
+	writeMultipartTestFile(t, writer, "input_reference", "first.png", []byte("first-image-bytes"))
+	writeMultipartTestFile(t, writer, "input_reference", "last.png", []byte("last-image-bytes"))
+	require.NoError(t, writer.Close())
+
+	c, adaptor, info := newMiniMaxVideoMultipartContext(t, &body, writer.FormDataContentType())
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+	upstreamRequest, err := http.NewRequest(http.MethodPost, "https://upstream.example/v1/videos", nil)
+	require.NoError(t, err)
+	require.NoError(t, adaptor.BuildRequestHeader(c, upstreamRequest, info))
+	_, params, err := mime.ParseMediaType(upstreamRequest.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	form, err := multipart.NewReader(bytes.NewReader(encoded), params["boundary"]).ReadForm(4 * 1024 * 1024)
+	require.NoError(t, err)
+	defer form.RemoveAll()
+
+	assert.Equal(t, []string{"first_last_frame"}, form.Value["mode"])
+	assert.Equal(t, []string{"4"}, form.Value["seconds"])
+	require.Len(t, form.File["input_reference"], 2)
+	assertMultipartFileContentAt(t, form, "input_reference", 0, []byte("first-image-bytes"))
+	assertMultipartFileContentAt(t, form, "input_reference", 1, []byte("last-image-bytes"))
+}
+
 func TestMiniMaxVideoRejectsReferenceLimitsAndInvalidParameters(t *testing.T) {
 	images := make([]string, 10)
 	for index := range images {
@@ -234,8 +296,22 @@ func TestMiniMaxVideoRejectsReferenceLimitsAndInvalidParameters(t *testing.T) {
 		{name: "too many videos", payload: map[string]any{"reference_videos": videos}, want: "reference videos support at most 3"},
 		{name: "too many video audios", payload: map[string]any{"reference_video_audios": audios}, want: "reference video audios support at most 3"},
 		{name: "too many audios", payload: map[string]any{"reference_audios": audios}, want: "reference audios support at most 3"},
-		{name: "duration below minimum", payload: map[string]any{"seconds": 0}, want: "between 1 and 300"},
-		{name: "duration above maximum", payload: map[string]any{"duration": 301}, want: "between 1 and 300"},
+		{name: "duration below minimum", payload: map[string]any{"seconds": 3}, want: "between 4 and 15"},
+		{name: "duration above maximum", payload: map[string]any{"duration": 16}, want: "between 4 and 15"},
+		{name: "first last frame needs two images", payload: map[string]any{
+			"mode": "first_last_frame", "images": []string{"https://example.com/first.png"},
+		}, want: "requires exactly two reference images"},
+		{name: "first last frame rejects video", payload: map[string]any{
+			"mode": "first_last_frame", "images": []string{"https://example.com/first.png", "https://example.com/last.png"},
+			"reference_videos": []string{"https://example.com/reference.mp4"},
+		}, want: "does not support reference videos or audio"},
+		{name: "first last frame rejects audio", payload: map[string]any{
+			"mode": "first_last_frame", "images": []string{"https://example.com/first.png", "https://example.com/last.png"},
+			"reference_audios": []string{"https://example.com/reference.mp3"},
+		}, want: "does not support reference videos or audio"},
+		{name: "invalid first last frame mode", payload: map[string]any{
+			"mode": "first_frame",
+		}, want: `must be "first_last_frame"`},
 		{name: "invalid multiple", payload: map[string]any{"metadata": map[string]any{"multiple": 10}}, want: "metadata.multiple"},
 		{name: "private URL", payload: map[string]any{"reference_audio": "http://127.0.0.1/file.mp3"}, want: "private IP address"},
 		{name: "unknown field", payload: map[string]any{"file_urls": []string{"https://example.com/reference.pdf"}}, want: "file_urls is not supported"},
@@ -320,8 +396,13 @@ func writeMultipartTestFile(t *testing.T, writer *multipart.Writer, field, filen
 }
 
 func assertMultipartFileContent(t *testing.T, form *multipart.Form, field string, want []byte) {
+	assertMultipartFileContentAt(t, form, field, 0, want)
+}
+
+func assertMultipartFileContentAt(t *testing.T, form *multipart.Form, field string, index int, want []byte) {
 	t.Helper()
-	file, err := form.File[field][0].Open()
+	require.Less(t, index, len(form.File[field]))
+	file, err := form.File[field][index].Open()
 	require.NoError(t, err)
 	got, err := io.ReadAll(file)
 	require.NoError(t, err)
