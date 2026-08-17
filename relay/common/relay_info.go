@@ -872,6 +872,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Metadata json.RawMessage `json:"metadata,omitempty"`
 		Duration json.RawMessage `json:"duration,omitempty"`
+		Seconds  json.RawMessage `json:"seconds,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -895,6 +896,14 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	if len(aux.Seconds) > 0 {
+		seconds, err := normalizeTaskSeconds(aux.Seconds)
+		if err != nil {
+			return err
+		}
+		t.Seconds = seconds
+	}
+
 	if len(aux.Metadata) > 0 {
 		var metadataStr string
 		if err := common.Unmarshal(aux.Metadata, &metadataStr); err == nil && metadataStr != "" {
@@ -913,6 +922,29 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
+
+// normalizeTaskSeconds keeps the internal representation stable while
+// accepting both JSON numbers and strings used by video API clients.
+func normalizeTaskSeconds(raw json.RawMessage) (string, error) {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return "", nil
+	}
+
+	if strings.HasPrefix(value, "\"") {
+		var seconds string
+		if err := common.Unmarshal(raw, &seconds); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(seconds), nil
+	}
+
+	if _, err := strconv.Atoi(value); err != nil {
+		return "", fmt.Errorf("seconds must be an integer or numeric string")
+	}
+	return value, nil
+}
+
 func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 	metadata := t.Metadata
 	if metadata != nil {

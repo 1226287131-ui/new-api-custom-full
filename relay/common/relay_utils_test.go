@@ -1,6 +1,7 @@
 package common
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTaskSubmitReqAcceptsNumericAndStringSeconds(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "numeric seconds", body: `{"seconds":10}`, want: "10"},
+		{name: "string seconds", body: `{"seconds":"10"}`, want: "10"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var request TaskSubmitReq
+			require.NoError(t, json.Unmarshal([]byte(testCase.body), &request))
+			assert.Equal(t, testCase.want, request.Seconds)
+		})
+	}
+}
 
 func TestSanitizeURLForLogMasksSensitiveQueryValues(t *testing.T) {
 	rawURL := "https://example.test/v1beta/models/gemini:streamGenerateContent?alt=sse&key=sk-secret&access_token=ya29-secret&api-version=2024-02-01"
@@ -114,6 +132,10 @@ func TestTaskDurationBounds(t *testing.T) {
 		{
 			name: "normal duration is accepted",
 			body: `{"model":"sora-2","prompt":"a cat","seconds":"8"}`,
+		},
+		{
+			name: "numeric seconds is accepted",
+			body: `{"model":"sora-2","prompt":"a cat","seconds":8}`,
 		},
 	}
 
