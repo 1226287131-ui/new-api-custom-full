@@ -214,6 +214,29 @@ func TestCacheRemoteVideoWithHeaders(t *testing.T) {
 	assert.Equal(t, []byte("remote-video"), contents)
 }
 
+func TestCacheVideoSourceAllowsTrustedProviderPort(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("VIDEO_CACHE_DIR", cacheDir)
+	configureSSRFTestFetchSetting(t)
+	fetchSetting := system_setting.GetFetchSetting()
+	fetchSetting.AllowPrivateIp = true
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("trusted-video"))
+	}))
+	defer server.Close()
+
+	path, err := CacheVideoSource(context.Background(), "task_trusted_port", VideoCacheSource{
+		URL:           server.URL + "/video.mp4",
+		TrustedOrigin: server.URL,
+	})
+	require.NoError(t, err)
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("trusted-video"), contents)
+}
+
 func TestVideoCacheSourceForTaskUsesContentEndpointAndBearer(t *testing.T) {
 	baseURL := "https://upstream.example"
 	task := &model.Task{
@@ -229,6 +252,7 @@ func TestVideoCacheSourceForTaskUsesContentEndpointAndBearer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "https://upstream.example/v1/videos/provider-task/content", source.URL)
 	assert.Equal(t, "Bearer provider-key", source.Headers.Get("Authorization"))
+	assert.Equal(t, baseURL, source.TrustedOrigin)
 }
 
 func TestVideoCacheSourceForTaskDoesNotSendCredentialsToExternalResultURL(t *testing.T) {

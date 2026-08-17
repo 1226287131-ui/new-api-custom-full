@@ -70,6 +70,23 @@ func TestImageCacheFetchAllowsProviderPortWithoutWideningGeneralFetch(t *testing
 	require.NoError(t, protection.ValidateNetworkTarget("8.8.8.8", 6002))
 }
 
+func TestVideoCacheFetchAllowsOnlyTrustedChannelPort(t *testing.T) {
+	configureSSRFTestFetchSetting(t)
+	source := VideoCacheSource{
+		URL:           "http://8.8.8.8:3000/video.mp4",
+		TrustedOrigin: "http://8.8.8.8:3000",
+	}
+
+	require.Error(t, ValidateSSRFProtectedFetchURL(source.URL))
+	require.NoError(t, validateVideoCacheFetchURL(source, source.URL))
+	require.Error(t, validateVideoCacheFetchURL(source, "http://1.1.1.1:3000/video.mp4"))
+
+	protection, enabled, err := currentVideoCacheProtection(source)
+	require.NoError(t, err)
+	require.True(t, enabled)
+	require.NoError(t, protection.ValidateNetworkTarget("8.8.8.8", 3000))
+}
+
 func TestImageCacheProtectedRoundTripperUsesDedicatedPortValidator(t *testing.T) {
 	configureSSRFTestFetchSetting(t)
 	var dialed []string

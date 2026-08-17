@@ -50,10 +50,11 @@ func CachedVideoPath(taskID string) (string, bool) {
 // VideoCacheSource describes one authenticated or inline video source.
 // Exactly one of URL and DataURL should normally be set.
 type VideoCacheSource struct {
-	URL     string
-	DataURL string
-	Headers http.Header
-	Proxy   string
+	URL           string
+	DataURL       string
+	Headers       http.Header
+	Proxy         string
+	TrustedOrigin string // configured channel origin; never taken from user input
 }
 
 // CacheVideoSource stores a remote or data URL video in the local cache.
@@ -76,18 +77,15 @@ func CacheVideoSource(ctx context.Context, taskID string, source VideoCacheSourc
 	if strings.HasPrefix(strings.ToLower(remoteURL), "data:") {
 		return cacheVideoDataURL(taskID, remoteURL)
 	}
-	if err := ValidateSSRFProtectedFetchURL(remoteURL); err != nil {
+	if err := validateVideoCacheFetchURL(source, remoteURL); err != nil {
 		return "", fmt.Errorf("video cache URL blocked: %w", err)
 	}
 
-	client := GetSSRFProtectedHTTPClient()
-	if strings.TrimSpace(source.Proxy) != "" {
-		var err error
-		client, err = GetHttpClientWithProxy(source.Proxy)
-		if err != nil {
-			return "", fmt.Errorf("create video cache proxy client: %w", err)
-		}
+	client, err := newVideoCacheHTTPClient(source)
+	if err != nil {
+		return "", fmt.Errorf("create video cache client: %w", err)
 	}
+	defer client.CloseIdleConnections()
 
 	timeoutSeconds := common.GetEnvOrDefault("VIDEO_CACHE_DOWNLOAD_TIMEOUT_SECONDS", 600)
 	downloadCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)

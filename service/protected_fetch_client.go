@@ -94,6 +94,14 @@ func newImageCacheProtectedFetchHTTPClient() *http.Client {
 }
 
 func newImageCacheProtectedProxyHTTPClient(proxyURL *url.URL) (*http.Client, error) {
+	return newProtectedFetchProxyHTTPClient(proxyURL, currentImageCacheProtection, ValidateImageCacheFetchURL)
+}
+
+// newProtectedFetchProxyHTTPClient builds a protected client for a caller
+// supplied URL validator and SSRF policy. Keeping proxy handling here makes
+// specialized cache policies use the same redirect and dial-time checks as
+// the regular protected client.
+func newProtectedFetchProxyHTTPClient(proxyURL *url.URL, getProtection func() (*common.SSRFProtection, bool, error), validateURL func(string) error) (*http.Client, error) {
 	if proxyURL == nil {
 		return nil, fmt.Errorf("proxy URL is nil")
 	}
@@ -102,9 +110,9 @@ func newImageCacheProtectedProxyHTTPClient(proxyURL *url.URL) (*http.Client, err
 		return newProtectedFetchHTTPClientWithProxyAndValidator(
 			nil,
 			nil,
-			currentImageCacheProtection,
+			getProtection,
 			http.ProxyURL(proxyURL),
-			ValidateImageCacheFetchURL,
+			validateURL,
 		), nil
 	case "socks5", "socks5h":
 		var auth *proxy.Auth
@@ -123,9 +131,9 @@ func newImageCacheProtectedProxyHTTPClient(proxyURL *url.URL) (*http.Client, err
 			func(ctx context.Context, network, address string) (net.Conn, error) {
 				return dialer.Dial(network, address)
 			},
-			currentImageCacheProtection,
+			getProtection,
 			func(req *http.Request) (*url.URL, error) { return nil, nil },
-			ValidateImageCacheFetchURL,
+			validateURL,
 		), nil
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s, must be http, https, socks5 or socks5h", proxyURL.Scheme)

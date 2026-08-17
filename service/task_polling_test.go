@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -255,6 +257,54 @@ func TestUpdateVideoSingleTaskPublishesOnlyCachedVideo(t *testing.T) {
 	assert.NotZero(t, saved.PrivateData.VideoCachedAt)
 	assert.Equal(t, taskcommon.BuildPublicVideoURL(task.TaskID), saved.PrivateData.ResultURL)
 	assert.NotContains(t, string(saved.Data), "data:video")
+	assert.FileExists(t, filepath.Join(cacheDir, task.TaskID+".mp4"))
+}
+
+func TestUpdateVideoSingleTaskCachesCompletedRemoteVideoOnTrustedPort(t *testing.T) {
+	truncate(t)
+	cacheDir := t.TempDir()
+	t.Setenv("VIDEO_CACHE_DIR", cacheDir)
+	configureSSRFTestFetchSetting(t)
+	fetchSetting := system_setting.GetFetchSetting()
+	fetchSetting.AllowPrivateIp = true
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("remote-video"))
+	}))
+	defer server.Close()
+
+	channelID := 453
+	baseURL := server.URL
+	ch := &model.Channel{
+		Id:      channelID,
+		Type:    constant.ChannelTypeKling,
+		Name:    "trusted_port_video_channel",
+		Key:     "sk-test",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(ch).Error)
+	task := seedPollingTask(t, channelID, "task_remote_cache_ready", "upstream_remote_cache_ready")
+	adaptor := &completedVideoPollingAdaptor{
+		result: relaycommon.TaskInfo{
+			Status:   model.TaskStatusSuccess,
+			Progress: "100%",
+			Url:      server.URL + "/video.mp4",
+		},
+		body: []byte(`{"status":"completed","url":"https://provider.example/video.mp4"}`),
+	}
+
+	err := updateVideoSingleTask(context.Background(), adaptor, ch, task.GetUpstreamTaskID(), map[string]*model.Task{
+		task.GetUpstreamTaskID(): task,
+	})
+	require.NoError(t, err)
+
+	var saved model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), saved.Status)
+	assert.Equal(t, taskcommon.BuildPublicVideoURL(task.TaskID), saved.PrivateData.ResultURL)
+	assert.NotContains(t, string(saved.Data), server.URL)
 	assert.FileExists(t, filepath.Join(cacheDir, task.TaskID+".mp4"))
 }
 
