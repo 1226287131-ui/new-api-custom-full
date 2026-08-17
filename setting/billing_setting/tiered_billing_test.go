@@ -113,6 +113,42 @@ func TestResolveTaskBillingPriceByResolutionOnly(t *testing.T) {
 	assert.Equal(t, "1440p", selection.Resolution)
 }
 
+func TestResolveTaskBillingPriceMapsMiniMaxH3ArbitrarySizes(t *testing.T) {
+	saved := billingSetting.TaskBillingPricing
+	billingSetting.TaskBillingPricing = map[string]TaskBillingPriceConfig{
+		"MiniMax-H3": {
+			Mode: BillingModePerSecond,
+			ResolutionPrices: map[string]float64{
+				"768p":  0.04,
+				"1080p": 0.072,
+			},
+		},
+	}
+	t.Cleanup(func() { billingSetting.TaskBillingPricing = saved })
+
+	tests := []struct {
+		name       string
+		size       string
+		wantTier   string
+		wantPrice  float64
+	}{
+		{name: "low custom size", size: "864x480", wantTier: "768p", wantPrice: 0.04},
+		{name: "high square size", size: "1024x1024", wantTier: "1080p", wantPrice: 0.072},
+		{name: "high widescreen size", size: "2208x960", wantTier: "1080p", wantPrice: 0.072},
+		{name: "high portrait size", size: "1920x1088", wantTier: "1080p", wantPrice: 0.072},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			selection, configured, err := ResolveTaskBillingPrice("MiniMax-H3", testCase.size)
+			require.NoError(t, err)
+			assert.True(t, configured)
+			assert.Equal(t, testCase.wantTier, selection.Resolution)
+			assert.Equal(t, testCase.wantPrice, selection.Price)
+		})
+	}
+}
+
 func TestResolveTaskBillingPriceUsesDefaultWithoutResolutionTable(t *testing.T) {
 	defaultPrice := 0.01
 	saved := billingSetting.TaskBillingPricing

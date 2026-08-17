@@ -222,7 +222,9 @@ Optional environment variables:
   prices. MiniMax H3's documented `0.2-0.7 MP` dimensions and `768P` aliases
   use the local `768p` price; its documented `0.98-2.0 MP` dimensions and
   `2K`/high-quality aliases use the local `1080p` price. Intermediate values
-  are conservatively billed into the higher tier. The original provider
+  are conservatively billed into the higher tier. This mapping is applied in
+  the shared task billing resolver, so H3 requests routed through OpenAI/Sora
+  compatibility channels receive the same pricing. The original provider
   quality fields are preserved in the upstream request, while the selected
   local tier is stored only in the billing snapshot.
 

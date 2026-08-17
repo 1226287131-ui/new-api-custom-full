@@ -3,6 +3,7 @@ package billing_setting
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -142,6 +143,77 @@ func NormalizeTaskBillingResolution(value string) string {
 	}
 }
 
+const (
+	miniMaxH3MinMegapixels       = 0.2
+	miniMaxH3LowMaxMegapixels    = 0.7
+	miniMaxH3SizeLowMegapixels   = 0.8
+	miniMaxH3HighMaxMegapixels   = 2.0
+	miniMaxH3SizeHighMegapixels  = 2.2
+)
+
+// NormalizeTaskBillingResolutionForModel handles provider-specific quality
+// bands before the generic aliases are applied. MiniMax H3 exposes many
+// arbitrary pixel sizes instead of a small fixed resolution enum.
+func NormalizeTaskBillingResolutionForModel(model, value string) string {
+	if isMiniMaxH3Model(model) {
+		if normalized, recognized := normalizeMiniMaxH3Resolution(value); recognized {
+			return normalized
+		}
+	}
+	return NormalizeTaskBillingResolution(value)
+}
+
+func isMiniMaxH3Model(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	normalized = strings.NewReplacer("-", "", "_", "", " ", "").Replace(normalized)
+	return strings.Contains(normalized, "minimaxh3")
+}
+
+func normalizeMiniMaxH3Resolution(value string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "×", "x")))
+	normalized = strings.NewReplacer(" ", "", "_", "", "-", "").Replace(normalized)
+	switch normalized {
+	case "480p", "480", "720p", "720", "768p", "768", "low", "medium", "standard":
+		return "768p", true
+	case "1080p", "1080", "2k", "1440p", "1440", "4k", "high":
+		return "1080p", true
+	}
+
+	if strings.HasSuffix(normalized, "mp") {
+		normalized = strings.TrimSuffix(normalized, "mp")
+	}
+	if megapixels, err := strconv.ParseFloat(normalized, 64); err == nil {
+		if megapixels >= miniMaxH3MinMegapixels && megapixels <= miniMaxH3LowMaxMegapixels {
+			return "768p", true
+		}
+		if megapixels > miniMaxH3LowMaxMegapixels && megapixels <= miniMaxH3HighMaxMegapixels {
+			return "1080p", true
+		}
+		return "", true
+	}
+
+	parts := strings.Split(normalized, "x")
+	if len(parts) != 2 {
+		return "", false
+	}
+	width, widthErr := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	height, heightErr := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return "", true
+	}
+	megapixels := width * height / 1_000_000
+	if megapixels < miniMaxH3MinMegapixels {
+		return "", true
+	}
+	if megapixels <= miniMaxH3SizeLowMegapixels {
+		return "768p", true
+	}
+	if megapixels <= miniMaxH3SizeHighMegapixels {
+		return "1080p", true
+	}
+	return "", true
+}
+
 // ResolveTaskBillingPrice returns the configured per-second or per-request
 // price. When the resolution price table is non-empty, it is authoritative:
 // missing resolution entries must fail instead of falling back to a default
@@ -157,7 +229,7 @@ func ResolveTaskBillingPrice(model, resolution string) (TaskBillingPriceSelectio
 		return TaskBillingPriceSelection{}, true, fmt.Errorf("model %s has invalid task billing mode %q", model, config.Mode)
 	}
 
-	resolution = NormalizeTaskBillingResolution(resolution)
+	resolution = NormalizeTaskBillingResolutionForModel(model, resolution)
 	resolutionPricingEnabled := len(config.ResolutionPrices) > 0
 	if resolution != "" {
 		if price, ok := config.ResolutionPrices[resolution]; ok {
