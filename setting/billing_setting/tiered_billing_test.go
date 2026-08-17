@@ -81,6 +81,13 @@ func TestResolveTaskBillingPriceByResolutionOnly(t *testing.T) {
 	assert.Equal(t, 0.02, selection.Price)
 	assert.Equal(t, "1080p", selection.Resolution)
 
+	billingSetting.TaskBillingPricing["video-per-second"].ResolutionPrices["768p"] = 0.015
+	selection, configured, err = ResolveTaskBillingPrice("video-per-second", "768P")
+	require.NoError(t, err)
+	assert.True(t, configured)
+	assert.Equal(t, 0.015, selection.Price)
+	assert.Equal(t, "768p", selection.Resolution)
+
 	_, configured, err = ResolveTaskBillingPrice("video-per-second", "480p")
 	require.Error(t, err)
 	assert.True(t, configured)

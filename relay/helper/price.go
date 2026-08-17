@@ -326,9 +326,14 @@ func ResolveTaskBillingPrice(c *gin.Context, info *relaycommon.RelayInfo) error 
 		return fmt.Errorf("resolve task billing request: %w", err)
 	}
 	resolution := ""
+	if req.BillingResolution != "" {
+		resolution = strings.TrimSpace(req.BillingResolution)
+	}
 	if req.Metadata != nil {
-		if value, ok := req.Metadata["resolution"]; ok {
-			resolution = strings.TrimSpace(fmt.Sprint(value))
+		if resolution == "" {
+			if value, ok := req.Metadata["resolution"]; ok {
+				resolution = strings.TrimSpace(fmt.Sprint(value))
+			}
 		}
 		if resolution == "" {
 			if value, ok := req.Metadata["quality"]; ok {

@@ -42,10 +42,17 @@ export const IMAGE_RESOLUTION_TIERS = [
 export const TASK_RESOLUTION_TIERS = [
   '480p',
   '720p',
+  '768p',
   '1080p',
   '1440p',
   '4k',
 ] as const satisfies readonly TaskResolution[]
+
+export function formatTaskResolutionLabel(tier: TaskResolution): string {
+  if (tier === '4k') return '4K'
+  if (tier === '768p') return '768P'
+  return tier
+}
 
 type ImageResolutionPricingModel = PricingModel & {
   billing_mode: 'image_resolution'

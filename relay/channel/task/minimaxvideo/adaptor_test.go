@@ -128,10 +128,75 @@ func TestMiniMaxVideoJSONForwardsAllReferenceMediaTogether(t *testing.T) {
 
 	request, err := relaycommon.GetTaskRequest(c)
 	require.NoError(t, err)
+	assert.Equal(t, "1080p", request.BillingResolution)
 	assert.Equal(t, 3, request.Metadata["reference_image_count"])
 	assert.Equal(t, 2, request.Metadata["reference_video_count"])
 	assert.Equal(t, 2, request.Metadata["reference_video_audio_count"])
 	assert.Equal(t, 3, request.Metadata["reference_audio_count"])
+}
+
+func TestMiniMaxH3BillingResolutionMapsAllQualityRepresentations(t *testing.T) {
+	tests := []struct {
+		name        string
+		resolution  string
+		clarity     string
+		size        string
+		megapixels  float64
+		mpProvided  bool
+		want        string
+		wantErrText string
+	}{
+		{name: "768P label", resolution: "768P", want: "768p"},
+		{name: "2K label", resolution: "2K", want: "1080p"},
+		{name: "low megapixel boundary", megapixels: 0.7, mpProvided: true, want: "768p"},
+		{name: "high megapixel first option", megapixels: 0.8, mpProvided: true, want: "1080p"},
+		{name: "high megapixel boundary", megapixels: 2.0, mpProvided: true, want: "1080p"},
+		{name: "low table size", size: "864x864", want: "768p"},
+		{name: "high table size", size: "1024x1024", want: "1080p"},
+		{name: "high table widescreen size", size: "2208x960", want: "1080p"},
+		{name: "clarity fallback", clarity: "high", want: "1080p"},
+		{name: "unsupported high megapixel", megapixels: 2.1, mpProvided: true, wantErrText: "exceeds"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := resolveH3BillingResolution(
+				testCase.resolution,
+				testCase.clarity,
+				testCase.size,
+				testCase.megapixels,
+				testCase.mpProvided,
+			)
+			if testCase.wantErrText != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), testCase.wantErrText)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want, got)
+		})
+	}
+}
+
+func TestMiniMaxH3BillingTierDoesNotChangeUpstreamQualityFields(t *testing.T) {
+	c, adaptor, info := newMiniMaxVideoJSONContext(t, `{
+  "model": "minimax_h3",
+  "prompt": "保持画面构图一致",
+  "seconds": 5,
+  "resolution": "768P",
+  "megapixels": 0.7,
+  "size": "864x864"
+}`)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	request := mustTaskRequest(t, c)
+	assert.Equal(t, "768p", request.BillingResolution)
+
+	upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
+	assert.Equal(t, "768P", upstream["resolution"])
+	assert.Equal(t, 0.7, upstream["megapixels"])
+	assert.Equal(t, "864x864", upstream["size"])
+	assert.NotContains(t, upstream, "billing_resolution")
 }
 
 func TestMiniMaxVideoJSONSupportsFirstLastFrameMode(t *testing.T) {

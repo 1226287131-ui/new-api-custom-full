@@ -857,6 +857,10 @@ type TaskSubmitReq struct {
 	Seconds        string                 `json:"seconds,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	// BillingResolution is an internal, adaptor-selected pricing tier. It is
+	// deliberately excluded from JSON so provider-specific quality fields are
+	// never forwarded or exposed as a client parameter.
+	BillingResolution string `json:"-"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {

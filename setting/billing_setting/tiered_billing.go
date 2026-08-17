@@ -131,6 +131,8 @@ func NormalizeTaskBillingResolution(value string) string {
 		return "1440p"
 	case "1080p", "1920x1080", "1080x1920", "1792x1024", "1024x1792", "1080x1080":
 		return "1080p"
+	case "768p", "768", "1366x768", "768x1366", "1376x768", "768x1376", "1280x768", "768x1280":
+		return "768p"
 	case "720p", "1280x720", "720x1280", "1024x1024":
 		return "720p"
 	case "480p", "854x480", "480x854":

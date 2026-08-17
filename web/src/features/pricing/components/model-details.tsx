@@ -76,6 +76,7 @@ import {
   formatFixedPrice,
   formatGroupPrice,
   formatImageResolutionGroupPrice,
+  formatTaskResolutionLabel,
   formatTaskDefaultGroupPrice,
   formatTaskResolutionGroupPrice,
   getTaskResolutionPrices,
@@ -657,7 +658,7 @@ function PriceSection(props: {
           {taskResolutionPrices.map(({ tier }) => (
             <div key={tier} className='bg-muted/20 rounded-lg border p-3'>
               <div className='text-muted-foreground text-xs'>
-                {tier === '4k' ? '4K' : tier}
+                {formatTaskResolutionLabel(tier)}
               </div>
               <div className='text-foreground mt-1 font-mono text-base font-semibold tabular-nums'>
                 {formatTaskResolutionGroupPrice(
@@ -1208,7 +1209,7 @@ function GroupPricingSection(props: {
     if (isTaskResolutionPricing) {
       return getTaskResolutionPrices(props.model).map(({ tier }) => ({
         id: `task-${tier}`,
-        header: tier === '4k' ? '4K' : tier,
+        header: formatTaskResolutionLabel(tier),
         className: `${thClass} text-right`,
         cellClassName: 'py-2.5 text-right font-mono',
         cell: (group: string) => renderTaskResolutionGroupPrice(group, tier),

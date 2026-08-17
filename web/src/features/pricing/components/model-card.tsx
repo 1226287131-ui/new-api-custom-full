@@ -35,6 +35,7 @@ import {
   formatImageResolutionPrice,
   formatPrice,
   formatRequestPrice,
+  formatTaskResolutionLabel,
   formatTaskDefaultPrice,
   formatTaskResolutionPrice,
   getTaskResolutionPrices,
@@ -117,7 +118,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       <>
         {taskResolutionPrices.map(({ tier }) => (
           <span key={tier} className='text-muted-foreground whitespace-nowrap'>
-            {tier === '4k' ? '4K' : tier}{' '}
+            {formatTaskResolutionLabel(tier)}{' '}
             <span className='text-foreground font-mono font-semibold'>
               {formatTaskResolutionPrice(
                 props.model,

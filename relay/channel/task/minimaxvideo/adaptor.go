@@ -164,6 +164,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_megapixels", http.StatusBadRequest)
 	}
+	billingResolution, err := resolveH3BillingResolution(
+		resolution, clarity, size, megapixels, megapixelsProvided,
+	)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
+	}
 	promptEnhance, promptEnhanceProvided, err := normalizeBoolOption(payload, metadata, "prompt_enhance")
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_prompt_enhance", http.StatusBadRequest)
@@ -263,13 +269,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 
 	request := relaycommon.TaskSubmitReq{
-		Model:    modelName,
-		Prompt:   prompt,
-		Images:   media.images,
-		Duration: duration,
-		Seconds:  strconv.Itoa(duration),
-		Size:     size,
-		Metadata: requestMetadata,
+		Model:             modelName,
+		Prompt:            prompt,
+		Images:            media.images,
+		Duration:          duration,
+		Seconds:           strconv.Itoa(duration),
+		Size:              size,
+		BillingResolution: billingResolution,
+		Metadata:          requestMetadata,
 	}
 	if len(media.images) > 0 {
 		request.Image = media.images[0]

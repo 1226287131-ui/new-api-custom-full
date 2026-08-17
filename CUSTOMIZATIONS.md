@@ -218,6 +218,13 @@ Optional environment variables:
   provider does not return a separate result URL.
 - Exposes completed videos only through the local `/video-cache/{task_id}.mp4`
   URL and removes cached files after 48 hours.
+- Adds a `768P` task-price entry alongside the existing video resolution
+  prices. MiniMax H3's documented `0.2-0.7 MP` dimensions and `768P` aliases
+  use the local `768p` price; its documented `0.98-2.0 MP` dimensions and
+  `2K`/high-quality aliases use the local `1080p` price. Intermediate values
+  are conservatively billed into the higher tier. The original provider
+  quality fields are preserved in the upstream request, while the selected
+  local tier is stored only in the billing snapshot.
 
 ## Build
 

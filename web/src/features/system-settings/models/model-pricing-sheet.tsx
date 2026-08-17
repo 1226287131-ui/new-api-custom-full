@@ -95,7 +95,14 @@ type ModelPricingSheetProps = {
   isSaving?: boolean
 }
 
-const taskResolutions: TaskResolution[] = ['480p', '720p', '1080p', '1440p', '4k']
+const taskResolutions: TaskResolution[] = [
+  '480p',
+  '720p',
+  '768p',
+  '1080p',
+  '1440p',
+  '4k',
+]
 
 type ParsedTaskBillingPricing = {
   mode: 'per-request' | 'per-second'
@@ -106,6 +113,7 @@ type ParsedTaskBillingPricing = {
 function emptyTaskResolutionPrices(): Record<TaskResolution, string> {
   return {
     '480p': '',
+    '768p': '',
     '720p': '',
     '1080p': '',
     '1440p': '',
@@ -114,7 +122,9 @@ function emptyTaskResolutionPrices(): Record<TaskResolution, string> {
 }
 
 function formatTaskResolutionLabel(resolution: TaskResolution): string {
-  return resolution === '4k' ? '4K' : resolution
+  if (resolution === '4k') return '4K'
+  if (resolution === '768p') return '768P'
+  return resolution
 }
 
 function parseTaskBillingPricing(
@@ -329,7 +339,12 @@ export const ModelPricingEditorPanel = forwardRef<
       setRequestRuleExpr(editData.requestRuleExpr || '')
       setTaskPricingEnabled(Boolean(taskPricing))
       setTaskResolutionPrices(
-        taskPricing?.resolutionPrices || emptyTaskResolutionPrices()
+        taskPricing
+          ? {
+              ...emptyTaskResolutionPrices(),
+              ...taskPricing.resolutionPrices,
+            }
+          : emptyTaskResolutionPrices()
       )
     } else {
       form.reset({

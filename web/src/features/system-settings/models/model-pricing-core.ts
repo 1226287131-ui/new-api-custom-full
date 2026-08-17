@@ -45,7 +45,13 @@ export type PricingMode =
   | 'per-second'
   | 'tiered_expr'
 
-export type TaskResolution = '480p' | '720p' | '1080p' | '1440p' | '4k'
+export type TaskResolution =
+  | '480p'
+  | '720p'
+  | '768p'
+  | '1080p'
+  | '1440p'
+  | '4k'
 
 export type TaskBillingPriceConfig = {
   mode: 'per-request' | 'per-second'
@@ -247,10 +253,15 @@ export function buildPreviewRows(
 
   if (mode === 'per-request' || mode === 'per-second') {
     if (taskPricingEnabled) {
-      const resolutionRows = (['480p', '720p', '1080p', '1440p', '4k'] as const)
+      const resolutionRows = (['480p', '720p', '768p', '1080p', '1440p', '4k'] as const)
         .filter((resolution) => taskResolutionPrices[resolution])
         .map((resolution) => {
-          const label = resolution === '4k' ? '4K' : resolution
+          const label =
+            resolution === '4k'
+              ? '4K'
+              : resolution === '768p'
+                ? '768P'
+                : resolution
           return `${label}: $${taskResolutionPrices[resolution]} / ${t(
             mode === 'per-second' ? 'second' : 'request'
           )}`
