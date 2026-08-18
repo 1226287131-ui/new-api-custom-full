@@ -59,6 +59,13 @@ export type TaskBillingPriceConfig = {
   resolution_prices: Partial<Record<TaskResolution, string>>
 }
 
+export type ScheduledDiscountConfig = {
+  enabled: boolean
+  start: string
+  end: string
+  discount: number
+}
+
 export type LaneKey =
   | 'completion'
   | 'cache'
@@ -81,6 +88,7 @@ export type ModelRatioData = {
   billingExpr?: string
   requestRuleExpr?: string
   taskBillingPricing?: string
+  scheduledDiscount?: string
 }
 
 export type PreviewRow = {

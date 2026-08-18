@@ -78,6 +78,9 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_tokens"] = cacheTokens
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
+	if discount, ok := relayInfo.PriceData.OtherRatios()["scheduled_discount"]; ok {
+		other["scheduled_discount"] = discount
+	}
 	if relayInfo.PriceData.ImageResolutionTier != "" {
 		other["billing_mode"] = "image_resolution"
 		other["image_resolution"] = relayInfo.PriceData.ImageResolutionTier
@@ -300,6 +303,9 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData hosttypes.P
 	other["group_ratio"] = priceData.GroupRatioInfo.GroupRatio
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
+	}
+	if discount, ok := priceData.OtherRatios()["scheduled_discount"]; ok {
+		other["scheduled_discount"] = discount
 	}
 	appendRequestPath(nil, relayInfo, other)
 	return other

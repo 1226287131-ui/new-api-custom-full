@@ -62,6 +62,7 @@ type ModelFormValues = {
   BillingMode: string
   BillingExpr: string
   TaskBillingPricing: string
+  ScheduledDiscount: string
 }
 
 type ModelRatioFormProps = {
@@ -85,6 +86,7 @@ type ModelJsonFieldName =
   | 'AudioRatio'
   | 'AudioCompletionRatio'
   | 'TaskBillingPricing'
+  | 'ScheduledDiscount'
 
 const modelJsonFields: Array<{
   name: ModelJsonFieldName
@@ -145,6 +147,12 @@ const modelJsonFields: Array<{
     labelKey: 'Video task pricing',
     descriptionKey:
       'JSON map of model → task mode, default price, and optional resolution prices for video tasks.',
+  },
+  {
+    name: 'ScheduledDiscount',
+    labelKey: 'Scheduled model discounts',
+    descriptionKey:
+      'JSON map of model → daily Beijing-time window and discount multiplier.',
   },
 ]
 
@@ -300,6 +308,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               savedBillingMode={savedValues.BillingMode}
               savedBillingExpr={savedValues.BillingExpr}
               savedTaskBillingPricing={savedValues.TaskBillingPricing}
+              savedScheduledDiscount={savedValues.ScheduledDiscount}
               modelPrice={form.watch('ModelPrice')}
               modelRatio={form.watch('ModelRatio')}
               cacheRatio={form.watch('CacheRatio')}
@@ -311,6 +320,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               billingMode={form.watch('BillingMode')}
               billingExpr={form.watch('BillingExpr')}
               taskBillingPricing={form.watch('TaskBillingPricing')}
+              scheduledDiscount={form.watch('ScheduledDiscount')}
               candidateModelNames={
                 isUnsetVariant ? enabledModelsQuery.data?.data : undefined
               }
@@ -325,6 +335,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
                   'billing_setting.billing_mode': 'BillingMode',
                   'billing_setting.billing_expr': 'BillingExpr',
                   'billing_setting.task_billing_pricing': 'TaskBillingPricing',
+                  'billing_setting.scheduled_discount': 'ScheduledDiscount',
                 }
                 const formField =
                   fieldMap[field] || (field as keyof ModelFormValues)

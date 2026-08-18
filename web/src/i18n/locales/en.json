@@ -5292,6 +5292,20 @@
     "No successful consumption records have been recorded today": "No successful consumption records have been recorded today",
     "Auto-refresh every 30 seconds": "Auto-refresh every 30 seconds",
     "Last updated {{time}}": "Last updated {{time}}",
-    "Waiting for update": "Waiting for update"
+    "Waiting for update": "Waiting for update",
+    "Scheduled model discount": "Scheduled model discount",
+    "Apply a daily discount window using Beijing time. The discount is combined with the user group multiplier.": "Apply a daily discount window using Beijing time. The discount is combined with the user group multiplier.",
+    "Enable scheduled model discount": "Enable scheduled model discount",
+    "Start time": "Start time",
+    "End time": "End time",
+    "Discount percentage": "Discount percentage",
+    "For example, 20 means the model is charged at 80% of its normal price.": "For example, 20 means the model is charged at 80% of its normal price.",
+    "Scheduled discount": "Scheduled discount",
+    "Start time must use HH:MM.": "Start time must use HH:MM.",
+    "End time must use HH:MM.": "End time must use HH:MM.",
+    "Start time and end time cannot be the same.": "Start time and end time cannot be the same.",
+    "Discount percentage must be between 0 and 99.99.": "Discount percentage must be between 0 and 99.99.",
+    "Scheduled model discounts": "Scheduled model discounts",
+    "JSON map of model → daily Beijing-time window and discount multiplier.": "JSON map of model → daily Beijing-time window and discount multiplier."
   }
 }

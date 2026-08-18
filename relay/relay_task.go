@@ -258,7 +258,6 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			if adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios); ok {
 				// 基于调整后的 ratios 重新计算 quota
 				finalQuota = adjustedQuota
-				info.PriceData.ReplaceOtherRatios(adjustedRatios)
 				info.PriceData.Quota = finalQuota
 			}
 		}
@@ -273,13 +272,21 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 }
 
 // applyTaskBillingRatios applies adaptor-provided task multipliers only for
-// models configured as per-second. A per-request model keeps its fixed quota
-// regardless of duration, resolution, or other task parameters.
+// models configured as per-second. The scheduled discount is already included
+// in the base quota by ModelPriceHelperPerCall, so it must not be multiplied a
+// second time here.
 func applyTaskBillingRatios(info *relaycommon.RelayInfo, billingMode string) {
 	if info == nil || billingMode != billing_setting.BillingModePerSecond {
 		return
 	}
-	quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
+	multiplier := 1.0
+	for key, ratio := range info.PriceData.OtherRatios() {
+		if key == billing_setting.ScheduledDiscountRatioKey {
+			continue
+		}
+		multiplier *= ratio
+	}
+	quotaWithRatios := float64(info.PriceData.Quota) * multiplier
 	quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
 	info.PriceData.Quota = quota
 	noteTaskQuotaClamp(info, clamp)
@@ -309,12 +316,27 @@ func normalizeConfiguredTaskRatios(ratios map[string]float64, billingMode string
 func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float64) (int, bool) {
 	// 从 PriceData 获取不含 OtherRatios 的基础价格
 	baseQuota := info.PriceData.RemoveOtherRatiosFromFloat(float64(info.PriceData.Quota))
-	priceData := info.PriceData
-	if !priceData.ReplaceOtherRatios(ratios) {
+	if scheduledDiscount, ok := info.PriceData.OtherRatios()[billing_setting.ScheduledDiscountRatioKey]; ok {
+		// Keep the request-start discount while replacing upstream-provided
+		// duration/resolution ratios with the final values.
+		adjustedRatios := ratios
+		ratios = make(map[string]float64, len(adjustedRatios)+1)
+		for key, ratio := range adjustedRatios {
+			ratios[key] = ratio
+		}
+		ratios[billing_setting.ScheduledDiscountRatioKey] = scheduledDiscount
+	}
+	// Validate and normalize on a copy first so an all-invalid adaptor result
+	// cannot erase the ratios already attached to the request.
+	candidate := info.PriceData
+	if !candidate.ReplaceOtherRatios(ratios) {
+		return 0, false
+	}
+	if !info.PriceData.ReplaceOtherRatios(candidate.OtherRatios()) {
 		return 0, false
 	}
 	// 应用新的 ratios
-	result := priceData.ApplyOtherRatiosToFloat(baseQuota)
+	result := info.PriceData.ApplyOtherRatiosToFloat(baseQuota)
 	quota, clamp := common.QuotaFromFloatChecked(result)
 	noteTaskQuotaClamp(info, clamp)
 	return quota, true

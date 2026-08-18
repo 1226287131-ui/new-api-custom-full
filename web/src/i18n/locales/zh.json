@@ -5296,6 +5296,20 @@
     "No successful consumption records have been recorded today": "今天还没有成功消费记录",
     "Auto-refresh every 30 seconds": "每 30 秒自动刷新",
     "Last updated {{time}}": "最近更新 {{time}}",
-    "Waiting for update": "等待更新"
+    "Waiting for update": "等待更新",
+    "Scheduled model discount": "模型定时折扣",
+    "Apply a daily discount window using Beijing time. The discount is combined with the user group multiplier.": "按北京时间设置每日折扣时段；折扣会与用户分组倍率叠加计算。",
+    "Enable scheduled model discount": "启用模型定时折扣",
+    "Start time": "开始时间",
+    "End time": "结束时间",
+    "Discount percentage": "折扣百分比",
+    "For example, 20 means the model is charged at 80% of its normal price.": "例如填写 20，表示模型按原价的 80% 计费。",
+    "Scheduled discount": "定时折扣",
+    "Start time must use HH:MM.": "开始时间必须使用 HH:MM 格式。",
+    "End time must use HH:MM.": "结束时间必须使用 HH:MM 格式。",
+    "Start time and end time cannot be the same.": "开始时间和结束时间不能相同。",
+    "Discount percentage must be between 0 and 99.99.": "折扣百分比必须在 0 到 99.99 之间。",
+    "Scheduled model discounts": "模型定时折扣设置",
+    "JSON map of model → daily Beijing-time window and discount multiplier.": "模型到每日北京时间折扣时段及折扣倍率的 JSON 映射。"
   }
 }

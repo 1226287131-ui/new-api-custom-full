@@ -41,3 +41,15 @@ func TestConfiguredTaskRatiosIgnoreResolutionMultiplier(t *testing.T) {
 	filtered := normalizeConfiguredTaskRatios(ratios, billing_setting.BillingModePerSecond)
 	require.Equal(t, map[string]float64{"seconds": 10}, filtered)
 }
+
+func TestRecalcQuotaFromRatiosKeepsScheduledDiscount(t *testing.T) {
+	info := &relaycommon.RelayInfo{PriceData: types.PriceData{Quota: 800}}
+	info.PriceData.AddOtherRatio(billing_setting.ScheduledDiscountRatioKey, 0.8)
+	info.PriceData.AddOtherRatio("seconds", 10)
+
+	quota, ok := recalcQuotaFromRatios(info, map[string]float64{"seconds": 12})
+	require.True(t, ok)
+	require.Equal(t, 960, quota)
+	require.Equal(t, 0.8, info.PriceData.OtherRatios()[billing_setting.ScheduledDiscountRatioKey])
+	require.Equal(t, 12.0, info.PriceData.OtherRatios()["seconds"])
+}

@@ -2,10 +2,44 @@ package billing_setting
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestValidateScheduledDiscountJSONString(t *testing.T) {
+	valid := `{"minimax-h3":{"enabled":true,"start":"22:00","end":"02:00","discount":0.8}}`
+	assert.NoError(t, ValidateScheduledDiscountJSONString(valid))
+
+	for name, value := range map[string]string{
+		"same time":    `{"m":{"enabled":true,"start":"02:00","end":"02:00","discount":0.8}}`,
+		"bad time":     `{"m":{"enabled":true,"start":"2:00","end":"03:00","discount":0.8}}`,
+		"bad discount": `{"m":{"enabled":true,"start":"02:00","end":"03:00","discount":0}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Error(t, ValidateScheduledDiscountJSONString(value))
+		})
+	}
+
+	assert.NoError(t, ValidateScheduledDiscountJSONString(`{"m":{"enabled":false}}`))
+}
+
+func TestScheduledDiscountMultiplierUsesBeijingTimeAndSupportsMidnight(t *testing.T) {
+	saved := billingSetting.ScheduledDiscount
+	billingSetting.ScheduledDiscount = map[string]ScheduledDiscountConfig{
+		"minimax-h3": {Enabled: true, Start: "22:00", End: "02:00", Discount: 0.8},
+		"invalid":    {Enabled: true, Start: "bad", End: "02:00", Discount: 0.5},
+	}
+	t.Cleanup(func() { billingSetting.ScheduledDiscount = saved })
+
+	location, err := time.LoadLocation(scheduledDiscountTimezone)
+	require.NoError(t, err)
+	assert.Equal(t, 0.8, ScheduledDiscountMultiplier("minimax-h3", time.Date(2026, 8, 19, 23, 0, 0, 0, location)))
+	assert.Equal(t, 0.8, ScheduledDiscountMultiplier("minimax-h3", time.Date(2026, 8, 20, 1, 59, 0, 0, location)))
+	assert.Equal(t, 1.0, ScheduledDiscountMultiplier("minimax-h3", time.Date(2026, 8, 20, 2, 0, 0, 0, location)))
+	assert.Equal(t, 1.0, ScheduledDiscountMultiplier("invalid", time.Date(2026, 8, 19, 23, 0, 0, 0, location)))
+}
 
 func TestResolveTaskBillingMode(t *testing.T) {
 	tests := []struct {
@@ -127,10 +161,10 @@ func TestResolveTaskBillingPriceMapsMiniMaxH3ArbitrarySizes(t *testing.T) {
 	t.Cleanup(func() { billingSetting.TaskBillingPricing = saved })
 
 	tests := []struct {
-		name       string
-		size       string
-		wantTier   string
-		wantPrice  float64
+		name      string
+		size      string
+		wantTier  string
+		wantPrice float64
 	}{
 		{name: "low custom size", size: "864x480", wantTier: "768p", wantPrice: 0.04},
 		{name: "high square size", size: "1024x1024", wantTier: "1080p", wantPrice: 0.072},

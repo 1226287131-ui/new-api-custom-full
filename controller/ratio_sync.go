@@ -73,6 +73,7 @@ var pricingSyncFields = []string{
 	billing_setting.BillingModeField,
 	billing_setting.BillingExprField,
 	billing_setting.TaskBillingPricingField,
+	billing_setting.ScheduledDiscountField,
 }
 
 var numericPricingSyncFields = map[string]bool{
@@ -380,19 +381,20 @@ func FetchUpstreamRatios(c *gin.Context) {
 
 			// 如果不是 type1，则尝试按 type2 (/api/pricing) 解析
 			var pricingItems []struct {
-				ModelName            string                                  `json:"model_name"`
-				QuotaType            int                                     `json:"quota_type"`
-				ModelRatio           float64                                 `json:"model_ratio"`
-				ModelPrice           float64                                 `json:"model_price"`
-				CompletionRatio      float64                                 `json:"completion_ratio"`
-				CacheRatio           *float64                                `json:"cache_ratio"`
-				CreateCacheRatio     *float64                                `json:"create_cache_ratio"`
-				ImageRatio           *float64                                `json:"image_ratio"`
-				AudioRatio           *float64                                `json:"audio_ratio"`
-				AudioCompletionRatio *float64                                `json:"audio_completion_ratio"`
-				BillingMode          string                                  `json:"billing_mode"`
-				BillingExpr          string                                  `json:"billing_expr"`
-				TaskBillingPricing   *billing_setting.TaskBillingPriceConfig `json:"task_billing_pricing"`
+				ModelName            string                                   `json:"model_name"`
+				QuotaType            int                                      `json:"quota_type"`
+				ModelRatio           float64                                  `json:"model_ratio"`
+				ModelPrice           float64                                  `json:"model_price"`
+				CompletionRatio      float64                                  `json:"completion_ratio"`
+				CacheRatio           *float64                                 `json:"cache_ratio"`
+				CreateCacheRatio     *float64                                 `json:"create_cache_ratio"`
+				ImageRatio           *float64                                 `json:"image_ratio"`
+				AudioRatio           *float64                                 `json:"audio_ratio"`
+				AudioCompletionRatio *float64                                 `json:"audio_completion_ratio"`
+				BillingMode          string                                   `json:"billing_mode"`
+				BillingExpr          string                                   `json:"billing_expr"`
+				TaskBillingPricing   *billing_setting.TaskBillingPriceConfig  `json:"task_billing_pricing"`
+				ScheduledDiscount    *billing_setting.ScheduledDiscountConfig `json:"scheduled_discount"`
 			}
 			if err := common.Unmarshal(body.Data, &pricingItems); err != nil {
 				logger.LogWarn(c.Request.Context(), "unrecognized data format from "+chItem.Name+": "+err.Error())
@@ -411,6 +413,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			billingModeMap := make(map[string]string)
 			billingExprMap := make(map[string]string)
 			taskBillingPricingMap := make(map[string]billing_setting.TaskBillingPriceConfig)
+			scheduledDiscountMap := make(map[string]billing_setting.ScheduledDiscountConfig)
 
 			for _, item := range pricingItems {
 				if item.ModelName == "" {
@@ -424,6 +427,9 @@ func FetchUpstreamRatios(c *gin.Context) {
 				}
 				if item.TaskBillingPricing != nil {
 					taskBillingPricingMap[item.ModelName] = *item.TaskBillingPricing
+				}
+				if item.ScheduledDiscount != nil {
+					scheduledDiscountMap[item.ModelName] = *item.ScheduledDiscount
 				}
 				if item.QuotaType == 1 {
 					modelPriceMap[item.ModelName] = item.ModelPrice
@@ -497,6 +503,9 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 			if len(taskBillingPricingMap) > 0 {
 				converted[billing_setting.TaskBillingPricingField] = valueMap(taskBillingPricingMap)
+			}
+			if len(scheduledDiscountMap) > 0 {
+				converted[billing_setting.ScheduledDiscountField] = valueMap(scheduledDiscountMap)
 			}
 
 			ch <- upstreamResult{Name: uniqueName, Data: converted}

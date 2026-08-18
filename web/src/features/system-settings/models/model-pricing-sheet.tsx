@@ -79,6 +79,7 @@ import {
   type ModelPricingFormValues,
   type ModelRatioData,
   type PricingMode,
+  type ScheduledDiscountConfig,
   type TaskResolution,
 } from './model-pricing-core'
 import { PriceInput, PriceLane } from './model-pricing-inputs'
@@ -172,6 +173,41 @@ function parseTaskBillingPricing(
   }
 }
 
+type ParsedScheduledDiscount = ScheduledDiscountConfig & {
+  discountPercent: string
+}
+
+function parseScheduledDiscount(
+  value: string | undefined
+): ParsedScheduledDiscount | null {
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!parsed || typeof parsed !== 'object') return null
+    const record = parsed as Record<string, unknown>
+    const discount = Number(record.discount)
+    if (
+      typeof record.enabled !== 'boolean' ||
+      typeof record.start !== 'string' ||
+      typeof record.end !== 'string' ||
+      !Number.isFinite(discount)
+    ) {
+      return null
+    }
+    return {
+      enabled: record.enabled,
+      start: record.start,
+      end: record.end,
+      discount,
+      discountPercent: String(
+        Math.max(0, Number(((1 - discount) * 100).toFixed(2)))
+      ),
+    }
+  } catch {
+    return null
+  }
+}
+
 function TaskBillingPricingFields(props: {
   enabled: boolean
   onEnabledChange: (enabled: boolean) => void
@@ -220,6 +256,76 @@ function TaskBillingPricingFields(props: {
               </InputGroup>
             </Field>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ScheduledDiscountFields(props: {
+  enabled: boolean
+  onEnabledChange: (enabled: boolean) => void
+  start: string
+  end: string
+  discountPercent: string
+  onStartChange: (value: string) => void
+  onEndChange: (value: string) => void
+  onDiscountChange: (value: string) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className='bg-muted/20 space-y-4 rounded-lg border p-3'>
+      <div className='flex items-start justify-between gap-4'>
+        <div className='min-w-0'>
+          <FieldLabel>{t('Scheduled model discount')}</FieldLabel>
+          <FieldDescription>
+            {t(
+              'Apply a daily discount window using Beijing time. The discount is combined with the user group multiplier.'
+            )}
+          </FieldDescription>
+        </div>
+        <Switch
+          checked={props.enabled}
+          onCheckedChange={props.onEnabledChange}
+          aria-label={t('Enable scheduled model discount')}
+        />
+      </div>
+      {props.enabled && (
+        <div className='grid gap-3 sm:grid-cols-3'>
+          <Field>
+            <FieldLabel>{t('Start time')}</FieldLabel>
+            <Input
+              type='time'
+              step='60'
+              value={props.start}
+              onChange={(event) => props.onStartChange(event.target.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel>{t('End time')}</FieldLabel>
+            <Input
+              type='time'
+              step='60'
+              value={props.end}
+              onChange={(event) => props.onEndChange(event.target.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel>{t('Discount percentage')}</FieldLabel>
+            <InputGroup>
+              <InputGroupInput
+                inputMode='decimal'
+                min='0'
+                max='99.99'
+                value={props.discountPercent}
+                onChange={(event) => props.onDiscountChange(event.target.value)}
+              />
+              <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+            </InputGroup>
+            <FieldDescription>
+              {t('For example, 20 means the model is charged at 80% of its normal price.')}
+            </FieldDescription>
+          </Field>
         </div>
       )}
     </div>
@@ -292,6 +398,11 @@ export const ModelPricingEditorPanel = forwardRef<
   const [taskResolutionPrices, setTaskResolutionPrices] = useState<
     Record<TaskResolution, string>
   >(emptyTaskResolutionPrices)
+  const [scheduledDiscountEnabled, setScheduledDiscountEnabled] =
+    useState(false)
+  const [scheduledDiscountStart, setScheduledDiscountStart] = useState('')
+  const [scheduledDiscountEnd, setScheduledDiscountEnd] = useState('')
+  const [scheduledDiscountPercent, setScheduledDiscountPercent] = useState('')
   const [editorReloadToken, setEditorReloadToken] = useState(0)
   const isEditMode = !!editData
 
@@ -315,6 +426,7 @@ export const ModelPricingEditorPanel = forwardRef<
 
     if (editData) {
       const taskPricing = parseTaskBillingPricing(editData.taskBillingPricing)
+      const scheduledDiscount = parseScheduledDiscount(editData.scheduledDiscount)
       form.reset({
         name: editData.name,
         price: editData.price || taskPricing?.defaultPrice || '',
@@ -346,6 +458,10 @@ export const ModelPricingEditorPanel = forwardRef<
             }
           : emptyTaskResolutionPrices()
       )
+      setScheduledDiscountEnabled(Boolean(scheduledDiscount?.enabled))
+      setScheduledDiscountStart(scheduledDiscount?.start || '')
+      setScheduledDiscountEnd(scheduledDiscount?.end || '')
+      setScheduledDiscountPercent(scheduledDiscount?.discountPercent || '')
     } else {
       form.reset({
         name: '',
@@ -363,6 +479,10 @@ export const ModelPricingEditorPanel = forwardRef<
       setRequestRuleExpr('')
       setTaskPricingEnabled(false)
       setTaskResolutionPrices(emptyTaskResolutionPrices())
+      setScheduledDiscountEnabled(false)
+      setScheduledDiscountStart('')
+      setScheduledDiscountEnd('')
+      setScheduledDiscountPercent('')
     }
 
     setPromptPrice(nextLaneState.promptPrice)
@@ -506,6 +626,30 @@ export const ModelPricingEditorPanel = forwardRef<
     (resolution) => toNumberOrNull(taskResolutionPrices[resolution]) !== null
   )
 
+  const scheduledDiscountError = useMemo(() => {
+    if (!scheduledDiscountEnabled) return ''
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(scheduledDiscountStart)) {
+      return t('Start time must use HH:MM.')
+    }
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(scheduledDiscountEnd)) {
+      return t('End time must use HH:MM.')
+    }
+    if (scheduledDiscountStart === scheduledDiscountEnd) {
+      return t('Start time and end time cannot be the same.')
+    }
+    const percent = Number(scheduledDiscountPercent)
+    if (!Number.isFinite(percent) || percent < 0 || percent >= 100) {
+      return t('Discount percentage must be between 0 and 99.99.')
+    }
+    return ''
+  }, [
+    scheduledDiscountEnabled,
+    scheduledDiscountEnd,
+    scheduledDiscountPercent,
+    scheduledDiscountStart,
+    t,
+  ])
+
   const watchedValues = form.watch()
   const previewRows = useMemo(
     () =>
@@ -569,6 +713,8 @@ export const ModelPricingEditorPanel = forwardRef<
       )
     }
 
+    if (scheduledDiscountError) nextWarnings.push(scheduledDiscountError)
+
     if (
       taskPricingEnabled &&
       (pricingMode === 'per-request' || pricingMode === 'per-second') &&
@@ -595,9 +741,11 @@ export const ModelPricingEditorPanel = forwardRef<
     promptPrice,
     t,
     taskPricingEnabled,
+    scheduledDiscountError,
   ])
 
   const validatePricingValues = useCallback(() => {
+    if (scheduledDiscountError) return false
     if (
       pricingMode === 'per-token' &&
       toNumberOrNull(promptPrice) === null &&
@@ -643,6 +791,7 @@ export const ModelPricingEditorPanel = forwardRef<
     promptPrice,
     t,
     taskPricingEnabled,
+    scheduledDiscountError,
   ])
 
   const buildSubmitData = useCallback(
@@ -683,6 +832,40 @@ export const ModelPricingEditorPanel = forwardRef<
         }
       }
 
+      if (
+        scheduledDiscountEnabled &&
+        !scheduledDiscountError
+      ) {
+        const percent = Number(scheduledDiscountPercent)
+        data.scheduledDiscount = JSON.stringify({
+          enabled: true,
+          start: scheduledDiscountStart,
+          end: scheduledDiscountEnd,
+          discount: (100 - percent) / 100,
+        })
+      } else if (
+        !scheduledDiscountEnabled &&
+        (scheduledDiscountStart ||
+          scheduledDiscountEnd ||
+          scheduledDiscountPercent)
+      ) {
+        const percent = Number(scheduledDiscountPercent)
+        if (
+          scheduledDiscountStart &&
+          scheduledDiscountEnd &&
+          Number.isFinite(percent) &&
+          percent >= 0 &&
+          percent < 100
+        ) {
+          data.scheduledDiscount = JSON.stringify({
+            enabled: false,
+            start: scheduledDiscountStart,
+            end: scheduledDiscountEnd,
+            discount: (100 - percent) / 100,
+          })
+        }
+      }
+
       return data
     },
     [
@@ -691,6 +874,11 @@ export const ModelPricingEditorPanel = forwardRef<
       requestRuleExpr,
       taskPricingEnabled,
       taskResolutionPrices,
+      scheduledDiscountEnabled,
+      scheduledDiscountEnd,
+      scheduledDiscountPercent,
+      scheduledDiscountStart,
+      scheduledDiscountError,
     ]
   )
 
@@ -951,6 +1139,21 @@ export const ModelPricingEditorPanel = forwardRef<
                     </FieldGroup>
                   </TabsContent>
                 </Tabs>
+
+                <ScheduledDiscountFields
+                  enabled={scheduledDiscountEnabled}
+                  onEnabledChange={setScheduledDiscountEnabled}
+                  start={scheduledDiscountStart}
+                  end={scheduledDiscountEnd}
+                  discountPercent={scheduledDiscountPercent}
+                  onStartChange={setScheduledDiscountStart}
+                  onEndChange={setScheduledDiscountEnd}
+                  onDiscountChange={(value) => {
+                    if (numericDraftRegex.test(value)) {
+                      setScheduledDiscountPercent(value)
+                    }
+                  }}
+                />
               </FieldGroup>
 
               <aside className='bg-muted/20 sticky top-0 rounded-lg border'>
@@ -975,6 +1178,17 @@ export const ModelPricingEditorPanel = forwardRef<
                       </span>
                     </div>
                   ))}
+                  {scheduledDiscountEnabled && !scheduledDiscountError && (
+                    <div className='grid gap-1 px-3 py-2.5'>
+                      <span className='text-muted-foreground text-xs'>
+                        {t('Scheduled discount')}
+                      </span>
+                      <span className='text-sm'>
+                        {scheduledDiscountStart}-{scheduledDiscountEnd} · -
+                        {scheduledDiscountPercent}%
+                      </span>
+                    </div>
+                  )}
                 </div>
               </aside>
             </div>

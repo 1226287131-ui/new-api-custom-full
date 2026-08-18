@@ -51,3 +51,19 @@ func TestComputeTieredQuota_NoClampInRange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, result.Clamp, "in-range settlement must not report a clamp")
 }
+
+func TestComputeTieredQuota_AppliesFrozenPriceMultiplier(t *testing.T) {
+	exprStr := `tier("base", p)`
+	snap := &billingexpr.BillingSnapshot{
+		BillingMode:     "tiered_expr",
+		ExprString:      exprStr,
+		ExprHash:        billingexpr.ExprHashString(exprStr),
+		GroupRatio:      2.0,
+		PriceMultiplier: 0.8,
+		QuotaPerUnit:    1_000_000,
+	}
+
+	result, err := billingexpr.ComputeTieredQuota(snap, billingexpr.TokenParams{P: 1_000_000})
+	require.NoError(t, err)
+	assert.Equal(t, 1_600_000, result.ActualQuotaAfterGroup)
+}

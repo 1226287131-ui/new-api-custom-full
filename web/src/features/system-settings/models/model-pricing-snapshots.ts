@@ -34,6 +34,7 @@ export type ModelPricingSnapshotInput = {
   billingMode: string
   billingExpr: string
   taskBillingPricing: string
+  scheduledDiscount: string
 }
 
 export type ModelPricingSnapshot = {
@@ -50,6 +51,7 @@ export type ModelPricingSnapshot = {
   billingExpr?: string
   requestRuleExpr?: string
   taskBillingPricing?: string
+  scheduledDiscount?: string
   hasConflict: boolean
 }
 
@@ -203,6 +205,7 @@ export const buildModelSnapshots = ({
   billingMode,
   billingExpr,
   taskBillingPricing,
+  scheduledDiscount,
 }: ModelPricingSnapshotInput): ModelPricingSnapshot[] => {
   const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
     fallback: {},
@@ -250,6 +253,13 @@ export const buildModelSnapshots = ({
     fallback: {},
     context: 'task billing pricing',
   })
+  const scheduledDiscountMap = safeJsonParse<Record<string, unknown>>(
+    scheduledDiscount,
+    {
+      fallback: {},
+      context: 'scheduled discounts',
+    }
+  )
 
   const modelNames = new Set([
     ...Object.keys(priceMap),
@@ -263,6 +273,7 @@ export const buildModelSnapshots = ({
     ...Object.keys(billingModeMap),
     ...Object.keys(billingExprMap),
     ...Object.keys(taskBillingPricingMap),
+    ...Object.keys(scheduledDiscountMap),
   ])
 
   return [...modelNames].map((name) => {
@@ -276,6 +287,9 @@ export const buildModelSnapshots = ({
     const audioCompletion = audioCompletionMap[name]?.toString() || ''
     const taskPricing = taskBillingPricingMap[name]
       ? JSON.stringify(taskBillingPricingMap[name])
+      : ''
+    const discount = scheduledDiscountMap[name]
+      ? JSON.stringify(scheduledDiscountMap[name])
       : ''
 
     const taskMode = taskPricing ? taskBillingPricingMap[name]?.mode : undefined
@@ -298,6 +312,7 @@ export const buildModelSnapshots = ({
         audioRatio: audio,
         audioCompletionRatio: audioCompletion,
         taskBillingPricing: taskPricing,
+        scheduledDiscount: discount,
         hasConflict: false,
       }
     }
@@ -320,6 +335,7 @@ export const buildModelSnapshots = ({
       audioRatio: audio,
       audioCompletionRatio: audioCompletion,
       taskBillingPricing: taskPricing,
+      scheduledDiscount: discount,
       billingMode: snapshotBillingMode,
       hasConflict:
         price !== '' &&
@@ -349,5 +365,6 @@ export const getSnapshotSignature = (snapshot?: ModelPricingSnapshot) => {
     billingExpr: snapshot.billingExpr || '',
     requestRuleExpr: snapshot.requestRuleExpr || '',
     taskBillingPricing: snapshot.taskBillingPricing || '',
+    scheduledDiscount: snapshot.scheduledDiscount || '',
   })
 }

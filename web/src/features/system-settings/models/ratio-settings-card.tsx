@@ -119,6 +119,7 @@ const createModelSchema = (t: Translate) =>
     BillingMode: createJsonStringField(t),
     BillingExpr: createJsonStringField(t),
     TaskBillingPricing: createJsonStringField(t),
+    ScheduledDiscount: createJsonStringField(t),
   })
 
 const createGroupSchema = (t: Translate) =>
@@ -201,6 +202,7 @@ export function RatioSettingsCard({
     BillingMode: normalizeJsonString(modelDefaults.BillingMode),
     BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
     TaskBillingPricing: normalizeJsonString(modelDefaults.TaskBillingPricing),
+    ScheduledDiscount: normalizeJsonString(modelDefaults.ScheduledDiscount),
   })
   const [savedModelValues, setSavedModelValues] = useState(
     modelNormalizedDefaults.current
@@ -244,6 +246,7 @@ export function RatioSettingsCard({
       TaskBillingPricing: formatJsonForTextarea(
         modelDefaults.TaskBillingPricing
       ),
+      ScheduledDiscount: formatJsonForTextarea(modelDefaults.ScheduledDiscount),
     },
   })
 
@@ -282,6 +285,7 @@ export function RatioSettingsCard({
       BillingMode: normalizeJsonString(modelDefaults.BillingMode),
       BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
       TaskBillingPricing: normalizeJsonString(modelDefaults.TaskBillingPricing),
+      ScheduledDiscount: normalizeJsonString(modelDefaults.ScheduledDiscount),
     }
     setSavedModelValues(modelNormalizedDefaults.current)
 
@@ -305,6 +309,7 @@ export function RatioSettingsCard({
       TaskBillingPricing: formatJsonForTextarea(
         modelDefaults.TaskBillingPricing
       ),
+      ScheduledDiscount: formatJsonForTextarea(modelDefaults.ScheduledDiscount),
     })
   }, [modelDefaults, modelForm])
 
@@ -351,12 +356,14 @@ export function RatioSettingsCard({
         BillingMode: normalizeJsonString(values.BillingMode),
         BillingExpr: normalizeJsonString(values.BillingExpr),
         TaskBillingPricing: normalizeJsonString(values.TaskBillingPricing),
+        ScheduledDiscount: normalizeJsonString(values.ScheduledDiscount),
       }
 
       const apiKeyMap: Record<string, string> = {
         BillingMode: 'billing_setting.billing_mode',
         BillingExpr: 'billing_setting.billing_expr',
         TaskBillingPricing: 'billing_setting.task_billing_pricing',
+        ScheduledDiscount: 'billing_setting.scheduled_discount',
       }
 
       const updates = (
@@ -483,6 +490,7 @@ export function RatioSettingsCard({
           AudioCompletionRatio: modelDefaults.AudioCompletionRatio,
           'billing_setting.billing_mode': modelDefaults.BillingMode,
           'billing_setting.billing_expr': modelDefaults.BillingExpr,
+          'billing_setting.scheduled_discount': modelDefaults.ScheduledDiscount,
         }}
       />
     )

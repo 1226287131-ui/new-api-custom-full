@@ -5,21 +5,40 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/samber/lo"
 )
 
 const (
-	BillingModeRatio        = "ratio"
-	BillingModeTieredExpr   = "tiered_expr"
-	BillingModePerRequest   = "per-request"
-	BillingModePerSecond    = "per-second"
-	BillingModeField        = "billing_mode"
-	BillingExprField        = "billing_expr"
-	TaskBillingPricingField = "task_billing_pricing"
+	BillingModeRatio          = "ratio"
+	BillingModeTieredExpr     = "tiered_expr"
+	BillingModePerRequest     = "per-request"
+	BillingModePerSecond      = "per-second"
+	BillingModeField          = "billing_mode"
+	BillingExprField          = "billing_expr"
+	TaskBillingPricingField   = "task_billing_pricing"
+	ScheduledDiscountField    = "scheduled_discount"
+	ScheduledDiscountRatioKey = "scheduled_discount"
 )
+
+const (
+	scheduledDiscountTimeLayout = "15:04"
+	scheduledDiscountTimezone   = "Asia/Shanghai"
+)
+
+// ScheduledDiscountConfig applies one recurring daily discount period to a
+// model. Discount is a price multiplier: 0.8 charges 80% of the configured
+// model price. All periods use Beijing time so every deployment is consistent.
+type ScheduledDiscountConfig struct {
+	Enabled  bool    `json:"enabled"`
+	Start    string  `json:"start"`
+	End      string  `json:"end"`
+	Discount float64 `json:"discount"`
+}
 
 // TaskBillingPriceConfig describes the price of an asynchronous task.
 // Prices use the same USD-per-million-quota-unit convention as ModelPrice,
@@ -40,17 +59,19 @@ type TaskBillingPriceSelection struct {
 
 // BillingSetting is managed by config.GlobalConfig.Register.
 // DB keys: billing_setting.billing_mode, billing_setting.billing_expr,
-// billing_setting.task_billing_pricing
+// billing_setting.task_billing_pricing, billing_setting.scheduled_discount
 type BillingSetting struct {
-	BillingMode        map[string]string                 `json:"billing_mode"`
-	BillingExpr        map[string]string                 `json:"billing_expr"`
-	TaskBillingPricing map[string]TaskBillingPriceConfig `json:"task_billing_pricing"`
+	BillingMode        map[string]string                  `json:"billing_mode"`
+	BillingExpr        map[string]string                  `json:"billing_expr"`
+	TaskBillingPricing map[string]TaskBillingPriceConfig  `json:"task_billing_pricing"`
+	ScheduledDiscount  map[string]ScheduledDiscountConfig `json:"scheduled_discount"`
 }
 
 var billingSetting = BillingSetting{
 	BillingMode:        make(map[string]string),
 	BillingExpr:        make(map[string]string),
 	TaskBillingPricing: make(map[string]TaskBillingPriceConfig),
+	ScheduledDiscount:  make(map[string]ScheduledDiscountConfig),
 }
 
 func init() {
@@ -121,6 +142,94 @@ func GetTaskBillingPriceConfig(model string) (TaskBillingPriceConfig, bool) {
 	return cloneTaskBillingPriceConfig(config), true
 }
 
+func GetScheduledDiscountCopy() map[string]ScheduledDiscountConfig {
+	return lo.Assign(billingSetting.ScheduledDiscount)
+}
+
+func GetScheduledDiscountConfig(model string) (ScheduledDiscountConfig, bool) {
+	config, ok := billingSetting.ScheduledDiscount[model]
+	return config, ok
+}
+
+// ValidateScheduledDiscountJSONString validates the option payload before it
+// is persisted. Disabled entries may omit their time range and multiplier.
+func ValidateScheduledDiscountJSONString(value string) error {
+	configs := make(map[string]ScheduledDiscountConfig)
+	if err := common.UnmarshalJsonStr(value, &configs); err != nil {
+		return fmt.Errorf("scheduled discount must be a JSON object: %w", err)
+	}
+	for model, config := range configs {
+		if strings.TrimSpace(model) == "" {
+			return fmt.Errorf("scheduled discount model name cannot be empty")
+		}
+		if err := validateScheduledDiscountConfig(config); err != nil {
+			return fmt.Errorf("scheduled discount for model %s: %w", model, err)
+		}
+	}
+	return nil
+}
+
+func validateScheduledDiscountConfig(config ScheduledDiscountConfig) error {
+	if !config.Enabled {
+		return nil
+	}
+	start, err := parseScheduledDiscountTime(config.Start)
+	if err != nil {
+		return fmt.Errorf("invalid start time: %w", err)
+	}
+	end, err := parseScheduledDiscountTime(config.End)
+	if err != nil {
+		return fmt.Errorf("invalid end time: %w", err)
+	}
+	if start == end {
+		return fmt.Errorf("start time and end time cannot be the same")
+	}
+	if math.IsNaN(config.Discount) || math.IsInf(config.Discount, 0) || config.Discount <= 0 || config.Discount > 1 {
+		return fmt.Errorf("discount must be a finite number greater than 0 and at most 1")
+	}
+	return nil
+}
+
+func parseScheduledDiscountTime(value string) (int, error) {
+	if len(value) != len(scheduledDiscountTimeLayout) {
+		return 0, fmt.Errorf("must use HH:MM")
+	}
+	parsed, err := time.Parse(scheduledDiscountTimeLayout, value)
+	if err != nil || parsed.Format(scheduledDiscountTimeLayout) != value {
+		return 0, fmt.Errorf("must use HH:MM")
+	}
+	return parsed.Hour()*60 + parsed.Minute(), nil
+}
+
+// ScheduledDiscountMultiplier returns the multiplier active at at. Invalid
+// legacy values are ignored so a bad historical option never changes billing.
+func ScheduledDiscountMultiplier(model string, at time.Time) float64 {
+	config, ok := billingSetting.ScheduledDiscount[model]
+	if !ok || !config.Enabled || validateScheduledDiscountConfig(config) != nil {
+		return 1
+	}
+	start, _ := parseScheduledDiscountTime(config.Start)
+	end, _ := parseScheduledDiscountTime(config.End)
+	location, err := time.LoadLocation(scheduledDiscountTimezone)
+	if err != nil {
+		common.SysError("load scheduled discount timezone: " + err.Error())
+		return 1
+	}
+	local := at.In(location)
+	minute := local.Hour()*60 + local.Minute()
+	active := false
+	if start < end {
+		active = minute >= start && minute < end
+	} else {
+		// A start after end deliberately spans midnight, such as 22:00-02:00.
+		active = minute >= start || minute < end
+	}
+	if !active {
+		return 1
+	}
+	return config.Discount
+}
+
 // NormalizeTaskBillingResolution keeps request aliases and size strings
 // stable so a price table can be shared by all video task adaptors.
 func NormalizeTaskBillingResolution(value string) string {
@@ -144,11 +253,11 @@ func NormalizeTaskBillingResolution(value string) string {
 }
 
 const (
-	miniMaxH3MinMegapixels       = 0.2
-	miniMaxH3LowMaxMegapixels    = 0.7
-	miniMaxH3SizeLowMegapixels   = 0.8
-	miniMaxH3HighMaxMegapixels   = 2.0
-	miniMaxH3SizeHighMegapixels  = 2.2
+	miniMaxH3MinMegapixels      = 0.2
+	miniMaxH3LowMaxMegapixels   = 0.7
+	miniMaxH3SizeLowMegapixels  = 0.8
+	miniMaxH3HighMaxMegapixels  = 2.0
+	miniMaxH3SizeHighMegapixels = 2.2
 )
 
 // NormalizeTaskBillingResolutionForModel handles provider-specific quality
@@ -276,7 +385,7 @@ func validateTaskBillingPrice(price float64) error {
 }
 
 func GetPricingSyncData(base map[string]any) map[string]any {
-	extra := make(map[string]any, 3)
+	extra := make(map[string]any, 4)
 	if modes := GetBillingModeCopy(); len(modes) > 0 {
 		extra[BillingModeField] = modes
 	}
@@ -285,6 +394,9 @@ func GetPricingSyncData(base map[string]any) map[string]any {
 	}
 	if prices := GetTaskBillingPricingCopy(); len(prices) > 0 {
 		extra[TaskBillingPricingField] = prices
+	}
+	if discounts := GetScheduledDiscountCopy(); len(discounts) > 0 {
+		extra[ScheduledDiscountField] = discounts
 	}
 	return lo.Assign(base, extra)
 }

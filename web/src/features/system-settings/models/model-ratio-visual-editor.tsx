@@ -78,6 +78,7 @@ type ModelRatioVisualEditorProps = {
   savedBillingMode: string
   savedBillingExpr: string
   savedTaskBillingPricing: string
+  savedScheduledDiscount: string
   modelPrice: string
   modelRatio: string
   cacheRatio: string
@@ -89,6 +90,7 @@ type ModelRatioVisualEditorProps = {
   billingMode: string
   billingExpr: string
   taskBillingPricing: string
+  scheduledDiscount: string
   candidateModelNames?: string[]
   candidateModelsLoading?: boolean
   filterMode?: 'all' | 'unset'
@@ -119,6 +121,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     savedBillingMode,
     savedBillingExpr,
     savedTaskBillingPricing,
+    savedScheduledDiscount,
     modelPrice,
     modelRatio,
     cacheRatio,
@@ -130,6 +133,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     billingMode,
     billingExpr,
     taskBillingPricing,
+    scheduledDiscount,
     candidateModelNames,
     candidateModelsLoading,
     filterMode = 'all',
@@ -205,6 +209,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode: savedBillingMode,
       billingExpr: savedBillingExpr,
       taskBillingPricing: savedTaskBillingPricing,
+      scheduledDiscount: savedScheduledDiscount,
     })
     const draftRows = buildModelSnapshots({
       modelPrice,
@@ -218,6 +223,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode,
       billingExpr,
       taskBillingPricing,
+      scheduledDiscount,
     })
 
     const savedByName = new Map(savedRows.map((row) => [row.name, row]))
@@ -262,6 +268,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     savedBillingMode,
     savedBillingExpr,
     savedTaskBillingPricing,
+    savedScheduledDiscount,
     modelPrice,
     modelRatio,
     cacheRatio,
@@ -273,6 +280,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     billingMode,
     billingExpr,
     taskBillingPricing,
+    scheduledDiscount,
   ])
 
   const modeCounts = useMemo(
@@ -326,6 +334,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         billingExpr: editableModel.billingExpr,
         requestRuleExpr: editableModel.requestRuleExpr,
         taskBillingPricing: editableModel.taskBillingPricing,
+        scheduledDiscount: editableModel.scheduledDiscount,
       })
       setEditorOpen(true)
       if (isMobile) setSheetOpen(true)
@@ -400,6 +409,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         taskBillingPricing,
         { fallback: {}, silent: true }
       )
+      const scheduledDiscountMap = safeJsonParse<Record<string, unknown>>(
+        scheduledDiscount,
+        { fallback: {}, silent: true }
+      )
 
       delete priceMap[name]
       delete ratioMap[name]
@@ -412,6 +425,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       delete billingModeMap[name]
       delete billingExprMap[name]
       delete taskBillingPricingMap[name]
+      delete scheduledDiscountMap[name]
 
       onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
       onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
@@ -436,6 +450,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         'billing_setting.task_billing_pricing',
         JSON.stringify(taskBillingPricingMap, null, 2)
       )
+      onChange(
+        'billing_setting.scheduled_discount',
+        JSON.stringify(scheduledDiscountMap, null, 2)
+      )
 
       if (editData?.name === name) {
         setEditData(null)
@@ -455,6 +473,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode,
       billingExpr,
       taskBillingPricing,
+      scheduledDiscount,
       onChange,
       editData,
     ]
@@ -550,6 +569,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         taskBillingPricing,
         { fallback: {}, silent: true }
       )
+      const scheduledDiscountMap = safeJsonParse<Record<string, unknown>>(
+        scheduledDiscount,
+        { fallback: {}, silent: true }
+      )
 
       const setIfPresent = (
         target: Record<string, number>,
@@ -573,6 +596,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         delete billingModeMap[name]
         delete billingExprMap[name]
         delete taskBillingPricingMap[name]
+        delete scheduledDiscountMap[name]
 
         if (data.billingMode === 'tiered_expr') {
           const combined = combineBillingExpr(
@@ -623,6 +647,14 @@ const ModelRatioVisualEditorComponent = forwardRef<
             delete taskBillingPricingMap[name]
           }
         }
+        if (data.scheduledDiscount) {
+          try {
+            const discount = JSON.parse(data.scheduledDiscount) as unknown
+            scheduledDiscountMap[name] = discount
+          } catch {
+            delete scheduledDiscountMap[name]
+          }
+        }
       })
 
       onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
@@ -648,6 +680,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         'billing_setting.task_billing_pricing',
         JSON.stringify(taskBillingPricingMap, null, 2)
       )
+      onChange(
+        'billing_setting.scheduled_discount',
+        JSON.stringify(scheduledDiscountMap, null, 2)
+      )
     },
     [
       modelPrice,
@@ -661,6 +697,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode,
       billingExpr,
       taskBillingPricing,
+      scheduledDiscount,
       onChange,
     ]
   )
@@ -900,6 +937,7 @@ export const ModelRatioVisualEditor = memo(
       prevProps.savedBillingMode === nextProps.savedBillingMode &&
       prevProps.savedBillingExpr === nextProps.savedBillingExpr &&
       prevProps.savedTaskBillingPricing === nextProps.savedTaskBillingPricing &&
+      prevProps.savedScheduledDiscount === nextProps.savedScheduledDiscount &&
       prevProps.modelPrice === nextProps.modelPrice &&
       prevProps.modelRatio === nextProps.modelRatio &&
       prevProps.cacheRatio === nextProps.cacheRatio &&
@@ -911,6 +949,7 @@ export const ModelRatioVisualEditor = memo(
       prevProps.billingMode === nextProps.billingMode &&
       prevProps.billingExpr === nextProps.billingExpr &&
       prevProps.taskBillingPricing === nextProps.taskBillingPricing &&
+      prevProps.scheduledDiscount === nextProps.scheduledDiscount &&
       prevProps.candidateModelNames === nextProps.candidateModelNames &&
       prevProps.candidateModelsLoading === nextProps.candidateModelsLoading &&
       prevProps.filterMode === nextProps.filterMode &&
