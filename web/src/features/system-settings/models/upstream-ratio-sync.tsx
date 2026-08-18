@@ -78,6 +78,7 @@ type UpstreamRatioSyncProps = {
     AudioCompletionRatio: string
     'billing_setting.billing_mode': string
     'billing_setting.billing_expr': string
+    'billing_setting.scheduled_discount': string
   }
 }
 

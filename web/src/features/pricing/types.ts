@@ -31,18 +31,20 @@ export type ImageResolutionTier = '1K' | '2K' | '4K'
 
 export type ImageResolutionPrices = Record<ImageResolutionTier, number>
 
-export type TaskResolution =
-  | '480p'
-  | '720p'
-  | '768p'
-  | '1080p'
-  | '1440p'
-  | '4k'
+export type TaskResolution = '480p' | '720p' | '768p' | '1080p' | '1440p' | '4k'
 
 export type TaskBillingPriceConfig = {
   mode: 'per-request' | 'per-second'
   default_price?: number
   resolution_prices?: Partial<Record<TaskResolution, number>>
+}
+
+export type ScheduledDiscountConfig = {
+  enabled: boolean
+  start: string
+  end: string
+  /** Price multiplier: 0.8 means 20% off. */
+  discount: number
 }
 
 export type PricingModel = {
@@ -72,6 +74,8 @@ export type PricingModel = {
   billing_mode?: string
   /** Optional task prices selected by video output resolution. */
   task_billing_pricing?: TaskBillingPriceConfig
+  /** Recurring daily discount window in Beijing time. */
+  scheduled_discount?: ScheduledDiscountConfig
   /** Raw expression describing dynamic / tiered billing */
   billing_expr?: string
   /** Absolute USD price per generated image for each resolution tier. */

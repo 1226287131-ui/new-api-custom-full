@@ -43,6 +43,10 @@ import {
   IMAGE_RESOLUTION_TIERS,
   stripTrailingZeros,
 } from '../lib/price'
+import {
+  getScheduledDiscountState,
+  useScheduledDiscountClock,
+} from '../lib/scheduled-discount'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 
@@ -69,6 +73,7 @@ export function usePricingColumns(
     showRechargePrice = false,
     selectedGroup,
   } = options
+  const discountNow = useScheduledDiscountClock()
 
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
 
@@ -117,6 +122,7 @@ export function usePricingColumns(
       ),
       cell: ({ row }) => {
         const model = row.original
+        const discountState = getScheduledDiscountState(model, discountNow)
         const dynamicSummary = getDynamicPricingSummary(model, {
           tokenUnit,
           showRechargePrice,
@@ -126,6 +132,9 @@ export function usePricingColumns(
             model,
             selectedGroup
           ),
+          scheduledDiscountMultiplier: discountState.active
+            ? discountState.discount
+            : 1,
         })
 
         if (dynamicSummary) {
@@ -277,6 +286,7 @@ export function usePricingColumns(
       header: t('Cached'),
       cell: ({ row }) => {
         const model = row.original
+        const discountState = getScheduledDiscountState(model, discountNow)
         const dynamicSummary = getDynamicPricingSummary(model, {
           tokenUnit,
           showRechargePrice,
@@ -286,6 +296,9 @@ export function usePricingColumns(
             model,
             selectedGroup
           ),
+          scheduledDiscountMultiplier: discountState.active
+            ? discountState.discount
+            : 1,
         })
 
         if (dynamicSummary) {

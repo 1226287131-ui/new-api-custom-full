@@ -44,9 +44,14 @@ import {
   hasImageResolutionPricing,
   IMAGE_RESOLUTION_TIERS,
 } from '../lib/price'
+import {
+  getScheduledDiscountState,
+  useScheduledDiscountClock,
+} from '../lib/scheduled-discount'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
+import { ScheduledDiscountNotice } from './scheduled-discount-notice'
 
 export interface ModelCardProps {
   model: PricingModel
@@ -62,6 +67,8 @@ export interface ModelCardProps {
 export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const { t } = useTranslation()
   const { copyToClipboard } = useCopyToClipboard()
+  const discountNow = useScheduledDiscountClock()
+  const discountState = getScheduledDiscountState(props.model, discountNow)
   const tokenUnit = props.tokenUnit ?? DEFAULT_TOKEN_UNIT
   const priceRate = props.priceRate ?? 1
   const usdExchangeRate = props.usdExchangeRate ?? 1
@@ -92,6 +99,9 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           props.model,
           props.selectedGroup
         ),
+        scheduledDiscountMultiplier: discountState.active
+          ? discountState.discount
+          : 1,
       })
     : null
 
@@ -304,6 +314,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             <div className='mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm sm:mt-1 sm:gap-x-3'>
               {priceSummary}
             </div>
+            <ScheduledDiscountNotice state={discountState} compact />
           </div>
         </div>
 

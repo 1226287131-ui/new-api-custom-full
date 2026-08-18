@@ -36,6 +36,7 @@ type DynamicPriceOptions = {
   priceRate?: number
   usdExchangeRate?: number
   groupRatioMultiplier?: number
+  scheduledDiscountMultiplier?: number
 }
 
 export type DynamicPriceEntry = {
@@ -90,8 +91,9 @@ export function formatDynamicUnitPrice(
   const groupRatio = options.groupRatioMultiplier ?? 1
   const priceRate = options.priceRate ?? 1
   const usdExchangeRate = options.usdExchangeRate ?? 1
+  const scheduledDiscount = options.scheduledDiscountMultiplier ?? 1
   const priceUSD =
-    (valuePerMillionTokens * groupRatio) /
+    (valuePerMillionTokens * scheduledDiscount * groupRatio) /
     TOKEN_UNIT_DIVISORS[options.tokenUnit]
   const displayPrice = applyRechargeRate(
     priceUSD,

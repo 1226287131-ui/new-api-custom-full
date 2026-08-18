@@ -85,6 +85,10 @@ import {
   hasImageResolutionPricing,
   IMAGE_RESOLUTION_TIERS,
 } from '../lib/price'
+import {
+  getScheduledDiscountState,
+  useScheduledDiscountClock,
+} from '../lib/scheduled-discount'
 import type {
   ModelCapability,
   PriceType,
@@ -96,6 +100,7 @@ import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelDetailsApi } from './model-details-api'
 import { ModelDetailsPerformance } from './model-details-performance'
+import { ScheduledDiscountNotice } from './scheduled-discount-notice'
 
 // ----------------------------------------------------------------------------
 // Local UI helpers
@@ -542,7 +547,9 @@ function ModelBackendDetailsSection(props: { model: PricingModel }) {
 
 function ModelHeader(props: { model: PricingModel }) {
   const { t } = useTranslation()
+  const discountNow = useScheduledDiscountClock()
   const model = props.model
+  const discountState = getScheduledDiscountState(model, discountNow)
   const modelIconKey = model.icon || model.vendor_icon
   const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 20) : null
   const description = model.description || model.vendor_description || null
@@ -575,6 +582,7 @@ function ModelHeader(props: { model: PricingModel }) {
           {description}
         </p>
       )}
+      <ScheduledDiscountNotice state={discountState} />
     </header>
   )
 }
@@ -591,6 +599,8 @@ function PriceSection(props: {
   showRechargePrice: boolean
 }) {
   const { t } = useTranslation()
+  const discountNow = useScheduledDiscountClock()
+  const discountState = getScheduledDiscountState(props.model, discountNow)
   const isTokenBased = isTokenBasedModel(props.model)
   const isTaskResolutionPricing = hasTaskResolutionPricing(props.model)
   const isTaskPricing = hasTaskBillingPricing(props.model)
@@ -605,6 +615,9 @@ function PriceSection(props: {
     priceRate: props.priceRate,
     usdExchangeRate: props.usdExchangeRate,
     groupRatioMultiplier: 1,
+    scheduledDiscountMultiplier: discountState.active
+      ? discountState.discount
+      : 1,
   })
 
   const primaryPriceTypes: { label: string; type: PriceType }[] = [
@@ -979,6 +992,8 @@ function GroupPricingSection(props: {
   showRechargePrice?: boolean
 }) {
   const { t } = useTranslation()
+  const discountNow = useScheduledDiscountClock()
+  const discountState = getScheduledDiscountState(props.model, discountNow)
   const showRechargePrice = props.showRechargePrice ?? false
 
   const availableGroups = useMemo(
@@ -1072,6 +1087,9 @@ function GroupPricingSection(props: {
       priceRate: props.priceRate,
       usdExchangeRate: props.usdExchangeRate,
       groupRatioMultiplier: 1,
+      scheduledDiscountMultiplier: discountState.active
+        ? discountState.discount
+        : 1,
     })
     const formattedPricesByGroup = new Map(
       availableGroups.map((group) => {
@@ -1084,6 +1102,9 @@ function GroupPricingSection(props: {
             priceRate: props.priceRate,
             usdExchangeRate: props.usdExchangeRate,
             groupRatioMultiplier: ratio,
+            scheduledDiscountMultiplier: discountState.active
+              ? discountState.discount
+              : 1,
           }),
         ] as const
       })

@@ -28,6 +28,7 @@ import type {
   TaskResolution,
 } from '../types'
 import { getConfiguredGroupRatio, getDisplayGroupRatio } from './model-helpers'
+import { getScheduledDiscountMultiplier } from './scheduled-discount'
 
 // ----------------------------------------------------------------------------
 // Price Calculation Utilities
@@ -112,7 +113,8 @@ function calculateTokenPrice(
   type: PriceType,
   ratio: number
 ): number {
-  const base = model.model_ratio * 2 * ratio
+  const base =
+    model.model_ratio * 2 * ratio * getScheduledDiscountMultiplier(model)
 
   switch (type) {
     case 'input':
@@ -193,7 +195,10 @@ function formatImageResolutionPriceValue(
   priceRate: number,
   usdExchangeRate: number
 ): string {
-  let priceInUSD = model.image_resolution_prices[tier] * ratio
+  let priceInUSD =
+    model.image_resolution_prices[tier] *
+    ratio *
+    getScheduledDiscountMultiplier(model)
   priceInUSD = applyRechargeRate(
     priceInUSD,
     showWithRecharge,
@@ -315,7 +320,7 @@ export function formatTaskResolutionPrice(
   if (price === undefined) return '-'
 
   return formatTaskPriceValue(
-    price,
+    price * getScheduledDiscountMultiplier(model),
     getDisplayGroupRatio(model, selectedGroup),
     showWithRecharge,
     priceRate,
@@ -338,7 +343,7 @@ export function formatTaskResolutionGroupPrice(
   if (price === undefined) return '-'
 
   return formatTaskPriceValue(
-    price,
+    price * getScheduledDiscountMultiplier(model),
     getConfiguredGroupRatio(groupRatio, group),
     showWithRecharge,
     priceRate,
@@ -357,7 +362,7 @@ export function formatTaskDefaultPrice(
   if (!isValidTaskPrice(price)) return '-'
 
   return formatTaskPriceValue(
-    price,
+    price * getScheduledDiscountMultiplier(model),
     getDisplayGroupRatio(model, selectedGroup),
     showWithRecharge,
     priceRate,
@@ -377,7 +382,7 @@ export function formatTaskDefaultGroupPrice(
   if (!isValidTaskPrice(price)) return '-'
 
   return formatTaskPriceValue(
-    price,
+    price * getScheduledDiscountMultiplier(model),
     getConfiguredGroupRatio(groupRatio, group),
     showWithRecharge,
     priceRate,
@@ -470,7 +475,8 @@ export function formatFixedPrice(
   }
 
   const ratio = getConfiguredGroupRatio(groupRatio, group)
-  let priceInUSD = (model.model_price || 0) * ratio
+  let priceInUSD =
+    (model.model_price || 0) * ratio * getScheduledDiscountMultiplier(model)
 
   priceInUSD = applyRechargeRate(
     priceInUSD,
@@ -502,7 +508,10 @@ export function formatRequestPrice(
 
   const displayGroupRatio = getDisplayGroupRatio(model, selectedGroup)
 
-  let priceInUSD = (model.model_price || 0) * displayGroupRatio
+  let priceInUSD =
+    (model.model_price || 0) *
+    displayGroupRatio *
+    getScheduledDiscountMultiplier(model)
 
   priceInUSD = applyRechargeRate(
     priceInUSD,
