@@ -2,7 +2,6 @@ package minimaxvideo
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -12,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
@@ -62,232 +60,116 @@ func readJSONBody(t *testing.T, body io.Reader) map[string]any {
 	return payload
 }
 
-func TestMiniMaxVideoJSONForwardsAllReferenceMediaTogether(t *testing.T) {
+func TestMiniMaxVideoBuildsStrictH3TextPayload(t *testing.T) {
 	c, adaptor, info := newMiniMaxVideoJSONContext(t, `{
-  "model": "minimax_h3",
-  "prompt": "让人物根据参考素材自然起舞",
-  "seconds": 5,
-  "duration": 10,
-  "size": "1920x1080",
-  "prompt_enhance": true,
-  "resolution": "1080P",
-  "clarity": "2.0",
-  "aspect_ratio": "16:9",
-  "megapixels": 2.0,
-  "input_reference": "https://example.com/person.png",
-  "images": ["https://example.com/person.png", "https://example.com/outfit.png"],
-  "reference_images": ["https://example.com/stage.png"],
-  "reference_video": "https://example.com/motion.mp4",
-  "reference_videos": ["https://example.com/motion-2.mp4"],
-  "reference_video_audio": "https://example.com/motion.mp3",
-  "reference_video_audios": ["https://example.com/motion-2.mp3"],
-  "reference_audio": "https://example.com/music.mp3",
-  "reference_audios": ["https://example.com/voice.mp3"],
-  "metadata": {"multiple": 16, "reference_audios": ["https://example.com/voice-2.mp3"]}
+  "model": "MiniMax-H3",
+  "prompt": "清晨的海边公路",
+  "duration": 8,
+  "size": "1920x1088"
 }`)
 
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	assert.Equal(t, constant.TaskActionGenerate, info.Action)
-	assert.Equal(t, map[string]float64{"seconds": 10}, adaptor.EstimateBilling(c, info))
+	info.UpstreamModelName = "minimax_h3"
 
-	info.UpstreamModelName = "provider-minimax-h3"
-	upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
-	assert.Equal(t, "provider-minimax-h3", upstream["model"])
-	assert.Equal(t, "让人物根据参考素材自然起舞", upstream["prompt"])
-	assert.Equal(t, "10", upstream["seconds"])
-	assert.Equal(t, float64(10), upstream["duration"])
-	assert.NotContains(t, upstream, "mode")
-	assert.Equal(t, "1920x1080", upstream["size"])
-	assert.Equal(t, true, upstream["prompt_enhance"])
-	assert.Equal(t, "1080P", upstream["resolution"])
-	assert.Equal(t, "2.0", upstream["clarity"])
-	assert.Equal(t, "16:9", upstream["aspect_ratio"])
-	assert.Equal(t, 2.0, upstream["megapixels"])
-	assert.Equal(t, []any{
-		"https://example.com/person.png",
-		"https://example.com/outfit.png",
-		"https://example.com/stage.png",
-	}, upstream["images"])
-	assert.Equal(t, []any{
-		"https://example.com/motion.mp4",
-		"https://example.com/motion-2.mp4",
-	}, upstream["reference_videos"])
-	assert.Equal(t, []any{
-		"https://example.com/motion.mp3",
-		"https://example.com/motion-2.mp3",
-	}, upstream["reference_video_audios"])
-	assert.Equal(t, []any{
-		"https://example.com/music.mp3",
-		"https://example.com/voice.mp3",
-		"https://example.com/voice-2.mp3",
-	}, upstream["reference_audios"])
-
-	metadata, ok := upstream["metadata"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, float64(16), metadata["multiple"])
-
-	request, err := relaycommon.GetTaskRequest(c)
-	require.NoError(t, err)
-	assert.Equal(t, "1080p", request.BillingResolution)
-	assert.Equal(t, 3, request.Metadata["reference_image_count"])
-	assert.Equal(t, 2, request.Metadata["reference_video_count"])
-	assert.Equal(t, 2, request.Metadata["reference_video_audio_count"])
-	assert.Equal(t, 3, request.Metadata["reference_audio_count"])
+	assert.Equal(t, map[string]any{
+		"model":   "minimax_h3",
+		"prompt":  "清晨的海边公路",
+		"seconds": float64(8),
+		"size":    "1920x1088",
+	}, readJSONBody(t, mustBuildBody(t, adaptor, c, info)))
 }
 
-func TestMiniMaxH3BillingResolutionMapsAllQualityRepresentations(t *testing.T) {
+func TestMiniMaxVideoStripsLegacyConflictingFields(t *testing.T) {
+	c, adaptor, info := newMiniMaxVideoJSONContext(t, `{
+  "model": "MiniMax-H3",
+  "prompt": "参考素材驱动人物跳舞",
+  "duration": 12,
+  "seconds": 5,
+  "size": "1088x1920",
+  "audio": true,
+  "mode": "first_last_frame",
+  "prompt_enhance": true,
+  "resolution": "1080p",
+  "clarity": "high",
+  "aspect_ratio": "9:16",
+  "megapixels": 2,
+  "metadata": {"multiple": 16},
+  "input_reference": "https://example.com/person.png",
+  "reference_video": "https://example.com/motion.mp4",
+  "reference_video_audio": "https://example.com/motion.mp3",
+  "reference_audio": "https://example.com/music.mp3"
+}`)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
+	assert.Equal(t, float64(12), upstream["seconds"])
+	assert.Equal(t, []any{"https://example.com/person.png"}, upstream["images"])
+	assert.Equal(t, []any{"https://example.com/motion.mp4"}, upstream["reference_videos"])
+	assert.Equal(t, []any{
+		"https://example.com/motion.mp3",
+		"https://example.com/music.mp3",
+	}, upstream["reference_audios"])
+	for _, field := range []string{
+		"duration", "audio", "mode", "prompt_enhance", "resolution", "clarity",
+		"aspect_ratio", "megapixels", "metadata", "reference_video_audios",
+	} {
+		assert.NotContains(t, upstream, field)
+	}
+}
+
+func TestMiniMaxVideoRequiresDocumentedSizeAndValidMediaURLs(t *testing.T) {
 	tests := []struct {
-		name        string
-		resolution  string
-		clarity     string
-		size        string
-		megapixels  float64
-		mpProvided  bool
-		want        string
-		wantErrText string
+		name    string
+		payload string
+		want    string
 	}{
-		{name: "768P label", resolution: "768P", want: "768p"},
-		{name: "2K label", resolution: "2K", want: "1080p"},
-		{name: "low megapixel boundary", megapixels: 0.7, mpProvided: true, want: "768p"},
-		{name: "high megapixel first option", megapixels: 0.8, mpProvided: true, want: "1080p"},
-		{name: "high megapixel boundary", megapixels: 2.0, mpProvided: true, want: "1080p"},
-		{name: "low table size", size: "864x864", want: "768p"},
-		{name: "high table size", size: "1024x1024", want: "1080p"},
-		{name: "high table widescreen size", size: "2208x960", want: "1080p"},
-		{name: "clarity fallback", clarity: "high", want: "1080p"},
-		{name: "unsupported high megapixel", megapixels: 2.1, mpProvided: true, wantErrText: "exceeds"},
+		{
+			name:    "missing size",
+			payload: `{"model":"MiniMax-H3","prompt":"scene","seconds":5}`,
+			want:    "size field is required",
+		},
+		{
+			name:    "unsupported size",
+			payload: `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"1920x1080"}`,
+			want:    "documented MiniMax-H3 dimensions",
+		},
+		{
+			name:    "invalid reference",
+			payload: `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"1920x1088","images":["blob:https://video.kkone.vip/id"]}`,
+			want:    "must be an HTTP or HTTPS URL",
+		},
 	}
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			got, err := resolveH3BillingResolution(
-				testCase.resolution,
-				testCase.clarity,
-				testCase.size,
-				testCase.megapixels,
-				testCase.mpProvided,
-			)
-			if testCase.wantErrText != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), testCase.wantErrText)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, testCase.want, got)
+			c, adaptor, info := newMiniMaxVideoJSONContext(t, testCase.payload)
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr)
+			require.NotNil(t, taskErr.Error)
+			assert.Contains(t, taskErr.Error.Error(), testCase.want)
 		})
 	}
 }
 
-func TestMiniMaxH3BillingTierDoesNotChangeUpstreamQualityFields(t *testing.T) {
-	c, adaptor, info := newMiniMaxVideoJSONContext(t, `{
-  "model": "minimax_h3",
-  "prompt": "保持画面构图一致",
-  "seconds": 5,
-  "resolution": "768P",
-  "megapixels": 0.7,
-  "size": "864x864"
-}`)
-
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	request := mustTaskRequest(t, c)
-	assert.Equal(t, "768p", request.BillingResolution)
-
-	upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
-	assert.Equal(t, "768P", upstream["resolution"])
-	assert.Equal(t, 0.7, upstream["megapixels"])
-	assert.Equal(t, "864x864", upstream["size"])
-	assert.NotContains(t, upstream, "billing_resolution")
-}
-
-func TestMiniMaxVideoJSONSupportsFirstLastFrameMode(t *testing.T) {
-	c, adaptor, info := newMiniMaxVideoJSONContext(t, `{
-  "model": "minimax_h3",
-  "prompt": "让镜头从首帧平滑过渡到尾帧",
-  "mode": "first_last_frame",
-  "duration": 15,
-  "input_reference": [
-    "https://example.com/first.png",
-    "https://example.com/last.png"
-  ]
-}`)
-
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	request := mustTaskRequest(t, c)
-	assert.Equal(t, 15, request.Duration)
-	assert.Equal(t, "first_last_frame", request.Metadata["mode"])
-
-	upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
-	assert.Equal(t, "first_last_frame", upstream["mode"])
-	assert.Equal(t, "15", upstream["seconds"])
-	assert.Equal(t, float64(15), upstream["duration"])
-	assert.Equal(t, []any{
-		"https://example.com/first.png",
-		"https://example.com/last.png",
-	}, upstream["images"])
-}
-
-func TestMiniMaxVideoDurationPriorityAndDefaults(t *testing.T) {
-	c, adaptor, info := newMiniMaxVideoJSONContext(t, `{
-  "model": "minimax_h3",
-  "prompt": "A calm sunrise.",
-  "seconds": 12,
-  "metadata": {"duration": 20}
-}`)
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	assert.Equal(t, 12, mustTaskRequest(t, c).Duration)
-
-	c, adaptor, info = newMiniMaxVideoJSONContext(t, `{"model":"minimax_h3","prompt":"A calm sunrise."}`)
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	assert.Equal(t, 5, mustTaskRequest(t, c).Duration)
-	assert.Equal(t, constant.TaskActionTextGenerate, info.Action)
-
-	body := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
-	assert.Equal(t, "5", body["seconds"])
-	assert.NotContains(t, body, "duration")
-	assert.Equal(t, true, body["audio"])
-}
-
-func TestMiniMaxVideoAcceptsReferenceAliasesAndDeduplicates(t *testing.T) {
-	c, adaptor, info := newMiniMaxVideoJSONContext(t, `{
-  "model":"minimax_h3",
-  "prompt":"scene",
-  "input_reference":["https://example.com/a.png", "https://example.com/a.png"],
-  "video_urls":"https://example.com/ref.mp4",
-  "audios":["https://example.com/ref.mp3", "https://example.com/ref.mp3"]
-}`)
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	body := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
-	assert.Equal(t, []any{"https://example.com/a.png"}, body["images"])
-	assert.Equal(t, []any{"https://example.com/ref.mp4"}, body["reference_videos"])
-	assert.Equal(t, []any{"https://example.com/ref.mp3"}, body["reference_audios"])
-}
-
-func TestMiniMaxVideoMultipartForwardsMixedReferenceFiles(t *testing.T) {
+func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	require.NoError(t, writer.WriteField("model", "minimax_h3"))
-	require.NoError(t, writer.WriteField("prompt", "把参考素材融合成舞蹈视频"))
-	require.NoError(t, writer.WriteField("seconds", "5"))
+	require.NoError(t, writer.WriteField("model", "MiniMax-H3"))
+	require.NoError(t, writer.WriteField("prompt", "参考图片生成视频"))
 	require.NoError(t, writer.WriteField("duration", "12"))
-	require.NoError(t, writer.WriteField("size", "1920x1080"))
-	require.NoError(t, writer.WriteField("metadata", `{"multiple":16}`))
-	writeMultipartTestFile(t, writer, "input_reference", "person.png", []byte("image-bytes"))
-	writeMultipartTestFile(t, writer, "reference_video", "motion.mp4", []byte("video-bytes"))
-	writeMultipartTestFile(t, writer, "reference_video_audio", "motion.mp3", []byte("video-audio-bytes"))
-	writeMultipartTestFile(t, writer, "reference_audio", "music.mp3", []byte("audio-bytes"))
+	require.NoError(t, writer.WriteField("size", "1920x1088"))
+	require.NoError(t, writer.WriteField("audio", "true"))
+	require.NoError(t, writer.WriteField("images", "https://example.com/person.png"))
 	require.NoError(t, writer.Close())
 
 	c, adaptor, info := newMiniMaxVideoMultipartContext(t, &body, writer.FormDataContentType())
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	assert.Equal(t, constant.TaskActionGenerate, info.Action)
-	assert.Equal(t, 12, mustTaskRequest(t, c).Duration)
 
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
 	encoded, err := io.ReadAll(requestBody)
 	require.NoError(t, err)
-	upstreamRequest, err := http.NewRequest(http.MethodPost, "https://upstream.example/v1/videos", nil)
-	require.NoError(t, err)
+	upstreamRequest := httptest.NewRequest(http.MethodPost, "https://upstream.example/v1/videos", nil)
 	require.NoError(t, adaptor.BuildRequestHeader(c, upstreamRequest, info))
 	_, params, err := mime.ParseMediaType(upstreamRequest.Header.Get("Content-Type"))
 	require.NoError(t, err)
@@ -296,107 +178,10 @@ func TestMiniMaxVideoMultipartForwardsMixedReferenceFiles(t *testing.T) {
 	defer form.RemoveAll()
 
 	assert.Equal(t, []string{"12"}, form.Value["seconds"])
-	assert.Equal(t, []string{"12"}, form.Value["duration"])
-	assert.Equal(t, []string{"1920x1080"}, form.Value["size"])
-	var metadata map[string]any
-	require.Len(t, form.Value["metadata"], 1)
-	require.NoError(t, common.Unmarshal([]byte(form.Value["metadata"][0]), &metadata))
-	assert.Equal(t, float64(16), metadata["multiple"])
-	for _, field := range []string{"input_reference", "reference_video", "reference_video_audio", "reference_audio"} {
-		require.Len(t, form.File[field], 1, field)
-	}
-	assertMultipartFileContent(t, form, "input_reference", []byte("image-bytes"))
-	assertMultipartFileContent(t, form, "reference_video", []byte("video-bytes"))
-	assertMultipartFileContent(t, form, "reference_video_audio", []byte("video-audio-bytes"))
-	assertMultipartFileContent(t, form, "reference_audio", []byte("audio-bytes"))
-}
-
-func TestMiniMaxVideoMultipartSupportsFirstLastFrameMode(t *testing.T) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	require.NoError(t, writer.WriteField("model", "minimax_h3"))
-	require.NoError(t, writer.WriteField("prompt", "从首帧过渡到尾帧"))
-	require.NoError(t, writer.WriteField("mode", "first_last_frame"))
-	require.NoError(t, writer.WriteField("seconds", "4"))
-	writeMultipartTestFile(t, writer, "input_reference", "first.png", []byte("first-image-bytes"))
-	writeMultipartTestFile(t, writer, "input_reference", "last.png", []byte("last-image-bytes"))
-	require.NoError(t, writer.Close())
-
-	c, adaptor, info := newMiniMaxVideoMultipartContext(t, &body, writer.FormDataContentType())
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-
-	requestBody, err := adaptor.BuildRequestBody(c, info)
-	require.NoError(t, err)
-	encoded, err := io.ReadAll(requestBody)
-	require.NoError(t, err)
-	upstreamRequest, err := http.NewRequest(http.MethodPost, "https://upstream.example/v1/videos", nil)
-	require.NoError(t, err)
-	require.NoError(t, adaptor.BuildRequestHeader(c, upstreamRequest, info))
-	_, params, err := mime.ParseMediaType(upstreamRequest.Header.Get("Content-Type"))
-	require.NoError(t, err)
-	form, err := multipart.NewReader(bytes.NewReader(encoded), params["boundary"]).ReadForm(4 * 1024 * 1024)
-	require.NoError(t, err)
-	defer form.RemoveAll()
-
-	assert.Equal(t, []string{"first_last_frame"}, form.Value["mode"])
-	assert.Equal(t, []string{"4"}, form.Value["seconds"])
-	require.Len(t, form.File["input_reference"], 2)
-	assertMultipartFileContentAt(t, form, "input_reference", 0, []byte("first-image-bytes"))
-	assertMultipartFileContentAt(t, form, "input_reference", 1, []byte("last-image-bytes"))
-}
-
-func TestMiniMaxVideoRejectsReferenceLimitsAndInvalidParameters(t *testing.T) {
-	images := make([]string, 10)
-	for index := range images {
-		images[index] = fmt.Sprintf("https://cdn.example/image-%d.png", index)
-	}
-	videos := []string{"https://cdn.example/1.mp4", "https://cdn.example/2.mp4", "https://cdn.example/3.mp4", "https://cdn.example/4.mp4"}
-	audios := []string{"https://cdn.example/1.mp3", "https://cdn.example/2.mp3", "https://cdn.example/3.mp3", "https://cdn.example/4.mp3"}
-	cases := []struct {
-		name    string
-		payload map[string]any
-		want    string
-	}{
-		{name: "too many images", payload: map[string]any{"images": images}, want: "reference images support at most 9"},
-		{name: "too many videos", payload: map[string]any{"reference_videos": videos}, want: "reference videos support at most 3"},
-		{name: "too many video audios", payload: map[string]any{"reference_video_audios": audios}, want: "reference video audios support at most 3"},
-		{name: "too many audios", payload: map[string]any{"reference_audios": audios}, want: "reference audios support at most 3"},
-		{name: "duration below minimum", payload: map[string]any{"seconds": 3}, want: "between 4 and 15"},
-		{name: "duration above maximum", payload: map[string]any{"duration": 16}, want: "between 4 and 15"},
-		{name: "first last frame needs two images", payload: map[string]any{
-			"mode": "first_last_frame", "images": []string{"https://example.com/first.png"},
-		}, want: "requires exactly two reference images"},
-		{name: "first last frame rejects video", payload: map[string]any{
-			"mode": "first_last_frame", "images": []string{"https://example.com/first.png", "https://example.com/last.png"},
-			"reference_videos": []string{"https://example.com/reference.mp4"},
-		}, want: "does not support reference videos or audio"},
-		{name: "first last frame rejects audio", payload: map[string]any{
-			"mode": "first_last_frame", "images": []string{"https://example.com/first.png", "https://example.com/last.png"},
-			"reference_audios": []string{"https://example.com/reference.mp3"},
-		}, want: "does not support reference videos or audio"},
-		{name: "invalid first last frame mode", payload: map[string]any{
-			"mode": "first_frame",
-		}, want: `must be "first_last_frame"`},
-		{name: "invalid multiple", payload: map[string]any{"metadata": map[string]any{"multiple": 10}}, want: "metadata.multiple"},
-		{name: "private URL", payload: map[string]any{"reference_audio": "http://127.0.0.1/file.mp3"}, want: "private IP address"},
-		{name: "unknown field", payload: map[string]any{"file_urls": []string{"https://example.com/reference.pdf"}}, want: "file_urls is not supported"},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			payload := map[string]any{"model": "minimax_h3", "prompt": "scene"}
-			for key, value := range testCase.payload {
-				payload[key] = value
-			}
-			encoded, err := common.Marshal(payload)
-			require.NoError(t, err)
-			c, adaptor, info := newMiniMaxVideoJSONContext(t, string(encoded))
-			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
-			require.NotNil(t, taskErr)
-			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
-			require.NotNil(t, taskErr.Error)
-			assert.Contains(t, taskErr.Error.Error(), testCase.want)
-		})
-	}
+	assert.Equal(t, []string{"1920x1088"}, form.Value["size"])
+	assert.Equal(t, []string{"https://example.com/person.png"}, form.Value["images"])
+	assert.NotContains(t, form.Value, "duration")
+	assert.NotContains(t, form.Value, "audio")
 }
 
 func TestMiniMaxVideoParsesCompletedTaskAndReturnsLocalVideoURL(t *testing.T) {
@@ -418,7 +203,7 @@ func TestMiniMaxVideoParsesCompletedTaskAndReturnsLocalVideoURL(t *testing.T) {
 		Properties: model.Properties{
 			OriginModelName: "MiniMax-H3-933-1440P-GF",
 			VideoSeconds:    "5",
-			VideoSize:       "1920x1080",
+			VideoSize:       "1920x1088",
 		},
 	})
 	require.NoError(t, err)
@@ -443,34 +228,4 @@ func mustBuildBody(t *testing.T, adaptor *TaskAdaptor, c *gin.Context, info *rel
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
 	return body
-}
-
-func mustTaskRequest(t *testing.T, c *gin.Context) relaycommon.TaskSubmitReq {
-	t.Helper()
-	request, err := relaycommon.GetTaskRequest(c)
-	require.NoError(t, err)
-	return request
-}
-
-func writeMultipartTestFile(t *testing.T, writer *multipart.Writer, field, filename string, content []byte) {
-	t.Helper()
-	part, err := writer.CreateFormFile(field, filename)
-	require.NoError(t, err)
-	_, err = part.Write(content)
-	require.NoError(t, err)
-}
-
-func assertMultipartFileContent(t *testing.T, form *multipart.Form, field string, want []byte) {
-	assertMultipartFileContentAt(t, form, field, 0, want)
-}
-
-func assertMultipartFileContentAt(t *testing.T, form *multipart.Form, field string, index int, want []byte) {
-	t.Helper()
-	require.Less(t, index, len(form.File[field]))
-	file, err := form.File[field][index].Open()
-	require.NoError(t, err)
-	got, err := io.ReadAll(file)
-	require.NoError(t, err)
-	require.NoError(t, file.Close())
-	assert.Equal(t, want, got)
 }

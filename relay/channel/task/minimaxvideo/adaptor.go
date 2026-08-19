@@ -65,6 +65,17 @@ var supportedTopLevelFields = map[string]struct{}{
 	"aspect_ratio": {}, "megapixels": {},
 }
 
+var supportedSizes = map[string]struct{}{
+	"448x448": {}, "576x576": {}, "640x640": {}, "736x736": {}, "800x800": {}, "864x864": {}, "928x928": {}, "960x960": {}, "1024x1024": {}, "1120x1120": {}, "1248x1248": {}, "1376x1376": {}, "1440x1440": {},
+	"384x576": {}, "448x672": {}, "544x800": {}, "576x896": {}, "640x960": {}, "704x1056": {}, "736x1120": {}, "800x1184": {}, "832x1248": {}, "928x1376": {}, "1024x1536": {}, "1120x1696": {}, "1184x1760": {},
+	"576x384": {}, "672x448": {}, "800x544": {}, "896x576": {}, "960x640": {}, "1056x704": {}, "1120x736": {}, "1184x800": {}, "1248x832": {}, "1376x928": {}, "1536x1024": {}, "1696x1120": {}, "1760x1184": {},
+	"384x544": {}, "480x640": {}, "576x736": {}, "640x832": {}, "672x928": {}, "736x992": {}, "800x1056": {}, "832x1120": {}, "864x1184": {}, "896x1184": {}, "960x1280": {}, "1088x1440": {}, "1184x1600": {}, "1248x1664": {},
+	"544x384": {}, "640x480": {}, "736x576": {}, "832x640": {}, "928x672": {}, "992x736": {}, "1056x800": {}, "1120x832": {}, "1184x864": {}, "1184x896": {}, "1280x960": {}, "1440x1088": {}, "1600x1184": {}, "1664x1248": {},
+	"352x608": {}, "416x736": {}, "480x864": {}, "544x960": {}, "608x1056": {}, "640x1152": {}, "672x1216": {}, "736x1280": {}, "768x1344": {}, "768x1376": {}, "832x1504": {}, "928x1664": {}, "1024x1824": {}, "1088x1920": {},
+	"608x352": {}, "736x416": {}, "864x480": {}, "960x544": {}, "1056x608": {}, "1152x640": {}, "1216x672": {}, "1280x736": {}, "1344x768": {}, "1376x768": {}, "1504x832": {}, "1664x928": {}, "1824x1024": {}, "1920x1088": {},
+	"704x288": {}, "864x352": {}, "992x416": {}, "1120x480": {}, "1216x512": {}, "1312x576": {}, "1408x608": {}, "1472x640": {}, "1536x672": {}, "1568x672": {}, "1728x736": {}, "1920x832": {}, "2112x896": {}, "2208x960": {},
+}
+
 type normalizedVideoRequest struct {
 	payload     map[string]any
 	request     relaycommon.TaskSubmitReq
@@ -132,54 +143,20 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(err, "invalid_prompt", http.StatusBadRequest)
 	}
 
-	metadata, err := parseMetadata(payload["metadata"])
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_metadata", http.StatusBadRequest)
-	}
-	if err := validateMetadata(metadata); err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_metadata", http.StatusBadRequest)
-	}
-
-	duration, durationProvided, err := normalizeDuration(payload, metadata)
+	duration, err := normalizeDuration(payload)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_seconds", http.StatusBadRequest)
 	}
-	size, sizeProvided, err := normalizeSize(payload, metadata)
+	size, err := normalizeSize(payload)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_size", http.StatusBadRequest)
 	}
-	aspectRatio, aspectRatioProvided, err := normalizeAspectRatio(payload, metadata)
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_aspect_ratio", http.StatusBadRequest)
-	}
-	resolution, resolutionProvided, err := normalizeTextOption(payload, metadata, "resolution")
+	billingResolution, err := resolveH3BillingResolution("", "", size, 0, false)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
-	}
-	clarity, clarityProvided, err := normalizeTextOption(payload, metadata, "clarity")
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_clarity", http.StatusBadRequest)
-	}
-	megapixels, megapixelsProvided, err := normalizeMegapixels(payload, metadata)
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_megapixels", http.StatusBadRequest)
-	}
-	billingResolution, err := resolveH3BillingResolution(
-		resolution, clarity, size, megapixels, megapixelsProvided,
-	)
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
-	}
-	promptEnhance, promptEnhanceProvided, err := normalizeBoolOption(payload, metadata, "prompt_enhance")
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_prompt_enhance", http.StatusBadRequest)
-	}
-	audio, err := parseAudio(payload, metadata)
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_audio", http.StatusBadRequest)
 	}
 
-	media, err := collectMedia(payload, metadata, form)
+	media, err := collectMedia(payload, nil, form)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_reference_media", http.StatusBadRequest)
 	}
@@ -192,80 +169,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := validateMediaURLs(media); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_reference_media", http.StatusBadRequest)
 	}
-	mode, modeProvided, err := normalizeMode(payload, metadata)
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_mode", http.StatusBadRequest)
-	}
-	if err := validateMode(mode, modeProvided, media); err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_mode", http.StatusBadRequest)
-	}
-
-	upstreamPayload := buildNormalizedJSONPayload(
-		modelName,
-		prompt,
-		mode,
-		modeProvided,
-		duration,
-		durationProvided,
-		size,
-		sizeProvided,
-		aspectRatio,
-		aspectRatioProvided,
-		resolution,
-		resolutionProvided,
-		clarity,
-		clarityProvided,
-		megapixels,
-		megapixelsProvided,
-		promptEnhance,
-		promptEnhanceProvided,
-		audio,
-		metadata,
-		media,
-	)
+	upstreamPayload := buildNormalizedJSONPayload(modelName, prompt, duration, size, media)
 
 	requestMetadata := map[string]any{
-		"audio":                       audio,
-		"reference_image_count":       media.imageCount(),
-		"reference_video_count":       media.videoCount(),
-		"reference_video_audio_count": media.videoAudioCount(),
-		"reference_audio_count":       media.audioCount(),
-	}
-	if modeProvided {
-		requestMetadata["mode"] = mode
-	}
-	if len(media.images) > 0 {
-		requestMetadata["images"] = media.images
-	}
-	if len(media.videos) > 0 {
-		requestMetadata["reference_videos"] = media.videos
-	}
-	if len(media.videoAudios) > 0 {
-		requestMetadata["reference_video_audios"] = media.videoAudios
-	}
-	if len(media.audios) > 0 {
-		requestMetadata["reference_audios"] = media.audios
-	}
-	if sizeProvided {
-		requestMetadata["size"] = size
-	}
-	if resolutionProvided {
-		requestMetadata["resolution"] = resolution
-	}
-	if clarityProvided {
-		requestMetadata["clarity"] = clarity
-	}
-	if aspectRatioProvided {
-		requestMetadata["aspect_ratio"] = aspectRatio
-	}
-	if megapixelsProvided {
-		requestMetadata["megapixels"] = megapixels
-	}
-	if promptEnhanceProvided {
-		requestMetadata["prompt_enhance"] = promptEnhance
-	}
-	if len(metadata) > 0 {
-		requestMetadata["metadata"] = metadata
+		"reference_image_count": media.imageCount(),
+		"reference_video_count": media.videoCount(),
+		"reference_audio_count": media.audioCount(),
+		"size":                  size,
 	}
 
 	request := relaycommon.TaskSubmitReq{
@@ -358,11 +268,7 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 	defer form.RemoveAll()
 
 	payload := formValuesToPayload(form)
-	metadata, err := parseMetadata(payload["metadata"])
-	if err != nil {
-		return nil, fmt.Errorf("parse multipart metadata: %w", err)
-	}
-	currentMedia, err := collectMedia(payload, metadata, form)
+	currentMedia, err := collectMedia(payload, nil, form)
 	if err != nil {
 		return nil, fmt.Errorf("normalize multipart references: %w", err)
 	}
@@ -386,16 +292,8 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 	}{
 		{name: "model", value: taskcommon.DefaultString(info.UpstreamModelName, normalized.request.Model), set: true},
 		{name: "prompt", value: normalized.request.Prompt, set: true},
-		{name: "mode", value: payloadStringValue(normalized.payload, "mode"), set: hasPayloadValue(normalized.payload, "mode")},
 		{name: "seconds", value: normalized.request.Seconds, set: true},
-		{name: "duration", value: normalized.request.Seconds, set: hasPayloadValue(normalized.payload, "duration")},
-		{name: "size", value: normalized.request.Size, set: hasPayloadValue(normalized.payload, "size")},
-		{name: "audio", value: strconv.FormatBool(payloadBoolValue(normalized.payload, "audio", true)), set: true},
-		{name: "prompt_enhance", value: strconv.FormatBool(payloadBoolValue(normalized.payload, "prompt_enhance", false)), set: hasPayloadValue(normalized.payload, "prompt_enhance")},
-		{name: "resolution", value: payloadStringValue(normalized.payload, "resolution"), set: hasPayloadValue(normalized.payload, "resolution")},
-		{name: "clarity", value: payloadScalarString(normalized.payload["clarity"]), set: hasPayloadValue(normalized.payload, "clarity")},
-		{name: "aspect_ratio", value: payloadStringValue(normalized.payload, "aspect_ratio"), set: hasPayloadValue(normalized.payload, "aspect_ratio")},
-		{name: "megapixels", value: payloadScalarString(normalized.payload["megapixels"]), set: hasPayloadValue(normalized.payload, "megapixels")},
+		{name: "size", value: normalized.request.Size, set: true},
 	}
 	for _, field := range fields {
 		if field.set {
@@ -404,23 +302,12 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 			}
 		}
 	}
-	if len(metadata) > 0 {
-		metadataBody, marshalErr := common.Marshal(metadata)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("marshal multipart metadata: %w", marshalErr)
-		}
-		if err := writeField("metadata", string(metadataBody)); err != nil {
-			return nil, err
-		}
-	}
-
 	for _, field := range []struct {
 		name   string
 		values []string
 	}{
 		{name: "images", values: currentMedia.images},
 		{name: "reference_videos", values: currentMedia.videos},
-		{name: "reference_video_audios", values: currentMedia.videoAudios},
 		{name: "reference_audios", values: currentMedia.audios},
 	} {
 		for _, value := range field.values {
@@ -607,30 +494,24 @@ func validateMetadata(metadata map[string]any) error {
 	return nil
 }
 
-func normalizeDuration(payload, metadata map[string]any) (int, bool, error) {
-	// Top-level request values take precedence over metadata fallbacks. Within
-	// the same scope duration is the documented preferred alias for seconds.
-	value, provided := firstValue(payload, nil, "duration")
-	if !provided {
-		value, provided = firstValue(payload, nil, "seconds")
+func normalizeDuration(payload map[string]any) (int, error) {
+	durationValue, hasDuration := payload["duration"]
+	secondsValue, hasSeconds := payload["seconds"]
+
+	parse := func(value any) (int, error) {
+		duration, err := parseInteger(value)
+		if err != nil || duration < minDurationSeconds || duration > maxDurationSeconds {
+			return 0, fmt.Errorf("seconds must be an integer between %d and %d", minDurationSeconds, maxDurationSeconds)
+		}
+		return duration, nil
 	}
-	if !provided {
-		value, provided = firstValue(nil, metadata, "duration")
+	if hasDuration {
+		return parse(durationValue)
 	}
-	if !provided {
-		value, provided = firstValue(nil, metadata, "seconds")
+	if hasSeconds {
+		return parse(secondsValue)
 	}
-	if !provided {
-		return 5, false, nil
-	}
-	duration, err := parseInteger(value)
-	if err != nil {
-		return 0, true, fmt.Errorf("duration/seconds must be an integer between %d and %d", minDurationSeconds, maxDurationSeconds)
-	}
-	if duration < minDurationSeconds || duration > maxDurationSeconds {
-		return 0, true, fmt.Errorf("duration/seconds must be between %d and %d", minDurationSeconds, maxDurationSeconds)
-	}
-	return duration, true, nil
+	return 5, nil
 }
 
 func normalizeMode(payload, metadata map[string]any) (string, bool, error) {
@@ -668,32 +549,23 @@ func validateMode(mode string, provided bool, media mediaReferences) error {
 	return nil
 }
 
-func normalizeSize(payload, metadata map[string]any) (string, bool, error) {
-	value, provided := firstValue(payload, metadata, "size")
-	if !provided {
-		return "", false, nil
+func normalizeSize(payload map[string]any) (string, error) {
+	value, provided := payload["size"]
+	if !provided || value == nil {
+		return "", fmt.Errorf("size field is required")
 	}
 	size, ok := value.(string)
 	if !ok {
-		return "", true, fmt.Errorf("size must be a string")
+		return "", fmt.Errorf("size must be a string")
 	}
 	size = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(size, "×", "x")))
 	if size == "" {
-		return "", false, nil
+		return "", fmt.Errorf("size field is required")
 	}
-	if isSupportedAspectRatio(size) {
-		return size, true, nil
+	if _, supported := supportedSizes[size]; !supported {
+		return "", fmt.Errorf("size must be one of the documented MiniMax-H3 dimensions")
 	}
-	parts := strings.Split(size, "x")
-	if len(parts) != 2 {
-		return "", true, fmt.Errorf("size must be an aspect ratio or widthxheight")
-	}
-	width, widthErr := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 32)
-	height, heightErr := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 32)
-	if widthErr != nil || heightErr != nil || width < 1 || height < 1 || width > 16384 || height > 16384 {
-		return "", true, fmt.Errorf("size must use positive width and height no larger than 16384")
-	}
-	return fmt.Sprintf("%dx%d", width, height), true, nil
+	return size, nil
 }
 
 func normalizeAspectRatio(payload, metadata map[string]any) (string, bool, error) {
@@ -763,63 +635,18 @@ func parseAudio(payload, metadata map[string]any) (bool, error) {
 	return parsed, nil
 }
 
-func buildNormalizedJSONPayload(
-	modelName, prompt, mode string, modeProvided bool,
-	duration int, durationProvided bool,
-	size string, sizeProvided bool,
-	aspectRatio string, aspectRatioProvided bool,
-	resolution string, resolutionProvided bool,
-	clarity string, clarityProvided bool,
-	megapixels float64, megapixelsProvided bool,
-	promptEnhance bool, promptEnhanceProvided bool,
-	audio bool,
-	metadata map[string]any,
-	media mediaReferences,
-) map[string]any {
+func buildNormalizedJSONPayload(modelName, prompt string, duration int, size string, media mediaReferences) map[string]any {
 	payload := map[string]any{
 		"model":   modelName,
 		"prompt":  prompt,
-		"seconds": strconv.Itoa(duration),
-		"audio":   audio,
-	}
-	if modeProvided {
-		payload["mode"] = mode
-	}
-	// Emit duration as an integer as well as the legacy string seconds field.
-	// Upstream versions accept either form; sending the same normalized value
-	// prevents conflicting billing and generation parameters.
-	if durationProvided {
-		payload["duration"] = duration
-	}
-	if sizeProvided {
-		payload["size"] = size
-	}
-	if aspectRatioProvided {
-		payload["aspect_ratio"] = aspectRatio
-	}
-	if resolutionProvided {
-		payload["resolution"] = resolution
-	}
-	if clarityProvided {
-		payload["clarity"] = clarity
-	}
-	if megapixelsProvided {
-		payload["megapixels"] = megapixels
-	}
-	if promptEnhanceProvided {
-		payload["prompt_enhance"] = promptEnhance
-	}
-	if len(metadata) > 0 {
-		payload["metadata"] = metadata
+		"seconds": duration,
+		"size":    size,
 	}
 	if len(media.images) > 0 {
 		payload["images"] = media.images
 	}
 	if len(media.videos) > 0 {
 		payload["reference_videos"] = media.videos
-	}
-	if len(media.videoAudios) > 0 {
-		payload["reference_video_audios"] = media.videoAudios
 	}
 	if len(media.audios) > 0 {
 		payload["reference_audios"] = media.audios
@@ -846,10 +673,10 @@ func collectMedia(payload, metadata map[string]any, form *multipart.Form) (media
 		}
 	}
 	for _, field := range videoAudioReferenceFields {
-		if err := media.addURLs(payload[field], "video_audios"); err != nil {
+		if err := media.addURLs(payload[field], "audios"); err != nil {
 			return media, fmt.Errorf("%s %w", field, err)
 		}
-		if err := media.addURLs(metadata[field], "video_audios"); err != nil {
+		if err := media.addURLs(metadata[field], "audios"); err != nil {
 			return media, fmt.Errorf("metadata.%s %w", field, err)
 		}
 	}
@@ -870,7 +697,7 @@ func collectMedia(payload, metadata map[string]any, form *multipart.Form) (media
 			media.addFiles(form.File[field], "videos", field)
 		}
 		for _, field := range videoAudioReferenceFields {
-			media.addFiles(form.File[field], "video_audios", field)
+			media.addFiles(form.File[field], "audios", field)
 		}
 		for _, field := range audioReferenceFields {
 			media.addFiles(form.File[field], "audios", field)
