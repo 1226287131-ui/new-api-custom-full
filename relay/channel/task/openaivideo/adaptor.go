@@ -41,7 +41,7 @@ const (
 	sd25MaxReferenceAudios = 10
 )
 
-var ModelList = []string{"seedance-2.0", "video-v3"}
+var ModelList = []string{"seedance-2.0", "video-v3", "qy-seedance-2.5"}
 
 type videoProfile struct {
 	name                 string
@@ -53,8 +53,18 @@ type videoProfile struct {
 	maxReferenceVideos   int
 	maxReferenceAudios   int
 	forceResolution      string
+	defaultResolution    string
+	allowedResolutions   []string
+	allowedRatios        []string
 	allowAutoRatio       bool
 	nativeMultimodalMode bool
+	supportsFrames       bool
+	supportsEndFrame     bool
+	framesConflictImages bool
+	maxDurationWithVideo int
+	defaultGenerateAudio bool
+	validateSeed         bool
+	strictGridStrength   bool
 }
 
 var defaultVideoProfile = videoProfile{
@@ -79,6 +89,27 @@ var seedance25VideoProfile = videoProfile{
 	forceResolution:      "720p",
 	allowAutoRatio:       true,
 	nativeMultimodalMode: true,
+}
+
+var qySeedance25VideoProfile = videoProfile{
+	name:                 "qy-seedance-2.5",
+	defaultDuration:      4,
+	minDuration:          4,
+	maxDuration:          29,
+	maxReferenceImages:   sd25MaxReferenceImages,
+	maxReferenceVideos:   sd25MaxReferenceVideos,
+	maxReferenceAudios:   sd25MaxReferenceAudios,
+	defaultResolution:    "480p",
+	allowedResolutions:   []string{"480p", "720p"},
+	allowedRatios:        []string{"16:9", "1:1", "9:16"},
+	nativeMultimodalMode: true,
+	supportsFrames:       true,
+	supportsEndFrame:     true,
+	framesConflictImages: true,
+	maxDurationWithVideo: 18,
+	defaultGenerateAudio: true,
+	validateSeed:         true,
+	strictGridStrength:   true,
 }
 
 type multimodalContent struct {
@@ -119,6 +150,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
+	if err := normalizeOpenAIVideoAliases(payload); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_parameters", http.StatusBadRequest)
+	}
 	if form != nil {
 		defer form.RemoveAll()
 	}
@@ -146,16 +180,16 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 
 	prompt := strings.TrimSpace(payloadString(payload, "prompt"))
-	images, err := collectPayloadStringSlices(payload, "images", "images[]", "reference_image_urls")
+	images, err := collectPayloadStringSlices(payload, "images", "images[]", "image_references", "reference_image_urls", "ref_image")
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_images", http.StatusBadRequest)
 	}
 	images = appendUnique(images, payloadString(payload, "image"))
-	videos, err := collectPayloadStringSlices(payload, "videos", "videos[]", "reference_videos")
+	videos, err := collectPayloadStringSlices(payload, "videos", "videos[]", "video_references", "reference_videos", "ref_video")
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_videos", http.StatusBadRequest)
 	}
-	audios, err := collectPayloadStringSlices(payload, "audios", "audios[]", "reference_audios")
+	audios, err := collectPayloadStringSlices(payload, "audios", "audios[]", "audio_reference", "reference_audios", "ref_audio")
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_audios", http.StatusBadRequest)
 	}
@@ -216,6 +250,34 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if len(audios) > profile.maxReferenceAudios {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("audios supports at most %d reference audios", profile.maxReferenceAudios), "invalid_audios", http.StatusBadRequest)
 	}
+	if profile.maxDurationWithVideo > 0 && len(videos) > 0 && duration > profile.maxDurationWithVideo {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("duration with reference videos must be at most %d seconds", profile.maxDurationWithVideo), "invalid_duration", http.StatusBadRequest)
+	}
+
+	startFrameURL := payloadString(payload, "start_frame_url")
+	endFrameURL := payloadString(payload, "end_frame_url")
+	if (startFrameURL != "" || endFrameURL != "") && !profile.supportsFrames {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("start_frame_url and end_frame_url are not supported for this model"), "invalid_frame_parameters", http.StatusBadRequest)
+	}
+	if endFrameURL != "" && startFrameURL == "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("end_frame_url requires start_frame_url"), "invalid_frame_parameters", http.StatusBadRequest)
+	}
+	if startFrameURL != "" {
+		if err := validateMediaURLs("images", []string{startFrameURL}); err != nil {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("start_frame_url %w", err), "invalid_frame_parameters", http.StatusBadRequest)
+		}
+	}
+	if endFrameURL != "" {
+		if !profile.supportsEndFrame {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("end_frame_url is not supported for this model"), "invalid_frame_parameters", http.StatusBadRequest)
+		}
+		if err := validateMediaURLs("images", []string{endFrameURL}); err != nil {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("end_frame_url %w", err), "invalid_frame_parameters", http.StatusBadRequest)
+		}
+	}
+	if profile.framesConflictImages && startFrameURL != "" && len(images) > 0 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("start/end frame mode cannot be combined with images"), "invalid_frame_parameters", http.StatusBadRequest)
+	}
 
 	fast720 := isFast720Model(mappedModelName)
 	if prompt == "" && (!fast720 || len(images) == 0) {
@@ -229,8 +291,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if fast720 && (generateAudio || len(videos) > 0 || len(audios) > 0) {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("fast-720p does not support generate_audio, videos, or audios"), "invalid_fast_720p_parameters", http.StatusBadRequest)
 	}
-	if err := validateOptionalVideoParameters(payload); err != nil {
+	if err := validateOptionalVideoParameters(payload, profile); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_video_parameters", http.StatusBadRequest)
+	}
+	if profile.defaultGenerateAudio && !hasGenerateAudio {
+		generateAudio = true
+		hasGenerateAudio = true
 	}
 	if fast720 && resolution != "720p" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("fast-720p only supports 720p resolution"), "invalid_video_format", http.StatusBadRequest)
@@ -265,8 +331,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	for _, key := range []string{
 		"seconds", "size", "image", "input_reference", "quality", "async",
-		"aspect_ratio", "images[]", "videos[]", "audios[]",
-		"input_reference[]", "reference_image_urls", "reference_videos", "reference_audios",
+		"aspect_ratio", "aspectRatio", "images[]", "videos[]", "audios[]",
+		"input_reference[]", "reference_image_urls", "image_references", "ref_image",
+		"reference_videos", "video_references", "ref_video", "reference_audios", "audio_reference", "ref_audio",
+		"audio", "generateAudio", "params",
 	} {
 		delete(upstreamPayload, key)
 	}
@@ -279,6 +347,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	upstreamPayload["duration"] = duration
 	upstreamPayload["ratio"] = ratio
 	upstreamPayload["resolution"] = resolution
+	if startFrameURL != "" {
+		upstreamPayload["start_frame_url"] = startFrameURL
+	}
+	if endFrameURL != "" {
+		upstreamPayload["end_frame_url"] = endFrameURL
+	}
 	if hasGenerateAudio {
 		if fast720 {
 			delete(upstreamPayload, "generate_audio")
@@ -324,7 +398,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		},
 	}
 	action := constant.TaskActionTextGenerate
-	if len(images)+len(videos)+len(audios) > 0 {
+	if len(images)+len(videos)+len(audios) > 0 || startFrameURL != "" || endFrameURL != "" {
 		action = constant.TaskActionGenerate
 	}
 
@@ -596,9 +670,66 @@ func readClientPayload(c *gin.Context) (map[string]any, *multipart.Form, error) 
 	return nil, nil, fmt.Errorf("Content-Type must be application/json or multipart/form-data")
 }
 
+// normalizeOpenAIVideoAliases folds MetaJing/OpenAI Video compatibility aliases
+// into the canonical fields consumed by the shared video normalizer.
+func normalizeOpenAIVideoAliases(payload map[string]any) error {
+	if payload == nil {
+		return nil
+	}
+
+	if rawParams, exists := payload["params"]; exists && rawParams != nil {
+		var params map[string]any
+		switch typed := rawParams.(type) {
+		case map[string]any:
+			params = typed
+		case string:
+			if err := common.Unmarshal([]byte(typed), &params); err != nil {
+				return fmt.Errorf("params must be an object")
+			}
+		default:
+			return fmt.Errorf("params must be an object")
+		}
+		for _, key := range []string{
+			"duration", "seconds", "ratio", "aspect_ratio", "aspectRatio", "audio", "generate_audio", "generateAudio",
+			"images", "image", "image_references", "reference_image_urls", "input_reference",
+			"videos", "video_references", "reference_videos", "audios", "audio_reference", "reference_audios",
+			"start_frame_url", "end_frame_url", "seed", "bypass_face_check", "grid_strength",
+		} {
+			if _, exists := payload[key]; !exists {
+				if value, exists := params[key]; exists {
+					payload[key] = value
+				}
+			}
+		}
+	}
+
+	copyAlias := func(canonical string, aliases ...string) {
+		if value, exists := payload[canonical]; exists && value != nil && strings.TrimSpace(fmt.Sprint(value)) != "" {
+			return
+		}
+		for _, alias := range aliases {
+			if value, exists := payload[alias]; exists && value != nil && strings.TrimSpace(fmt.Sprint(value)) != "" {
+				payload[canonical] = value
+				return
+			}
+		}
+	}
+	copyAlias("duration", "seconds")
+	copyAlias("ratio", "aspect_ratio", "aspectRatio")
+	copyAlias("generate_audio", "audio", "generateAudio")
+	return nil
+}
+
 func videoProfileForRequest(info *relaycommon.RelayInfo, modelNames ...string) videoProfile {
 	if info != nil && info.ChannelMeta != nil {
+		for _, modelName := range modelNames {
+			if isQYSeedance25ModelName(modelName) {
+				return qySeedance25VideoProfile
+			}
+		}
 		switch normalizeOpenAIVideoProfile(info.ChannelSetting.OpenAIVideoProfile) {
+		case "qy-seedance-2.5":
+			return qySeedance25VideoProfile
 		case "seedance-2.5":
 			return seedance25VideoProfile
 		case "default":
@@ -612,6 +743,8 @@ func normalizeOpenAIVideoProfile(profile string) string {
 	normalized := strings.ToLower(strings.TrimSpace(profile))
 	normalized = strings.NewReplacer("_", "-", " ", "").Replace(normalized)
 	switch normalized {
+	case "qy-seedance-2.5":
+		return "qy-seedance-2.5"
 	case "seedance-2.5", "seedance2.5", "sd-2.5", "sd2.5", "video-v3":
 		return "seedance-2.5"
 	case "default", "seedance-2.0", "seedance2.0", "sd-2.0", "sd2.0":
@@ -623,6 +756,9 @@ func normalizeOpenAIVideoProfile(profile string) string {
 
 func videoProfileForModels(modelNames ...string) videoProfile {
 	for _, modelName := range modelNames {
+		if isQYSeedance25ModelName(modelName) {
+			return qySeedance25VideoProfile
+		}
 		if isSeedance25ModelName(modelName) {
 			return seedance25VideoProfile
 		}
@@ -639,6 +775,12 @@ func isSeedance25ModelName(modelName string) bool {
 	default:
 		return false
 	}
+}
+
+func isQYSeedance25ModelName(modelName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(modelName))
+	normalized = strings.NewReplacer("_", "-", " ", "").Replace(normalized)
+	return normalized == "qy-seedance-2.5"
 }
 
 func normalizeDuration(payload map[string]any, profile videoProfile) (int, error) {
@@ -690,28 +832,56 @@ func normalizeVideoFormat(payload map[string]any, profile videoProfile) (string,
 	if profile.forceResolution != "" {
 		resolution = profile.forceResolution
 	} else if resolution == "" {
-		switch strings.ToLower(payloadString(payload, "quality")) {
-		case "4k":
-			resolution = "4k"
-		case "1080p", "high":
-			resolution = "1080p"
-		default:
-			resolution = "720p"
+		if profile.defaultResolution != "" {
+			resolution = profile.defaultResolution
+		} else {
+			switch strings.ToLower(payloadString(payload, "quality")) {
+			case "4k":
+				resolution = "4k"
+			case "1080p", "high":
+				resolution = "1080p"
+			default:
+				resolution = "720p"
+			}
 		}
 	}
 	if ratio == "" {
 		ratio = "16:9"
 	}
-	if !isSupportedVideoRatio(ratio, profile.allowAutoRatio) {
+	if !isSupportedProfileRatio(ratio, profile) {
 		if profile.allowAutoRatio {
 			return "", "", "", fmt.Errorf("ratio must be one of auto, 21:9, 16:9, 4:3, 1:1, 3:4, or 9:16")
 		}
 		return "", "", "", fmt.Errorf("ratio must be one of 21:9, 16:9, 4:3, 1:1, 3:4, or 9:16")
 	}
-	if profile.forceResolution == "" && resolution != "480p" && resolution != "720p" && resolution != "1080p" {
+	if profile.forceResolution == "" && !isSupportedProfileResolution(resolution, profile) {
 		return "", "", "", fmt.Errorf("resolution must be one of 480p, 720p, or 1080p")
 	}
 	return ratio, resolution, canonicalSize(ratio, resolution), nil
+}
+
+func isSupportedProfileRatio(ratio string, profile videoProfile) bool {
+	if len(profile.allowedRatios) > 0 {
+		for _, allowed := range profile.allowedRatios {
+			if ratio == allowed {
+				return true
+			}
+		}
+		return false
+	}
+	return isSupportedVideoRatio(ratio, profile.allowAutoRatio)
+}
+
+func isSupportedProfileResolution(resolution string, profile videoProfile) bool {
+	if len(profile.allowedResolutions) > 0 {
+		for _, allowed := range profile.allowedResolutions {
+			if resolution == allowed {
+				return true
+			}
+		}
+		return false
+	}
+	return resolution == "480p" || resolution == "720p" || resolution == "1080p"
 }
 
 func isSupportedVideoRatio(ratio string, allowAuto bool) bool {
@@ -735,6 +905,8 @@ func videoFormatFromSize(size string, profile videoProfile) (string, string, err
 		return ratio, profile.forceResolution, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(size)) {
+	case "854x480", "480x854":
+		return map[string]string{"854x480": "16:9", "480x854": "9:16"}[strings.ToLower(strings.TrimSpace(size))], "480p", nil
 	case "1280x720":
 		return "16:9", "720p", nil
 	case "720x1280":
@@ -746,6 +918,29 @@ func videoFormatFromSize(size string, profile videoProfile) (string, string, err
 	case "1080x1920", "1024x1792":
 		return "9:16", "1080p", nil
 	default:
+		if len(profile.allowedResolutions) > 0 {
+			ratio, err := ratioFromSize(size)
+			if err == nil {
+				normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(size, "×", "x")))
+				parts := strings.Split(normalized, "x")
+				if len(parts) == 2 {
+					width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+					height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+					if widthErr == nil && heightErr == nil {
+						maxDimension := width
+						if height > maxDimension {
+							maxDimension = height
+						}
+						if maxDimension <= 480 {
+							return ratio, "480p", nil
+						}
+						if maxDimension <= 720 {
+							return ratio, "720p", nil
+						}
+					}
+				}
+			}
+		}
 		return "", "", fmt.Errorf("size is not supported")
 	}
 }
@@ -1054,8 +1249,10 @@ func appendUnique(values []string, candidate string) []string {
 func validateMediaURLs(field string, values []string) error {
 	for index, value := range values {
 		value = strings.TrimSpace(value)
-		if field == "images" && strings.HasPrefix(strings.ToLower(value), "data:image/") {
-			if err := validateImageDataURL(value); err != nil {
+		lowerValue := strings.ToLower(value)
+		dataPrefix := "data:" + strings.TrimSuffix(field, "s") + "/"
+		if strings.HasPrefix(lowerValue, dataPrefix) {
+			if err := validateMediaDataURL(value, dataPrefix); err != nil {
 				return fmt.Errorf("%s[%d] %w", field, index, err)
 			}
 			continue
@@ -1069,16 +1266,20 @@ func validateMediaURLs(field string, values []string) error {
 }
 
 func validateImageDataURL(value string) error {
+	return validateMediaDataURL(value, "data:image/")
+}
+
+func validateMediaDataURL(value, expectedPrefix string) error {
 	separator := strings.IndexByte(value, ',')
-	if separator <= len("data:image/") || !strings.Contains(strings.ToLower(value[:separator]), ";base64") {
-		return fmt.Errorf("must be a base64 data:image URL")
+	if separator <= len(expectedPrefix) || !strings.HasPrefix(strings.ToLower(value), expectedPrefix) || !strings.Contains(strings.ToLower(value[:separator]), ";base64") {
+		return fmt.Errorf("must be a base64 data URL")
 	}
 	encoded := strings.TrimSpace(value[separator+1:])
 	if encoded == "" {
 		return fmt.Errorf("must contain image data")
 	}
 	if _, err := base64.StdEncoding.DecodeString(encoded); err != nil {
-		return fmt.Errorf("must contain valid base64 image data")
+		return fmt.Errorf("must contain valid base64 data")
 	}
 	return nil
 }
@@ -1102,7 +1303,7 @@ func payloadBool(payload map[string]any, key string) (bool, bool, error) {
 	return false, true, fmt.Errorf("%s must be a boolean", key)
 }
 
-func validateOptionalVideoParameters(payload map[string]any) error {
+func validateOptionalVideoParameters(payload map[string]any, profile videoProfile) error {
 	if value, exists := payload["bypass_face_check"]; exists && value != nil {
 		if _, _, err := payloadBool(map[string]any{"bypass_face_check": value}, "bypass_face_check"); err != nil {
 			return err
@@ -1110,8 +1311,25 @@ func validateOptionalVideoParameters(payload map[string]any) error {
 	}
 	if value, exists := payload["grid_strength"]; exists && value != nil {
 		strength, err := parseFiniteFloat(value)
-		if err != nil || strength < 0 || strength > 1 {
+		minStrength := 0.0
+		maxStrength := 1.0
+		if profile.strictGridStrength {
+			minStrength = 0.01
+			maxStrength = 0.5
+		}
+		if err != nil || strength < minStrength || strength > maxStrength {
+			if profile.strictGridStrength {
+				return fmt.Errorf("grid_strength must be a number between 0.01 and 0.5")
+			}
 			return fmt.Errorf("grid_strength must be a number between 0 and 1")
+		}
+	}
+	if profile.validateSeed {
+		if value, exists := payload["seed"]; exists && value != nil {
+			seed, err := parseInteger(value)
+			if err != nil || seed < 0 || uint64(seed) > uint64(4294967295) {
+				return fmt.Errorf("seed must be an integer between 0 and 4294967295")
+			}
 		}
 	}
 	return nil

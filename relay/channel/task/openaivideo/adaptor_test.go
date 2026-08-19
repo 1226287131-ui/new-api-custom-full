@@ -158,6 +158,82 @@ func TestBuildRequestBodySupportsSeedanceReferenceAliasesAndAspectRatio(t *testi
 	assert.NotContains(t, upstreamPayload, "reference_image_urls")
 }
 
+func TestQYSeedance25SupportsMetaJingAliasesAndDefaults(t *testing.T) {
+	upstreamPayload, c, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
+		"model":  "qy-seedance-2.5",
+		"prompt": "animate the subject",
+		"params": map[string]any{
+			"duration":    29,
+			"aspectRatio": "1:1",
+			"audio":       false,
+		},
+		"seed":          4294967295,
+		"grid_strength": 0.5,
+	})
+
+	assert.Equal(t, float64(29), upstreamPayload["duration"])
+	assert.Equal(t, "1:1", upstreamPayload["ratio"])
+	assert.Equal(t, "480p", upstreamPayload["resolution"])
+	assert.Equal(t, false, upstreamPayload["generate_audio"])
+	assert.Equal(t, float64(4294967295), upstreamPayload["seed"])
+	assert.Equal(t, 0.5, upstreamPayload["grid_strength"])
+	assert.NotContains(t, upstreamPayload, "params")
+	assert.NotContains(t, upstreamPayload, "aspectRatio")
+	request, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "29", request.Seconds)
+	assert.Equal(t, "480x480", request.Size)
+}
+
+func TestQYSeedance25SupportsFrameURLsAndReferenceVideoLimit(t *testing.T) {
+	upstreamPayload, _, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
+		"model":           "qy-seedance-2.5",
+		"prompt":          "animate the subject",
+		"duration":        18,
+		"resolution":      "720p",
+		"aspect_ratio":    "9:16",
+		"videos":          []string{"https://videos.example/reference.mp4"},
+		"start_frame_url": "https://images.example/start.png",
+		"end_frame_url":   "https://images.example/end.png",
+	})
+
+	assert.Equal(t, "720p", upstreamPayload["resolution"])
+	assert.Equal(t, "https://images.example/start.png", upstreamPayload["start_frame_url"])
+	assert.Equal(t, "https://images.example/end.png", upstreamPayload["end_frame_url"])
+	assert.Equal(t, true, upstreamPayload["generate_audio"])
+	assert.NotContains(t, upstreamPayload, "videos")
+	content, ok := upstreamPayload["content"].([]any)
+	require.True(t, ok)
+	assert.Equal(t, "video_url", content[1].(map[string]any)["type"])
+}
+
+func TestQYSeedance25RejectsUnsupportedCompatibilityValues(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+		code string
+	}{
+		{name: "duration above 29", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "duration": 30}, code: "invalid_duration"},
+		{name: "reference video duration above 18", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "duration": 19, "videos": []string{"https://videos.example/reference.mp4"}}, code: "invalid_duration"},
+		{name: "frame with images", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "images": []string{"https://images.example/reference.png"}, "start_frame_url": "https://images.example/start.png"}, code: "invalid_frame_parameters"},
+		{name: "end frame without start", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "end_frame_url": "https://images.example/end.png"}, code: "invalid_frame_parameters"},
+		{name: "seed below zero", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "seed": -1}, code: "invalid_video_parameters"},
+		{name: "grid strength above 0.5", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "grid_strength": 0.51}, code: "invalid_video_parameters"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requestBody, err := common.Marshal(test.body)
+			require.NoError(t, err)
+			c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.Equal(t, test.code, taskErr.Code)
+		})
+	}
+}
+
 func TestVideoV3BuildsNativeMultimodalContentAndUses720p(t *testing.T) {
 	images := make([]string, 30)
 	for index := range images {

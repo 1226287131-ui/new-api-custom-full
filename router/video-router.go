@@ -40,6 +40,10 @@ func SetVideoRouter(router *gin.Engine) {
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create
 	{
+		// MetaJing's OpenAI Video documentation uses the generations suffix.
+		// Keep it as an alias of the canonical OpenAI /v1/videos endpoint.
+		videoV1Router.POST("/videos/generations", controller.RelayTask)
+		videoV1Router.GET("/videos/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.POST("/videos", controller.RelayTask)
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
