@@ -670,9 +670,33 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	return taskModel2Dto(task, false)
+}
+
+// TaskModel2DtoForAdmin includes the original task model names and request body.
+// The regular task DTO deliberately omits RequestBody because it may contain
+// user prompts, image URLs, or other sensitive input.
+func TaskModel2DtoForAdmin(task *model.Task) *dto.TaskDto {
+	return taskModel2Dto(task, true)
+}
+
+func taskModel2Dto(task *model.Task, includeRequestBody bool) *dto.TaskDto {
 	taskData := task.Data
 	resultURL := task.GetResultURL()
 	failReason := task.FailReason
+	modelName := task.Properties.OriginModelName
+	upstreamModelName := task.Properties.UpstreamModelName
+	if modelName == "" {
+		modelName = upstreamModelName
+	}
+	if modelName == "" {
+		var dataObj map[string]any
+		if common.Unmarshal(task.Data, &dataObj) == nil {
+			if value, ok := dataObj["model"].(string); ok {
+				modelName = value
+			}
+		}
+	}
 	if constant.IsVideoTaskPlatform(task.Platform) {
 		localVideoURL := ""
 		if task.Status == model.TaskStatusSuccess && !service.VideoCacheExpired(task) {
@@ -682,26 +706,32 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		resultURL = localVideoURL
 		failReason = service.SanitizeVideoTaskReason(failReason, task.GetUpstreamTaskID())
 	}
-	return &dto.TaskDto{
-		ID:         task.ID,
-		CreatedAt:  task.CreatedAt,
-		UpdatedAt:  task.UpdatedAt,
-		TaskID:     task.TaskID,
-		Platform:   string(task.Platform),
-		UserId:     task.UserId,
-		Group:      task.Group,
-		ChannelId:  task.ChannelId,
-		Quota:      task.Quota,
-		Action:     task.Action,
-		Status:     string(task.Status),
-		FailReason: failReason,
-		ResultURL:  resultURL,
-		SubmitTime: task.SubmitTime,
-		StartTime:  task.StartTime,
-		FinishTime: task.FinishTime,
-		Progress:   task.Progress,
-		Properties: task.Properties,
-		Username:   task.Username,
-		Data:       taskData,
+	result := &dto.TaskDto{
+		ID:                task.ID,
+		CreatedAt:         task.CreatedAt,
+		UpdatedAt:         task.UpdatedAt,
+		TaskID:            task.TaskID,
+		Platform:          string(task.Platform),
+		UserId:            task.UserId,
+		Group:             task.Group,
+		ChannelId:         task.ChannelId,
+		Quota:             task.Quota,
+		Action:            task.Action,
+		Status:            string(task.Status),
+		FailReason:        failReason,
+		ResultURL:         resultURL,
+		SubmitTime:        task.SubmitTime,
+		StartTime:         task.StartTime,
+		FinishTime:        task.FinishTime,
+		Progress:          task.Progress,
+		Properties:        task.Properties,
+		Username:          task.Username,
+		Data:              taskData,
+		ModelName:         modelName,
+		UpstreamModelName: upstreamModelName,
 	}
+	if includeRequestBody {
+		result.RequestBody = task.RequestBody
+	}
+	return result
 }

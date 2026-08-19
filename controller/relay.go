@@ -577,6 +577,14 @@ func RelayTask(c *gin.Context) {
 			}
 			break
 		}
+		if _, exists := c.Get("task_request_body"); !exists {
+			contentType := strings.ToLower(c.Request.Header.Get("Content-Type"))
+			if strings.HasPrefix(contentType, "application/json") {
+				if requestBody, requestBodyErr := bodyStorage.Bytes(); requestBodyErr == nil && len(requestBody) > 0 {
+					c.Set("task_request_body", append([]byte(nil), requestBody...))
+				}
+			}
+		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
@@ -639,6 +647,18 @@ func RelayTask(c *gin.Context) {
 			task.Data = service.SanitizeVideoTaskData(result.TaskData, task.TaskID, result.UpstreamTaskID, "")
 		} else {
 			task.Data = result.TaskData
+		}
+		if requestBody, exists := c.Get("task_request_body"); exists {
+			if raw, ok := requestBody.([]byte); ok {
+				task.RequestBody = raw
+			}
+		}
+		if len(task.RequestBody) == 0 {
+			if request, requestErr := relaycommon.GetTaskRequest(c); requestErr == nil {
+				if normalized, marshalErr := common.Marshal(request); marshalErr == nil {
+					task.RequestBody = normalized
+				}
+			}
 		}
 		task.Action = relayInfo.Action
 		if insertErr := task.Insert(); insertErr != nil {

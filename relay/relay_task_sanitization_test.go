@@ -94,3 +94,34 @@ func TestTaskModel2DtoHidesExpiredVideoResultURL(t *testing.T) {
 	assert.Empty(t, dto.ResultURL)
 	assert.NotContains(t, string(dto.Data), "upstream.example")
 }
+
+func TestTaskModel2DtoDoesNotExposeRequestBody(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_private",
+		Properties: model.Properties{
+			OriginModelName:   "video-v3",
+			UpstreamModelName: "upstream-video-v3",
+		},
+		RequestBody: json.RawMessage(`{"prompt":"secret prompt","model":"video-v3"}`),
+	}
+
+	result := TaskModel2Dto(task)
+	assert.Equal(t, "video-v3", result.ModelName)
+	assert.Equal(t, "upstream-video-v3", result.UpstreamModelName)
+	assert.Empty(t, result.RequestBody)
+}
+
+func TestTaskModel2DtoForAdminIncludesRequestBody(t *testing.T) {
+	body := json.RawMessage(`{"prompt":"secret prompt","model":"video-v3"}`)
+	task := &model.Task{
+		TaskID: "task_admin",
+		Properties: model.Properties{
+			OriginModelName: "video-v3",
+		},
+		RequestBody: body,
+	}
+
+	result := TaskModel2DtoForAdmin(task)
+	assert.Equal(t, "video-v3", result.ModelName)
+	assert.JSONEq(t, string(body), string(result.RequestBody))
+}

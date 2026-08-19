@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { Music, Video } from 'lucide-react'
+import { FileJson, Music, Video } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -36,6 +36,7 @@ import {
   type AudioClip,
 } from '../dialogs/audio-preview-dialog'
 import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
+import { RequestBodyDialog } from '../dialogs/request-body-dialog'
 import { VideoPreviewDialog } from '../dialogs/video-preview-dialog'
 import { useUsageLogsContext } from '../usage-logs-provider'
 import {
@@ -113,6 +114,35 @@ function VideoPreviewCell({ log }: { log: TaskLog }) {
       <VideoPreviewDialog
         videoUrl={videoUrl}
         taskId={log.task_id}
+        open={open}
+        onOpenChange={setOpen}
+      />
+    </>
+  )
+}
+
+function RequestBodyCell({ log }: { log: TaskLog }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const hasRequestBody = log.request_body != null && log.request_body !== ''
+
+  if (!hasRequestBody) return null
+
+  return (
+    <>
+      <button
+        type='button'
+        className='group flex items-center gap-1 text-left text-xs'
+        onClick={() => setOpen(true)}
+        title={t('View the complete request body for this task')}
+      >
+        <FileJson className='text-muted-foreground size-3' />
+        <span className='text-foreground leading-snug group-hover:underline'>
+          {t('View request')}
+        </span>
+      </button>
+      <RequestBodyDialog
+        requestBody={log.request_body}
         open={open}
         onOpenChange={setOpen}
       />
@@ -219,6 +249,35 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
       },
       meta: { mobileTitle: true },
     },
+    {
+      accessorKey: 'model_name',
+      header: t('Model'),
+      cell: ({ row }) => {
+        const log = row.original
+        const modelName = log.model_name || log.upstream_model_name
+        if (!modelName) {
+          return <span className='text-muted-foreground/60 text-xs'>-</span>
+        }
+        const showUpstream =
+          Boolean(log.upstream_model_name) &&
+          log.upstream_model_name !== modelName
+        return (
+          <div className='flex max-w-[180px] min-w-0 flex-col gap-0.5'>
+            <span className='truncate text-xs' title={modelName}>
+              {modelName}
+            </span>
+            {showUpstream && (
+              <span
+                className='text-muted-foreground/60 truncate text-[11px]'
+                title={log.upstream_model_name}
+              >
+                → {log.upstream_model_name}
+              </span>
+            )}
+          </div>
+        )
+      },
+    },
     createDurationColumn<TaskLog>({
       submitTimeKey: 'submit_time',
       finishTimeKey: 'finish_time',
@@ -264,7 +323,12 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
                 (c as Record<string, unknown>).audio_url
             )
           ) {
-            return <AudioPreviewCell log={log} />
+            return (
+              <div className='flex flex-col items-start gap-1'>
+                <AudioPreviewCell log={log} />
+                <RequestBodyCell log={log} />
+              </div>
+            )
           }
         }
 
@@ -279,15 +343,27 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const hasLegacyVideoUrl = failReason?.startsWith('http')
 
         if (isSuccess && isVideoTask && (hasResultUrl || hasLegacyVideoUrl)) {
-          return <VideoPreviewCell log={log} />
+          return (
+            <div className='flex flex-col items-start gap-1'>
+              <VideoPreviewCell log={log} />
+              <RequestBodyCell log={log} />
+            </div>
+          )
         }
 
         if (!failReason) {
-          return <span className='text-muted-foreground/60 text-xs'>-</span>
+          return (
+            <div className='flex flex-col items-start gap-1'>
+              <RequestBodyCell log={log} />
+              {!log.request_body && (
+                <span className='text-muted-foreground/60 text-xs'>-</span>
+              )}
+            </div>
+          )
         }
 
         return (
-          <>
+          <div className='flex flex-col items-start gap-1'>
             <button
               type='button'
               className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
@@ -303,7 +379,8 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
               open={dialogOpen}
               onOpenChange={setDialogOpen}
             />
-          </>
+            <RequestBodyCell log={log} />
+          </div>
         )
       },
       size: 200,

@@ -67,6 +67,9 @@ type Task struct {
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
+	// RequestBody stores the submitted task payload for administrator diagnostics.
+	// It is intentionally excluded from the default JSON representation.
+	RequestBody json.RawMessage `json:"-" gorm:"column:request_body;type:json"`
 }
 
 func (t *Task) SetData(data any) {
