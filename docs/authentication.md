@@ -74,7 +74,7 @@
 
 服务端在所有登录方式的统一 Session 签发出口执行两级账户限制：
 
-- `USER_SESSION_ACTIVE_LIMIT`（默认 `50`）：单用户未过期且状态为 active 的 Session 上限。达到上限时新登录返回 `409 AUTH_SESSION_LIMIT`；设为 `0` 可关闭该限制。
+- `USER_SESSION_ACTIVE_LIMIT`（默认 `9999`）：单用户未过期且状态为 active 的 Session 上限。达到上限时新登录返回 `409 AUTH_SESSION_LIMIT`；设为 `0` 可关闭该限制。
 - `USER_SESSION_ISSUANCE_LIMIT`（默认 `100`）和 `USER_SESSION_ISSUANCE_WINDOW_SECONDS`（默认 `86400`）：统计窗口内该用户创建的所有 Session，包含已撤销和旧鉴权版本的记录。达到上限时返回 `429 AUTH_SESSION_ISSUANCE_LIMIT`；将前者设为 `0` 可关闭该限制。
 - 这两次计数与插入不加跨数据库锁；极端并发登录可能出现少量超额，但计数失败会拒绝签发，不会降级放行。
 
