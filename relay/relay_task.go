@@ -685,14 +685,6 @@ func taskModel2Dto(task *model.Task, includeRequestBody bool) *dto.TaskDto {
 	resultURL := task.GetResultURL()
 	failReason := task.FailReason
 	modelName := task.Properties.OriginModelName
-	if modelName == "" {
-		var dataObj map[string]any
-		if common.Unmarshal(task.Data, &dataObj) == nil {
-			if value, ok := dataObj["model"].(string); ok {
-				modelName = value
-			}
-		}
-	}
 	if constant.IsVideoTaskPlatform(task.Platform) {
 		localVideoURL := ""
 		if task.Status == model.TaskStatusSuccess && !service.VideoCacheExpired(task) {
