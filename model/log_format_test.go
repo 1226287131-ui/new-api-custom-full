@@ -33,3 +33,31 @@ func TestFormatUserLogsStripsQuotaSaturation(t *testing.T) {
 	// Non-admin billing fields remain visible.
 	require.Contains(t, parsed, "model_price")
 }
+
+func TestSanitizeLogOtherStripsUpstreamModelForAdminAndUserViews(t *testing.T) {
+	other := common.MapToJsonStr(map[string]interface{}{
+		"model_price":        0.004,
+		"is_model_mapped":    true,
+		"upstream_model_name": "provider-video-v3",
+		"admin_info": map[string]interface{}{
+			"use_channel": []string{"channel-1"},
+		},
+	})
+	log := &Log{Other: other}
+
+	sanitizeLogOther(log, false)
+	parsed, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	_, hasMapped := parsed["is_model_mapped"]
+	_, hasUpstream := parsed["upstream_model_name"]
+	require.False(t, hasMapped)
+	require.False(t, hasUpstream)
+	require.Contains(t, parsed, "admin_info")
+
+	log.Other = other
+	sanitizeLogOther(log, true)
+	parsed, err = common.StrToMap(log.Other)
+	require.NoError(t, err)
+	_, hasAdmin := parsed["admin_info"]
+	require.False(t, hasAdmin)
+}

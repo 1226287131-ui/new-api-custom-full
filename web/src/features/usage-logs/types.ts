@@ -182,8 +182,6 @@ export interface LogOtherData {
   cache_creation_ratio?: number
   cache_creation_ratio_5m?: number
   cache_creation_ratio_1h?: number
-  is_model_mapped?: boolean
-  upstream_model_name?: string
   audio_ratio?: number
   audio_completion_ratio?: number
   frt?: number
@@ -296,7 +294,6 @@ export interface TaskLog {
   platform: string // suno, kling, runway, etc.
   task_id: string
   model_name?: string
-  upstream_model_name?: string
   action: string // MUSIC, LYRICS, GENERATE, TEXT_GENERATE, etc.
   channel_id: number
   submit_time: number // seconds

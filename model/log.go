@@ -116,19 +116,28 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
-		var otherMap map[string]interface{}
-		otherMap, _ = common.StrToMap(logs[i].Other)
-		if otherMap != nil {
-			// Remove admin-only debug fields.
-			delete(otherMap, "admin_info")
-			// Remove operation-audit details (operator/route info), admin-only.
-			delete(otherMap, "audit_info")
-			// delete(otherMap, "reject_reason")
-			// delete(otherMap, "stream_status")
-		}
-		logs[i].Other = common.MapToJsonStr(otherMap)
+		sanitizeLogOther(logs[i], true)
 	}
 	assignDisplayLogIds(logs, startIdx)
+}
+
+// sanitizeLogOther removes fields that expose provider internals or admin-only
+// metadata before a log is serialized to a client.
+func sanitizeLogOther(log *Log, stripAdminInfo bool) {
+	if log == nil {
+		return
+	}
+	otherMap, _ := common.StrToMap(log.Other)
+	if otherMap == nil {
+		return
+	}
+	delete(otherMap, "is_model_mapped")
+	delete(otherMap, "upstream_model_name")
+	if stripAdminInfo {
+		delete(otherMap, "admin_info")
+		delete(otherMap, "audit_info")
+	}
+	log.Other = common.MapToJsonStr(otherMap)
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
@@ -542,6 +551,9 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		assignDisplayLogIds(logs, startIdx)
+	}
+	for _, log := range logs {
+		sanitizeLogOther(log, false)
 	}
 
 	channelIds := types.NewSet[int]()
