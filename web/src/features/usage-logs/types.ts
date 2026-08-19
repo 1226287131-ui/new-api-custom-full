@@ -305,6 +305,7 @@ export interface TaskLog {
   progress_message_en?: string
   data?: string // JSON string
   request_body?: unknown
+  request_body_complete?: boolean
   fail_reason?: string
   result_url?: string
   status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, QUEUED, UNKNOWN

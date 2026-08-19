@@ -2684,6 +2684,7 @@
     "Request Body": "请求体",
     "View the complete request body for this task": "查看此任务的完整请求体",
     "No request body recorded": "未记录请求体",
+    "The original request body exceeded the storage limit, so a normalized request was recorded instead.": "原始请求体超过存储限制，已改为记录标准化请求参数。",
     "Request body is only available for tasks submitted after this update.": "请求体仅适用于此功能更新后提交的任务",
     "Model {{model}}": "模型 {{model}}",
     "Model Access": "模型访问",

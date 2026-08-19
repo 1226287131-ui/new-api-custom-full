@@ -44,12 +44,14 @@ function formatRequestBody(value: unknown): string {
 
 interface RequestBodyDialogProps {
   requestBody: unknown
+  requestBodyComplete?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
 export function RequestBodyDialog({
   requestBody,
+  requestBodyComplete = false,
   open,
   onOpenChange,
 }: RequestBodyDialogProps) {
@@ -74,24 +76,33 @@ export function RequestBodyDialog({
         <div className='space-y-2 py-4'>
           <Label className='text-sm font-semibold'>{t('Request Body')}</Label>
           {formattedBody ? (
-            <div className='bg-muted/50 relative overflow-hidden rounded-md border'>
-              <Button
-                variant='ghost'
-                size='sm'
-                className='absolute top-2 right-2 z-10 h-8 w-8 p-0'
-                onClick={() => copyToClipboard(formattedBody)}
-                title={t('Copy to clipboard')}
-              >
-                {copiedText === formattedBody ? (
-                  <Check className='size-4 text-green-600' />
-                ) : (
-                  <Copy className='size-4' />
-                )}
-              </Button>
-              <pre className='max-h-[min(65vh,640px)] overflow-auto p-4 pr-12 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap'>
-                {formattedBody}
-              </pre>
-            </div>
+            <>
+              {!requestBodyComplete && (
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'The original request body exceeded the storage limit, so a normalized request was recorded instead.'
+                  )}
+                </p>
+              )}
+              <div className='bg-muted/50 relative overflow-hidden rounded-md border'>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='absolute top-2 right-2 z-10 h-8 w-8 p-0'
+                  onClick={() => copyToClipboard(formattedBody)}
+                  title={t('Copy to clipboard')}
+                >
+                  {copiedText === formattedBody ? (
+                    <Check className='size-4 text-green-600' />
+                  ) : (
+                    <Copy className='size-4' />
+                  )}
+                </Button>
+                <pre className='max-h-[min(65vh,640px)] overflow-auto p-4 pr-12 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap'>
+                  {formattedBody}
+                </pre>
+              </div>
+            </>
           ) : (
             <div className='text-muted-foreground flex items-center gap-2 rounded-md border p-4 text-sm'>
               <FileJson className='size-4' />

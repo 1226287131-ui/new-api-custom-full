@@ -143,6 +143,7 @@ function RequestBodyCell({ log }: { log: TaskLog }) {
       </button>
       <RequestBodyDialog
         requestBody={log.request_body}
+        requestBodyComplete={log.request_body_complete}
         open={open}
         onOpenChange={setOpen}
       />

@@ -732,6 +732,7 @@ func taskModel2Dto(task *model.Task, includeRequestBody bool) *dto.TaskDto {
 	}
 	if includeRequestBody {
 		result.RequestBody = task.RequestBody
+		result.RequestBodyComplete = task.RequestBodyComplete
 	}
 	return result
 }

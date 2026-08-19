@@ -69,7 +69,8 @@ type Task struct {
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
 	// RequestBody stores the submitted task payload for administrator diagnostics.
 	// It is intentionally excluded from the default JSON representation.
-	RequestBody json.RawMessage `json:"-" gorm:"column:request_body;type:json"`
+	RequestBody         json.RawMessage `json:"-" gorm:"column:request_body;type:json"`
+	RequestBodyComplete bool            `json:"-" gorm:"column:request_body_complete"`
 }
 
 func (t *Task) SetData(data any) {

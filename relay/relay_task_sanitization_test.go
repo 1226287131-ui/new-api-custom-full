@@ -102,7 +102,8 @@ func TestTaskModel2DtoDoesNotExposeRequestBody(t *testing.T) {
 			OriginModelName:   "video-v3",
 			UpstreamModelName: "upstream-video-v3",
 		},
-		RequestBody: json.RawMessage(`{"prompt":"secret prompt","model":"video-v3"}`),
+		RequestBody:         json.RawMessage(`{"prompt":"secret prompt","model":"video-v3"}`),
+		RequestBodyComplete: true,
 	}
 
 	result := TaskModel2Dto(task)
@@ -118,10 +119,12 @@ func TestTaskModel2DtoForAdminIncludesRequestBody(t *testing.T) {
 		Properties: model.Properties{
 			OriginModelName: "video-v3",
 		},
-		RequestBody: body,
+		RequestBody:         body,
+		RequestBodyComplete: true,
 	}
 
 	result := TaskModel2DtoForAdmin(task)
 	assert.Equal(t, "video-v3", result.ModelName)
 	assert.JSONEq(t, string(body), string(result.RequestBody))
+	assert.True(t, result.RequestBodyComplete)
 }

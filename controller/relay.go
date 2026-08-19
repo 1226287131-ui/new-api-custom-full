@@ -515,6 +515,8 @@ func RelayTaskFetch(c *gin.Context) {
 }
 
 func RelayTask(c *gin.Context) {
+	const maxRecordedTaskRequestBodyBytes int64 = 1 << 20
+
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, &taskdto.TaskError{
@@ -577,7 +579,7 @@ func RelayTask(c *gin.Context) {
 			}
 			break
 		}
-		if _, exists := c.Get("task_request_body"); !exists {
+		if _, exists := c.Get("task_request_body"); !exists && bodyStorage.Size() <= maxRecordedTaskRequestBodyBytes {
 			contentType := strings.ToLower(c.Request.Header.Get("Content-Type"))
 			if strings.HasPrefix(contentType, "application/json") {
 				if requestBody, requestBodyErr := bodyStorage.Bytes(); requestBodyErr == nil && len(requestBody) > 0 {
@@ -651,6 +653,7 @@ func RelayTask(c *gin.Context) {
 		if requestBody, exists := c.Get("task_request_body"); exists {
 			if raw, ok := requestBody.([]byte); ok {
 				task.RequestBody = raw
+				task.RequestBodyComplete = true
 			}
 		}
 		if len(task.RequestBody) == 0 {

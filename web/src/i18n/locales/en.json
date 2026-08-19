@@ -2684,6 +2684,7 @@
     "Request Body": "Request Body",
     "View the complete request body for this task": "View the complete request body for this task",
     "No request body recorded": "No request body recorded",
+    "The original request body exceeded the storage limit, so a normalized request was recorded instead.": "The original request body exceeded the storage limit, so a normalized request was recorded instead.",
     "Request body is only available for tasks submitted after this update.": "Request body is only available for tasks submitted after this update.",
     "Model {{model}}": "Model {{model}}",
     "Model Access": "Model Access",
