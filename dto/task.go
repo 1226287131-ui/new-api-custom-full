@@ -51,7 +51,6 @@ type TaskDto struct {
 	Username            string          `json:"username,omitempty"`
 	Data                json.RawMessage `json:"data"`
 	ModelName           string          `json:"model_name,omitempty"`
-	UpstreamModelName   string          `json:"upstream_model_name,omitempty"`
 	RequestBody         json.RawMessage `json:"request_body,omitempty"`
 	RequestBodyComplete bool            `json:"request_body_complete,omitempty"`
 }

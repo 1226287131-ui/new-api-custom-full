@@ -685,10 +685,6 @@ func taskModel2Dto(task *model.Task, includeRequestBody bool) *dto.TaskDto {
 	resultURL := task.GetResultURL()
 	failReason := task.FailReason
 	modelName := task.Properties.OriginModelName
-	upstreamModelName := task.Properties.UpstreamModelName
-	if modelName == "" {
-		modelName = upstreamModelName
-	}
 	if modelName == "" {
 		var dataObj map[string]any
 		if common.Unmarshal(task.Data, &dataObj) == nil {
@@ -706,6 +702,9 @@ func taskModel2Dto(task *model.Task, includeRequestBody bool) *dto.TaskDto {
 		resultURL = localVideoURL
 		failReason = service.SanitizeVideoTaskReason(failReason, task.GetUpstreamTaskID())
 	}
+	properties := task.Properties
+	// Keep provider mapping internal; task APIs expose only the site's model name.
+	properties.UpstreamModelName = ""
 	result := &dto.TaskDto{
 		ID:                task.ID,
 		CreatedAt:         task.CreatedAt,
@@ -724,11 +723,10 @@ func taskModel2Dto(task *model.Task, includeRequestBody bool) *dto.TaskDto {
 		StartTime:         task.StartTime,
 		FinishTime:        task.FinishTime,
 		Progress:          task.Progress,
-		Properties:        task.Properties,
+		Properties:        properties,
 		Username:          task.Username,
 		Data:              taskData,
 		ModelName:         modelName,
-		UpstreamModelName: upstreamModelName,
 	}
 	if includeRequestBody {
 		result.RequestBody = task.RequestBody

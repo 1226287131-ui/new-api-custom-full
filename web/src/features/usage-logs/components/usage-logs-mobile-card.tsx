@@ -392,6 +392,10 @@ function TaskLogsCard<TData>({
         <SummaryField label={t('User')} cell={cells.get('user')} primaryOnly />
         <SummaryField label={t('Model')} cell={cells.get('model_name')} />
         <SummaryField
+          label={t('Request Body')}
+          cell={cells.get('request_body')}
+        />
+        <SummaryField
           label={t('Result')}
           cell={cells.get('fail_reason')}
           className='col-span-2 bg-transparent px-0 py-0'

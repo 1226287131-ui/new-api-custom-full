@@ -108,7 +108,9 @@ func TestTaskModel2DtoDoesNotExposeRequestBody(t *testing.T) {
 
 	result := TaskModel2Dto(task)
 	assert.Equal(t, "video-v3", result.ModelName)
-	assert.Equal(t, "upstream-video-v3", result.UpstreamModelName)
+	properties, ok := result.Properties.(model.Properties)
+	require.True(t, ok)
+	assert.Empty(t, properties.UpstreamModelName)
 	assert.Empty(t, result.RequestBody)
 }
 

@@ -255,27 +255,14 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
       header: t('Model'),
       cell: ({ row }) => {
         const log = row.original
-        const modelName = log.model_name || log.upstream_model_name
+        const modelName = log.model_name
         if (!modelName) {
           return <span className='text-muted-foreground/60 text-xs'>-</span>
         }
-        const showUpstream =
-          Boolean(log.upstream_model_name) &&
-          log.upstream_model_name !== modelName
         return (
-          <div className='flex max-w-[180px] min-w-0 flex-col gap-0.5'>
-            <span className='truncate text-xs' title={modelName}>
-              {modelName}
-            </span>
-            {showUpstream && (
-              <span
-                className='text-muted-foreground/60 truncate text-[11px]'
-                title={log.upstream_model_name}
-              >
-                → {log.upstream_model_name}
-              </span>
-            )}
-          </div>
+          <span className='truncate text-xs' title={modelName}>
+            {modelName}
+          </span>
         )
       },
     },
@@ -303,6 +290,16 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
       },
     },
     createProgressColumn<TaskLog>({ headerLabel: t('Progress') }),
+    ...(isAdmin
+      ? [
+          {
+            accessorKey: 'request_body',
+            header: t('Request Body'),
+            cell: ({ row }) => <RequestBodyCell log={row.original} />,
+            size: 140,
+          } satisfies ColumnDef<TaskLog>,
+        ]
+      : []),
     {
       accessorKey: 'fail_reason',
       header: t('Details'),
@@ -325,10 +322,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
             )
           ) {
             return (
-              <div className='flex flex-col items-start gap-1'>
-                <AudioPreviewCell log={log} />
-                <RequestBodyCell log={log} />
-              </div>
+              <AudioPreviewCell log={log} />
             )
           }
         }
@@ -345,22 +339,12 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
 
         if (isSuccess && isVideoTask && (hasResultUrl || hasLegacyVideoUrl)) {
           return (
-            <div className='flex flex-col items-start gap-1'>
-              <VideoPreviewCell log={log} />
-              <RequestBodyCell log={log} />
-            </div>
+            <VideoPreviewCell log={log} />
           )
         }
 
         if (!failReason) {
-          return (
-            <div className='flex flex-col items-start gap-1'>
-              <RequestBodyCell log={log} />
-              {!log.request_body && (
-                <span className='text-muted-foreground/60 text-xs'>-</span>
-              )}
-            </div>
-          )
+          return <span className='text-muted-foreground/60 text-xs'>-</span>
         }
 
         return (
@@ -380,7 +364,6 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
               open={dialogOpen}
               onOpenChange={setDialogOpen}
             />
-            <RequestBodyCell log={log} />
           </div>
         )
       },
