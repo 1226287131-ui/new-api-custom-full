@@ -573,24 +573,12 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			videoSourceURL = ExtractVideoDataURL(responseBody)
 		}
 		if _, cacheErr := CacheVideoTaskResult(ctx, task, ch, videoSourceURL); cacheErr != nil {
-			// A completed provider result is not public until the local copy exists.
-			// Keep it in progress only for the terminal-error recovery window. A
-			// permanently invalid source must settle and refund instead of retrying
-			// forever without exposing the provider URL.
+			// The provider result is authoritative. A local cache failure is
+			// recoverable and must not downgrade a completed task or trigger a refund.
 			logger.LogError(ctx, fmt.Sprintf("Failed to cache video task %s locally: %s", task.TaskID, cacheErr.Error()))
-			cacheReason := fmt.Sprintf("failed to cache completed video: %s", cacheErr)
-			if taskTerminalErrorExpired(task, now) {
-				taskResult.Status = model.TaskStatusFailure
-				taskResult.Progress = taskcommon.ProgressComplete
-				taskResult.Reason = cacheReason
-				taskResult.TerminalError = false
-			} else {
-				taskResult.Status = model.TaskStatusInProgress
-				taskResult.Progress = "95%"
-				taskResult.Reason = cacheReason
-				taskResult.TerminalError = true
-				task.PrivateData.ResultURL = ""
-			}
+			MarkVideoCacheFailure(task, cacheErr)
+			taskResult.TerminalError = false
+			task.PrivateData.ResultURL = ""
 		} else {
 			MarkVideoTaskCached(task)
 			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)

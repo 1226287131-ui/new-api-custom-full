@@ -12,12 +12,18 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 )
 
 const (
 	defaultVideoCacheDir             = "/data/video-cache"
 	defaultVideoCacheTTL             = 48 * time.Hour
 	defaultVideoCacheCleanupInterval = time.Hour
+	videoCacheRetryInterval          = 30 * time.Second
+	videoCacheRetryMaxAttempts       = 8
+	videoCacheRetryBatchSize         = 100
 )
 
 func videoCacheDir() string {
@@ -267,4 +273,104 @@ func StartVideoCacheCleanup() {
 			cleanup()
 		}
 	}()
+}
+
+func videoCacheRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := 30 * time.Second
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= 10*time.Minute {
+			return 10 * time.Minute
+		}
+	}
+	return delay
+}
+
+func truncateVideoCacheError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Error())
+	if len(message) > 512 {
+		message = message[:512]
+	}
+	return message
+}
+
+// StartVideoCacheRetry continuously repairs successful video tasks whose local
+// cache write failed. It is deliberately independent from async task polling:
+// a provider-successful task must never become pending again just because the
+// local disk or network had a transient problem.
+func StartVideoCacheRetry() {
+	retry := func() {
+		if err := RetryVideoTaskCaches(context.Background()); err != nil {
+			common.SysError(fmt.Sprintf("video cache retry pass failed: %v", err))
+		}
+	}
+	retry()
+	go func() {
+		ticker := time.NewTicker(videoCacheRetryInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			retry()
+		}
+	}()
+}
+
+// RetryVideoTaskCaches performs one bounded retry pass. It is exported for
+// focused tests and for operators that want to trigger a manual repair pass.
+func RetryVideoTaskCaches(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	now := time.Now()
+	tasks := model.GetRecentSuccessfulVideoTasksForCache(now.Add(-defaultVideoCacheTTL).Unix(), videoCacheRetryBatchSize)
+	for _, task := range tasks {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if task == nil || !constant.IsVideoTaskPlatform(task.Platform) || task.PrivateData.VideoCachedAt > 0 || VideoCacheExpired(task) {
+			continue
+		}
+		if _, cached := CachedVideoPath(task.TaskID); cached {
+			MarkVideoTaskCached(task)
+			task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
+			continue
+		}
+		if task.PrivateData.VideoCacheAttempts >= videoCacheRetryMaxAttempts {
+			continue
+		}
+		if next := task.PrivateData.VideoCacheNextRetryAt; next > now.Unix() {
+			continue
+		}
+		channel, err := model.CacheGetChannel(task.ChannelId)
+		if err != nil || channel == nil || !constant.IsVideoTaskChannelType(channel.Type) {
+			if err == nil {
+				err = fmt.Errorf("channel is unavailable or not a video channel")
+			}
+			MarkVideoCacheFailure(task, err)
+			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
+			continue
+		}
+		if _, err = CacheVideoTask(ctx, task, channel); err != nil {
+			MarkVideoCacheFailure(task, err)
+			if task.PrivateData.VideoCacheAttempts >= videoCacheRetryMaxAttempts {
+				common.SysError(fmt.Sprintf("video task %s cache retry exhausted after %d attempts: %s", task.TaskID, task.PrivateData.VideoCacheAttempts, truncateVideoCacheError(err)))
+			}
+			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
+			continue
+		}
+		MarkVideoTaskCached(task)
+		task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+		if won, updateErr := task.UpdateWithStatus(model.TaskStatusSuccess); updateErr != nil {
+			common.SysError(fmt.Sprintf("persist video cache retry metadata for %s: %v", task.TaskID, updateErr))
+		} else if !won {
+			common.SysLog(fmt.Sprintf("video task %s changed while cache retry was running", task.TaskID))
+		}
+	}
+	return nil
 }

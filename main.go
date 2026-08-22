@@ -130,6 +130,8 @@ func main() {
 
 	// Keep completed NewAPI video results on the server and remove them after 48 hours.
 	service.StartVideoCacheCleanup()
+	// Retry successful video tasks whose local cache download had a transient failure.
+	service.StartVideoCacheRetry()
 	// Keep successful image responses on the server for 2 hours so users can
 	// recover an image when their downstream client misses the response.
 	service.StartImageCacheCleanup()

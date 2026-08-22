@@ -107,11 +107,14 @@ func (m Properties) Value() (driver.Value, error) {
 }
 
 type TaskPrivateData struct {
-	Key               string `json:"key,omitempty"`
-	UpstreamTaskID    string `json:"upstream_task_id,omitempty"`    // 上游真实 task ID
-	ResultURL         string `json:"result_url,omitempty"`          // 任务成功后的结果 URL（视频地址等）
-	UpstreamResultURL string `json:"upstream_result_url,omitempty"` // 上游结果地址，仅供服务端缓存回源使用
-	VideoCachedAt     int64  `json:"video_cached_at,omitempty"`     // 本地视频缓存完成时间，用于固定 48 小时保留期
+	Key                   string `json:"key,omitempty"`
+	UpstreamTaskID        string `json:"upstream_task_id,omitempty"`          // 上游真实 task ID
+	ResultURL             string `json:"result_url,omitempty"`                // 任务成功后的结果 URL（视频地址等）
+	UpstreamResultURL     string `json:"upstream_result_url,omitempty"`       // 上游结果地址，仅供服务端缓存回源使用
+	VideoCachedAt         int64  `json:"video_cached_at,omitempty"`           // 本地视频缓存完成时间，用于固定 48 小时保留期
+	VideoCacheAttempts    int    `json:"video_cache_attempts,omitempty"`      // 本地视频缓存补偿尝试次数
+	VideoCacheNextRetryAt int64  `json:"video_cache_next_retry_at,omitempty"` // 下次缓存补偿时间
+	VideoCacheLastError   string `json:"video_cache_last_error,omitempty"`    // 最近一次缓存补偿错误（仅服务端）
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -329,6 +332,23 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 	return tasks
 }
 
+// GetRecentSuccessfulVideoTasksForCache returns recent successful tasks that
+// may still need a local video cache. The caller filters platforms and checks
+// the cache file because private_data is JSON and its shape varies by DB.
+func GetRecentSuccessfulVideoTasksForCache(cutoffUnix int64, limit int) []*Task {
+	if limit <= 0 {
+		return nil
+	}
+	var tasks []*Task
+	err := DB.Where("status = ?", TaskStatusSuccess).
+		Where("(finish_time = 0 OR finish_time >= ?)", cutoffUnix).
+		Order("finish_time").Order("id").Limit(limit).Find(&tasks).Error
+	if err != nil {
+		return nil
+	}
+	return tasks
+}
+
 // HasUnfinishedSyncTasks reports whether at least one async (Suno/video) task is
 // still in progress. It is a cheap existence check (LIMIT 1) used to decide
 // whether the async_task_poll system task needs to run; when no task is pending
@@ -396,15 +416,18 @@ func (Task *Task) Insert() error {
 }
 
 type taskSnapshot struct {
-	Status            TaskStatus
-	Progress          string
-	StartTime         int64
-	FinishTime        int64
-	FailReason        string
-	ResultURL         string
-	UpstreamResultURL string
-	VideoCachedAt     int64
-	Data              json.RawMessage
+	Status                TaskStatus
+	Progress              string
+	StartTime             int64
+	FinishTime            int64
+	FailReason            string
+	ResultURL             string
+	UpstreamResultURL     string
+	VideoCachedAt         int64
+	VideoCacheAttempts    int
+	VideoCacheNextRetryAt int64
+	VideoCacheLastError   string
+	Data                  json.RawMessage
 }
 
 func (s taskSnapshot) Equal(other taskSnapshot) bool {
@@ -416,20 +439,26 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		s.ResultURL == other.ResultURL &&
 		s.UpstreamResultURL == other.UpstreamResultURL &&
 		s.VideoCachedAt == other.VideoCachedAt &&
+		s.VideoCacheAttempts == other.VideoCacheAttempts &&
+		s.VideoCacheNextRetryAt == other.VideoCacheNextRetryAt &&
+		s.VideoCacheLastError == other.VideoCacheLastError &&
 		bytes.Equal(s.Data, other.Data)
 }
 
 func (t *Task) Snapshot() taskSnapshot {
 	return taskSnapshot{
-		Status:            t.Status,
-		Progress:          t.Progress,
-		StartTime:         t.StartTime,
-		FinishTime:        t.FinishTime,
-		FailReason:        t.FailReason,
-		ResultURL:         t.PrivateData.ResultURL,
-		UpstreamResultURL: t.PrivateData.UpstreamResultURL,
-		VideoCachedAt:     t.PrivateData.VideoCachedAt,
-		Data:              t.Data,
+		Status:                t.Status,
+		Progress:              t.Progress,
+		StartTime:             t.StartTime,
+		FinishTime:            t.FinishTime,
+		FailReason:            t.FailReason,
+		ResultURL:             t.PrivateData.ResultURL,
+		UpstreamResultURL:     t.PrivateData.UpstreamResultURL,
+		VideoCachedAt:         t.PrivateData.VideoCachedAt,
+		VideoCacheAttempts:    t.PrivateData.VideoCacheAttempts,
+		VideoCacheNextRetryAt: t.PrivateData.VideoCacheNextRetryAt,
+		VideoCacheLastError:   t.PrivateData.VideoCacheLastError,
+		Data:                  t.Data,
 	}
 }
 

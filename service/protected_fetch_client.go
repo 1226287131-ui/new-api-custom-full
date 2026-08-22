@@ -295,7 +295,11 @@ func (d *protectedFetchDialer) DialContext(ctx context.Context, network, addr st
 		return nil, fmt.Errorf("DNS resolution failed for %s: %v", host, err)
 	}
 
-	var candidateIPs []net.IP
+	// Prefer IPv4 when both families are available. Some hosts expose IPv6
+	// addresses while the server has no IPv6 route; trying those first causes a
+	// recoverable CDN download to fail before IPv4 is attempted. IPv6 remains a
+	// fallback for IPv6-only origins.
+	var candidateIPv4, candidateIPv6 []net.IP
 	for _, ipAddr := range resolved {
 		ip := ipAddr.IP
 		if ip == nil || !networkAllowsIP(network, ip) {
@@ -304,8 +308,13 @@ func (d *protectedFetchDialer) DialContext(ctx context.Context, network, addr st
 		if err := protection.ValidateResolvedIP(host, ip); err != nil {
 			return nil, err
 		}
-		candidateIPs = append(candidateIPs, ip)
+		if ip.To4() != nil {
+			candidateIPv4 = append(candidateIPv4, ip)
+		} else {
+			candidateIPv6 = append(candidateIPv6, ip)
+		}
 	}
+	candidateIPs := append(candidateIPv4, candidateIPv6...)
 
 	var lastDialErr error
 	for _, ip := range candidateIPs {

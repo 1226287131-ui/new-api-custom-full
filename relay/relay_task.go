@@ -471,6 +471,8 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		if channelModel, channelErr := model.CacheGetChannel(originTask.ChannelId); channelErr == nil && constant.IsVideoTaskChannelType(channelModel.Type) {
 			if _, cacheErr := service.CacheVideoTask(c.Request.Context(), originTask, channelModel); cacheErr != nil {
 				logger.LogError(c, fmt.Sprintf("Failed to cache video task %s during fetch: %s", originTask.TaskID, cacheErr.Error()))
+				service.MarkVideoCacheFailure(originTask, cacheErr)
+				_, _ = originTask.UpdateWithStatus(model.TaskStatusSuccess)
 			} else {
 				service.MarkVideoTaskCached(originTask)
 				originTask.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(originTask.TaskID)
@@ -585,8 +587,7 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		}
 		if _, cacheErr := service.CacheVideoTaskResult(nil, task, channelModel, videoSourceURL); cacheErr != nil {
 			common.SysError(fmt.Sprintf("Failed to cache realtime video task %s locally: %s", task.TaskID, cacheErr.Error()))
-			task.Status = model.TaskStatusInProgress
-			task.Progress = "95%"
+			service.MarkVideoCacheFailure(task, cacheErr)
 			task.PrivateData.ResultURL = ""
 		} else {
 			service.MarkVideoTaskCached(task)

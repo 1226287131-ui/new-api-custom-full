@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -187,6 +189,49 @@ func TestVideoCacheExpiredUsesFixedFirstCacheTime(t *testing.T) {
 
 	MarkVideoTaskCached(fresh)
 	assert.Equal(t, now, fresh.PrivateData.VideoCachedAt)
+}
+
+func TestVideoCacheRetryMetadataBacksOffAndClearsOnSuccess(t *testing.T) {
+	task := &model.Task{PrivateData: model.TaskPrivateData{}}
+	before := time.Now().Add(29 * time.Second).Unix()
+	MarkVideoCacheFailure(task, fmt.Errorf("temporary disk error"))
+	assert.Equal(t, 1, task.PrivateData.VideoCacheAttempts)
+	assert.GreaterOrEqual(t, task.PrivateData.VideoCacheNextRetryAt, before)
+	assert.Equal(t, "temporary disk error", task.PrivateData.VideoCacheLastError)
+
+	MarkVideoTaskCached(task)
+	assert.NotZero(t, task.PrivateData.VideoCachedAt)
+	assert.Zero(t, task.PrivateData.VideoCacheAttempts)
+	assert.Zero(t, task.PrivateData.VideoCacheNextRetryAt)
+	assert.Empty(t, task.PrivateData.VideoCacheLastError)
+}
+
+func TestRetryVideoTaskCachesSuccessfulTaskAfterTransientFailure(t *testing.T) {
+	truncate(t)
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	channel := &model.Channel{Id: 981, Type: constant.ChannelTypeKling, Key: "channel-key", Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(channel).Error)
+	task := &model.Task{
+		TaskID:     "task_retry_success",
+		Platform:   constant.TaskPlatform("kling"),
+		ChannelId:  channel.Id,
+		Status:     model.TaskStatusSuccess,
+		Progress:   "100%",
+		FinishTime: time.Now().Unix(),
+		PrivateData: model.TaskPrivateData{
+			UpstreamResultURL:     "data:video/mp4;base64," + base64.StdEncoding.EncodeToString([]byte("retry-video")),
+			VideoCacheAttempts:    1,
+			VideoCacheNextRetryAt: time.Now().Add(-time.Minute).Unix(),
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, RetryVideoTaskCaches(context.Background()))
+	var saved model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
+	assert.NotZero(t, saved.PrivateData.VideoCachedAt)
+	assert.Zero(t, saved.PrivateData.VideoCacheAttempts)
+	assert.FileExists(t, filepath.Join(videoCacheDir(), task.TaskID+".mp4"))
 }
 
 func TestCacheRemoteVideoWithHeaders(t *testing.T) {

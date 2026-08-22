@@ -120,6 +120,9 @@ func videoProxy(c *gin.Context, public bool) {
 			}
 			return
 		}
+	} else {
+		service.MarkVideoCacheFailure(task, cacheErr)
+		_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
 	}
 
 	// Legacy Gemini/Vertex rows may not have retained a private source URL.
@@ -162,6 +165,8 @@ func videoProxy(c *gin.Context, public bool) {
 		}
 		if cacheErr != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to cache legacy video task %s on demand: %s", taskID, cacheErr.Error()))
+			service.MarkVideoCacheFailure(task, cacheErr)
+			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
 		}
 	}
 
