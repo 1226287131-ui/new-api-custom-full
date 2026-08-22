@@ -24,12 +24,14 @@ type protectedFetchDialer struct {
 	resolver      ssrfResolver
 	dialContext   func(ctx context.Context, network, address string) (net.Conn, error)
 	getProtection func() (*common.SSRFProtection, bool, error)
+	ipv4Only      bool
 }
 
 type ssrfProtectedRoundTripper struct {
 	resolver      ssrfResolver
 	dialContext   func(ctx context.Context, network, address string) (net.Conn, error)
 	getProtection func() (*common.SSRFProtection, bool, error)
+	ipv4Only      bool
 	proxy         func(*http.Request) (*url.URL, error)
 	validateURL   func(string) error
 
@@ -102,17 +104,33 @@ func newImageCacheProtectedProxyHTTPClient(proxyURL *url.URL) (*http.Client, err
 // specialized cache policies use the same redirect and dial-time checks as
 // the regular protected client.
 func newProtectedFetchProxyHTTPClient(proxyURL *url.URL, getProtection func() (*common.SSRFProtection, bool, error), validateURL func(string) error) (*http.Client, error) {
+	return newProtectedFetchProxyHTTPClientWithFamily(proxyURL, getProtection, validateURL, false)
+}
+
+// newProtectedFetchProxyHTTPClientIPv4 is used by video caching, where the
+// server's IPv6 route is unreliable. It keeps the proxy and SSRF policies
+// unchanged while constraining outbound sockets to IPv4.
+func newProtectedFetchProxyHTTPClientIPv4(proxyURL *url.URL, getProtection func() (*common.SSRFProtection, bool, error), validateURL func(string) error) (*http.Client, error) {
+	return newProtectedFetchProxyHTTPClientWithFamily(proxyURL, getProtection, validateURL, true)
+}
+
+func newProtectedFetchProxyHTTPClientWithFamily(proxyURL *url.URL, getProtection func() (*common.SSRFProtection, bool, error), validateURL func(string) error, ipv4Only bool) (*http.Client, error) {
 	if proxyURL == nil {
 		return nil, fmt.Errorf("proxy URL is nil")
 	}
+	dialContext := (func(context.Context, string, string) (net.Conn, error))(nil)
+	if ipv4Only {
+		dialContext = dialIPv4Only
+	}
 	switch proxyURL.Scheme {
 	case "http", "https":
-		return newProtectedFetchHTTPClientWithProxyAndValidator(
+		return newProtectedFetchHTTPClientWithProxyAndValidatorMode(
 			nil,
-			nil,
+			dialContext,
 			getProtection,
 			http.ProxyURL(proxyURL),
 			validateURL,
+			ipv4Only,
 		), nil
 	case "socks5", "socks5h":
 		var auth *proxy.Auth
@@ -126,14 +144,18 @@ func newProtectedFetchProxyHTTPClient(proxyURL *url.URL, getProtection func() (*
 		if err != nil {
 			return nil, err
 		}
-		return newProtectedFetchHTTPClientWithProxyAndValidator(
+		return newProtectedFetchHTTPClientWithProxyAndValidatorMode(
 			nil,
 			func(ctx context.Context, network, address string) (net.Conn, error) {
+				if ipv4Only {
+					network = "tcp4"
+				}
 				return dialer.Dial(network, address)
 			},
 			getProtection,
 			func(req *http.Request) (*url.URL, error) { return nil, nil },
 			validateURL,
+			ipv4Only,
 		), nil
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s, must be http, https, socks5 or socks5h", proxyURL.Scheme)
@@ -149,6 +171,14 @@ func newProtectedFetchHTTPClientWithProxy(resolver ssrfResolver, dialContext fun
 }
 
 func newProtectedFetchHTTPClientWithProxyAndValidator(resolver ssrfResolver, dialContext func(ctx context.Context, network, address string) (net.Conn, error), getProtection func() (*common.SSRFProtection, bool, error), proxy func(*http.Request) (*url.URL, error), validateURL func(string) error) *http.Client {
+	return newProtectedFetchHTTPClientWithProxyAndValidatorMode(resolver, dialContext, getProtection, proxy, validateURL, false)
+}
+
+func newProtectedFetchHTTPClientWithProxyAndValidatorIPv4(resolver ssrfResolver, dialContext func(ctx context.Context, network, address string) (net.Conn, error), getProtection func() (*common.SSRFProtection, bool, error), proxy func(*http.Request) (*url.URL, error), validateURL func(string) error) *http.Client {
+	return newProtectedFetchHTTPClientWithProxyAndValidatorMode(resolver, dialContext, getProtection, proxy, validateURL, true)
+}
+
+func newProtectedFetchHTTPClientWithProxyAndValidatorMode(resolver ssrfResolver, dialContext func(ctx context.Context, network, address string) (net.Conn, error), getProtection func() (*common.SSRFProtection, bool, error), proxy func(*http.Request) (*url.URL, error), validateURL func(string) error, ipv4Only bool) *http.Client {
 	if resolver == nil {
 		resolver = net.DefaultResolver
 	}
@@ -158,6 +188,9 @@ func newProtectedFetchHTTPClientWithProxyAndValidator(resolver ssrfResolver, dia
 			KeepAlive: 30 * time.Second,
 		}
 		dialContext = netDialer.DialContext
+		if ipv4Only {
+			dialContext = dialIPv4Only
+		}
 	}
 	if getProtection == nil {
 		getProtection = currentFetchProtection
@@ -176,6 +209,7 @@ func newProtectedFetchHTTPClientWithProxyAndValidator(resolver ssrfResolver, dia
 			getProtection: getProtection,
 			proxy:         proxy,
 			validateURL:   validateURL,
+			ipv4Only:      ipv4Only,
 			transports:    make(map[string]*http.Transport),
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -186,6 +220,14 @@ func newProtectedFetchHTTPClientWithProxyAndValidator(resolver ssrfResolver, dia
 		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
 	}
 	return client
+}
+
+func dialIPv4Only(ctx context.Context, _ string, address string) (net.Conn, error) {
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	return dialer.DialContext(ctx, "tcp4", address)
 }
 
 func (t *ssrfProtectedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -243,6 +285,7 @@ func (t *ssrfProtectedRoundTripper) newTransport(proxyURL *url.URL) *http.Transp
 			resolver:      t.resolver,
 			dialContext:   t.dialContext,
 			getProtection: t.getProtection,
+			ipv4Only:      t.ipv4Only,
 		}
 		dialContext = protectedDialer.DialContext
 		proxyFunc = nil
@@ -284,6 +327,9 @@ func (d *protectedFetchDialer) DialContext(ctx context.Context, network, addr st
 	}
 
 	if ip := net.ParseIP(host); ip != nil {
+		if d.ipv4Only && ip.To4() == nil {
+			return nil, fmt.Errorf("IPv4-only fetch cannot dial IPv6 address %s", host)
+		}
 		return d.dialContext(ctx, network, net.JoinHostPort(ip.String(), portText))
 	}
 	if !protection.ApplyIPFilterForDomain {
@@ -303,6 +349,9 @@ func (d *protectedFetchDialer) DialContext(ctx context.Context, network, addr st
 	for _, ipAddr := range resolved {
 		ip := ipAddr.IP
 		if ip == nil || !networkAllowsIP(network, ip) {
+			continue
+		}
+		if d.ipv4Only && ip.To4() == nil {
 			continue
 		}
 		if err := protection.ValidateResolvedIP(host, ip); err != nil {

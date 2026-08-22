@@ -14,22 +14,31 @@ import (
 // provider result. A channel origin may use a non-standard port, but that
 // exception is bound to the exact configured channel origin below.
 func newVideoCacheHTTPClient(source VideoCacheSource) (*http.Client, error) {
+	getProtection := func() (*common.SSRFProtection, bool, error) {
+		return currentVideoCacheProtection(source)
+	}
 	if strings.TrimSpace(source.TrustedOrigin) == "" {
 		if strings.TrimSpace(source.Proxy) == "" {
-			return GetSSRFProtectedHTTPClient(), nil
+			return newProtectedFetchHTTPClientWithProxyAndValidatorIPv4(
+				nil,
+				nil,
+				getProtection,
+				http.ProxyFromEnvironment,
+				ValidateSSRFProtectedFetchURL,
+			), nil
 		}
-		return GetHttpClientWithProxy(source.Proxy)
+		proxyURL, _, err := common.ParseProxyURLRuntime(source.Proxy)
+		if err != nil {
+			return nil, fmt.Errorf("parse video cache proxy: %w", err)
+		}
+		return newProtectedFetchProxyHTTPClientIPv4(proxyURL, getProtection, ValidateSSRFProtectedFetchURL)
 	}
 
 	validateURL := func(rawURL string) error {
 		return validateVideoCacheFetchURL(source, rawURL)
 	}
-	getProtection := func() (*common.SSRFProtection, bool, error) {
-		return currentVideoCacheProtection(source)
-	}
-
 	if strings.TrimSpace(source.Proxy) == "" {
-		return newProtectedFetchHTTPClientWithProxyAndValidator(
+		return newProtectedFetchHTTPClientWithProxyAndValidatorIPv4(
 			nil,
 			nil,
 			getProtection,
@@ -42,7 +51,7 @@ func newVideoCacheHTTPClient(source VideoCacheSource) (*http.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse video cache proxy: %w", err)
 	}
-	return newProtectedFetchProxyHTTPClient(proxyURL, getProtection, validateURL)
+	return newProtectedFetchProxyHTTPClientIPv4(proxyURL, getProtection, validateURL)
 }
 
 func currentVideoCacheProtection(source VideoCacheSource) (*common.SSRFProtection, bool, error) {

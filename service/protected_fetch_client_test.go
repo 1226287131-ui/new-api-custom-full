@@ -204,6 +204,48 @@ func TestProtectedFetchDialerDialsWhenAllResolvedIPsAllowed(t *testing.T) {
 	require.Equal(t, []string{"8.8.8.8:443"}, dialed)
 }
 
+func TestProtectedFetchDialerIPv4OnlySkipsIPv6(t *testing.T) {
+	var dialed []string
+	dialer := &protectedFetchDialer{
+		resolver: staticSSRFResolver{
+			"cdn.example": {
+				{IP: net.ParseIP("2001:db8::10")},
+				{IP: net.ParseIP("8.8.8.8")},
+			},
+		},
+		dialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			dialed = append(dialed, address)
+			return testConn(t), nil
+		},
+		getProtection: staticProtection(&common.SSRFProtection{
+			AllowPrivateIp:         false,
+			DomainFilterMode:       false,
+			IpFilterMode:           false,
+			ApplyIPFilterForDomain: true,
+		}),
+		ipv4Only: true,
+	}
+
+	conn, err := dialer.DialContext(context.Background(), "tcp", "cdn.example:443")
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.Equal(t, []string{"8.8.8.8:443"}, dialed)
+}
+
+func TestProtectedFetchDialerIPv4OnlyRejectsLiteralIPv6(t *testing.T) {
+	dialer := &protectedFetchDialer{
+		dialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			t.Fatal("IPv4-only dialer must not dial a literal IPv6 address")
+			return nil, nil
+		},
+		getProtection: staticProtection(&common.SSRFProtection{AllowPrivateIp: true}),
+		ipv4Only:      true,
+	}
+	_, err := dialer.DialContext(context.Background(), "tcp", "[2001:db8::10]:443")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "IPv4-only")
+}
+
 func TestProtectedFetchDialerAllowsPrivateIPWhenWhitelisted(t *testing.T) {
 	var dialed []string
 	dialer := &protectedFetchDialer{
