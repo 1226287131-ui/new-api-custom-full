@@ -166,6 +166,7 @@ func TestResolveTaskBillingPriceMapsMiniMaxH3ArbitrarySizes(t *testing.T) {
 		wantTier  string
 		wantPrice float64
 	}{
+		{name: "documented medium widescreen size", size: "1280x736", wantTier: "768p", wantPrice: 0.04},
 		{name: "low custom size", size: "864x480", wantTier: "768p", wantPrice: 0.04},
 		{name: "high square size", size: "1024x1024", wantTier: "1080p", wantPrice: 0.072},
 		{name: "high widescreen size", size: "2208x960", wantTier: "1080p", wantPrice: 0.072},
@@ -181,6 +182,25 @@ func TestResolveTaskBillingPriceMapsMiniMaxH3ArbitrarySizes(t *testing.T) {
 			assert.Equal(t, testCase.wantPrice, selection.Price)
 		})
 	}
+}
+
+func TestResolveTaskBillingPriceRejectsUndocumentedMiniMaxH3Size(t *testing.T) {
+	saved := billingSetting.TaskBillingPricing
+	billingSetting.TaskBillingPricing = map[string]TaskBillingPriceConfig{
+		"MiniMax-H3": {
+			Mode: BillingModePerSecond,
+			ResolutionPrices: map[string]float64{
+				"768p":  0.04,
+				"1080p": 0.072,
+			},
+		},
+	}
+	t.Cleanup(func() { billingSetting.TaskBillingPricing = saved })
+
+	_, configured, err := ResolveTaskBillingPrice("MiniMax-H3", "1280x720")
+	require.Error(t, err)
+	assert.True(t, configured)
+	assert.Contains(t, err.Error(), "requires a configured resolution")
 }
 
 func TestResolveTaskBillingPriceUsesDefaultWithoutResolutionTable(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/samber/lo"
@@ -253,11 +254,9 @@ func NormalizeTaskBillingResolution(value string) string {
 }
 
 const (
-	miniMaxH3MinMegapixels      = 0.2
-	miniMaxH3LowMaxMegapixels   = 0.7
-	miniMaxH3SizeLowMegapixels  = 0.8
-	miniMaxH3HighMaxMegapixels  = 2.0
-	miniMaxH3SizeHighMegapixels = 2.2
+	miniMaxH3MinMegapixels     = 0.2
+	miniMaxH3LowMaxMegapixels  = 0.7
+	miniMaxH3HighMaxMegapixels = 2.0
 )
 
 // NormalizeTaskBillingResolutionForModel handles provider-specific quality
@@ -305,20 +304,13 @@ func normalizeMiniMaxH3Resolution(value string) (string, bool) {
 	if len(parts) != 2 {
 		return "", false
 	}
+	if tier, ok := constant.MiniMaxH3ResolutionTierForSize(normalized); ok {
+		return tier, true
+	}
 	width, widthErr := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
 	height, heightErr := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
 	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
 		return "", true
-	}
-	megapixels := width * height / 1_000_000
-	if megapixels < miniMaxH3MinMegapixels {
-		return "", true
-	}
-	if megapixels <= miniMaxH3SizeLowMegapixels {
-		return "768p", true
-	}
-	if megapixels <= miniMaxH3SizeHighMegapixels {
-		return "1080p", true
 	}
 	return "", true
 }
