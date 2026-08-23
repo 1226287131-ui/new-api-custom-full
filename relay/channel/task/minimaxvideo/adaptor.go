@@ -38,6 +38,7 @@ const (
 	maxReferenceVideos = 3
 	maxReferenceAudios = 3
 	firstLastFrameMode = "first_last_frame"
+	defaultWorkflowID  = "multi-reference"
 )
 
 var ModelList = []string{
@@ -62,7 +63,17 @@ var (
 var supportedTopLevelFields = map[string]struct{}{
 	"model": {}, "mode": {}, "prompt": {}, "prompt_enhance": {}, "seconds": {}, "duration": {},
 	"size": {}, "audio": {}, "metadata": {}, "resolution": {}, "clarity": {},
-	"aspect_ratio": {}, "megapixels": {},
+	"aspect_ratio": {}, "megapixels": {}, "workflow_id": {},
+}
+
+var supportedWorkflowIDs = map[string]struct{}{
+	"text-to-video":      {},
+	"multi-reference":    {},
+	"fl2v":               {},
+	"cf-multi-reference": {},
+	"cf-fl2v":            {},
+	"mj":                 {},
+	"cf-mj":              {},
 }
 
 var supportedSizes = map[string]struct{}{
@@ -142,6 +153,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_prompt", http.StatusBadRequest)
 	}
+	workflowID, err := normalizeWorkflowID(payload)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_workflow_id", http.StatusBadRequest)
+	}
 
 	duration, err := normalizeDuration(payload)
 	if err != nil {
@@ -169,7 +184,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := validateMediaURLs(media); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_reference_media", http.StatusBadRequest)
 	}
-	upstreamPayload := buildNormalizedJSONPayload(modelName, prompt, duration, size, media)
+	upstreamPayload := buildNormalizedJSONPayload(modelName, prompt, duration, size, workflowID, media)
 
 	requestMetadata := map[string]any{
 		"reference_image_count": media.imageCount(),
@@ -294,6 +309,7 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 		{name: "prompt", value: normalized.request.Prompt, set: true},
 		{name: "seconds", value: normalized.request.Seconds, set: true},
 		{name: "size", value: normalized.request.Size, set: true},
+		{name: "workflow_id", value: payloadStringValue(normalized.payload, "workflow_id"), set: true},
 	}
 	for _, field := range fields {
 		if field.set {
@@ -494,6 +510,22 @@ func validateMetadata(metadata map[string]any) error {
 	return nil
 }
 
+func normalizeWorkflowID(payload map[string]any) (string, error) {
+	value, provided := payload["workflow_id"]
+	if !provided || value == nil || strings.TrimSpace(payloadScalarString(value)) == "" {
+		return defaultWorkflowID, nil
+	}
+	workflowID, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("workflow_id must be a string")
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	if _, supported := supportedWorkflowIDs[workflowID]; !supported {
+		return "", fmt.Errorf("workflow_id must be one of text-to-video, multi-reference, fl2v, cf-multi-reference, cf-fl2v, mj, or cf-mj")
+	}
+	return workflowID, nil
+}
+
 func normalizeDuration(payload map[string]any) (int, error) {
 	durationValue, hasDuration := payload["duration"]
 	secondsValue, hasSeconds := payload["seconds"]
@@ -635,12 +667,13 @@ func parseAudio(payload, metadata map[string]any) (bool, error) {
 	return parsed, nil
 }
 
-func buildNormalizedJSONPayload(modelName, prompt string, duration int, size string, media mediaReferences) map[string]any {
+func buildNormalizedJSONPayload(modelName, prompt string, duration int, size, workflowID string, media mediaReferences) map[string]any {
 	payload := map[string]any{
-		"model":   modelName,
-		"prompt":  prompt,
-		"seconds": duration,
-		"size":    size,
+		"model":       modelName,
+		"prompt":      prompt,
+		"seconds":     duration,
+		"size":        size,
+		"workflow_id": workflowID,
 	}
 	if len(media.images) > 0 {
 		payload["images"] = media.images

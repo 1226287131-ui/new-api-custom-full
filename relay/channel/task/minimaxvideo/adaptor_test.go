@@ -72,11 +72,27 @@ func TestMiniMaxVideoBuildsStrictH3TextPayload(t *testing.T) {
 	info.UpstreamModelName = "minimax_h3"
 
 	assert.Equal(t, map[string]any{
-		"model":   "minimax_h3",
-		"prompt":  "清晨的海边公路",
-		"seconds": float64(8),
-		"size":    "1920x1088",
+		"model":       "minimax_h3",
+		"prompt":      "清晨的海边公路",
+		"seconds":     float64(8),
+		"size":        "1920x1088",
+		"workflow_id": "multi-reference",
 	}, readJSONBody(t, mustBuildBody(t, adaptor, c, info)))
+}
+
+func TestMiniMaxVideoPassesThroughWorkflowID(t *testing.T) {
+	c, adaptor, info := newMiniMaxVideoJSONContext(t, `{
+  "model": "MiniMax-H3",
+  "prompt": "首尾帧转场",
+  "seconds": 5,
+  "size": "1920x1088",
+  "workflow_id": "fl2v",
+  "images": ["https://example.com/first.png", "https://example.com/last.png"]
+}`)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
+	assert.Equal(t, "fl2v", upstream["workflow_id"])
 }
 
 func TestMiniMaxVideoStripsLegacyConflictingFields(t *testing.T) {
@@ -138,6 +154,11 @@ func TestMiniMaxVideoRequiresDocumentedSizeAndValidMediaURLs(t *testing.T) {
 			payload: `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"1920x1088","images":["blob:https://video.kkone.vip/id"]}`,
 			want:    "must be an HTTP or HTTPS URL",
 		},
+		{
+			name:    "invalid workflow",
+			payload: `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"1920x1088","workflow_id":"unknown"}`,
+			want:    "workflow_id must be one of",
+		},
 	}
 
 	for _, testCase := range tests {
@@ -158,6 +179,7 @@ func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {
 	require.NoError(t, writer.WriteField("prompt", "参考图片生成视频"))
 	require.NoError(t, writer.WriteField("duration", "12"))
 	require.NoError(t, writer.WriteField("size", "1920x1088"))
+	require.NoError(t, writer.WriteField("workflow_id", "mj"))
 	require.NoError(t, writer.WriteField("audio", "true"))
 	require.NoError(t, writer.WriteField("images", "https://example.com/person.png"))
 	require.NoError(t, writer.Close())
@@ -179,6 +201,7 @@ func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {
 
 	assert.Equal(t, []string{"12"}, form.Value["seconds"])
 	assert.Equal(t, []string{"1920x1088"}, form.Value["size"])
+	assert.Equal(t, []string{"mj"}, form.Value["workflow_id"])
 	assert.Equal(t, []string{"https://example.com/person.png"}, form.Value["images"])
 	assert.NotContains(t, form.Value, "duration")
 	assert.NotContains(t, form.Value, "audio")

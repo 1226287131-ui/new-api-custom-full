@@ -20,6 +20,7 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 import z from 'zod'
 
 import { UsageLogs } from '@/features/usage-logs'
+import { LOG_TYPE_ENUM } from '@/features/usage-logs/constants'
 import {
   isUsageLogsSectionId,
   USAGE_LOGS_DEFAULT_SECTION,
@@ -57,6 +58,24 @@ export const Route = createFileRoute('/_authenticated/usage-logs/$section')({
         params: { section: USAGE_LOGS_DEFAULT_SECTION },
       })
     }
+
+    if (params.section === 'error') {
+      const fixedType = String(LOG_TYPE_ENUM.ERROR)
+      const hasErrorType = Array.isArray(search?.type)
+        ? search.type.length === 1 && search.type[0] === fixedType
+        : search?.type === fixedType
+
+      if (!hasErrorType) {
+        throw redirect({
+          to: '/usage-logs/$section',
+          params: { section: params.section },
+          search: { ...search, type: [fixedType] },
+          replace: true,
+        })
+      }
+      return
+    }
+
     // type 仅 common 使用，非 common 时清掉 URL 里的 type
     const hasTypeSearch = Array.isArray(search?.type)
       ? search.type.length > 0

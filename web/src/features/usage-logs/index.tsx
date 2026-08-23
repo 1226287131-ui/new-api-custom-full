@@ -53,6 +53,9 @@ const SECTION_META: Record<UsageLogsSectionId, { titleKey: string }> = {
   task: {
     titleKey: 'Task Logs',
   },
+  error: {
+    titleKey: 'Error Logs',
+  },
 }
 
 function UsageLogsContent() {
@@ -117,10 +120,12 @@ function UsageLogsContent() {
     [setViewScope]
   )
 
-  const pageMeta =
-    activeCategory === 'common' ? SECTION_META.common : SECTION_META.task
+  const pageMeta = SECTION_META[activeCategory]
   const showTaskSwitcher =
-    activeCategory !== 'common' && visibleSections.length > 1
+    activeCategory !== 'common' &&
+    activeCategory !== 'error' &&
+    visibleSections.length > 1
+  const tableCategory = activeCategory === 'error' ? 'common' : activeCategory
 
   return (
     <>
@@ -152,7 +157,7 @@ function UsageLogsContent() {
               </Tabs>
             )}
             <div className='min-h-0 flex-1'>
-              <UsageLogsTable logCategory={activeCategory} />
+              <UsageLogsTable logCategory={tableCategory} />
             </div>
           </div>
         </SectionPageLayout.Content>

@@ -38,7 +38,11 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
+import {
+  LOG_TYPE_ALL_VALUE,
+  LOG_TYPE_ENUM,
+  LOG_TYPE_FILTERS,
+} from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
@@ -115,10 +119,16 @@ export function CommonLogsFilterBar<TData>(
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const params = route.useParams()
   const searchParams = route.useSearch()
   const { isAdminView: isAdmin } = useLogsViewScope()
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
+  const currentSection = params.section === 'error' ? 'error' : 'common'
+  const fixedLogType: LogTypeValue | null =
+    currentSection === 'error'
+      ? (String(LOG_TYPE_ENUM.ERROR) as LogTypeValue)
+      : null
 
   const searchState = useMemo<CommonLogDraft>(() => {
     const { start, end } = getDefaultTimeRange()
@@ -168,7 +178,7 @@ export function CommonLogsFilterBar<TData>(
   const activeDraft =
     draft.sourceKey === searchState.sourceKey ? draft : searchState
   const filters = activeDraft.filters
-  const logType = activeDraft.logType
+  const logType = fixedLogType ?? activeDraft.logType
 
   const handleChange = useCallback(
     (field: keyof CommonLogFilters, value: Date | string | undefined) => {
@@ -187,36 +197,38 @@ export function CommonLogsFilterBar<TData>(
 
   const handleApply = useCallback(() => {
     const filterParams = buildSearchParams(filters, 'common')
+    const nextType = fixedLogType ?? logType
     navigate({
       to: '/usage-logs/$section',
-      params: { section: 'common' },
+      params: { section: currentSection },
       search: {
         ...filterParams,
-        type: [logType],
+        type: [nextType],
         page: 1,
       },
     })
     queryClient.invalidateQueries({ queryKey: ['logs'] })
     queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
-  }, [filters, logType, navigate, queryClient])
+  }, [currentSection, fixedLogType, filters, logType, navigate, queryClient])
 
   const handleReset = useCallback(() => {
     const { start, end } = getDefaultTimeRange()
     const resetFilters: CommonLogFilters = { startTime: start, endTime: end }
+    const nextType = fixedLogType ?? LOG_TYPE_ALL_VALUE
     const resetSearch = {
-      type: [LOG_TYPE_ALL_VALUE],
+      type: [nextType],
       startTime: start.getTime(),
       endTime: end.getTime(),
     }
     setDraft({
       sourceKey: buildSearchSourceKey(resetSearch),
       filters: resetFilters,
-      logType: LOG_TYPE_ALL_VALUE,
+      logType: nextType,
     })
 
     navigate({
       to: '/usage-logs/$section',
-      params: { section: 'common' },
+      params: { section: currentSection },
       search: {
         page: 1,
         ...resetSearch,
@@ -224,7 +236,7 @@ export function CommonLogsFilterBar<TData>(
     })
     queryClient.invalidateQueries({ queryKey: ['logs'] })
     queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
-  }, [navigate, queryClient])
+  }, [currentSection, fixedLogType, navigate, queryClient])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -240,7 +252,8 @@ export function CommonLogsFilterBar<TData>(
     !!filters.requestId ||
     !!filters.upstreamRequestId
 
-  const hasTypeFilter = logType !== LOG_TYPE_ALL_VALUE
+  const hasTypeFilter =
+    currentSection !== 'error' && logType !== LOG_TYPE_ALL_VALUE
   const hasAdditionalFilters =
     !!filters.model || !!filters.group || hasTypeFilter || hasExpandedFilters
 
@@ -322,42 +335,45 @@ export function CommonLogsFilterBar<TData>(
       />
     </LogsFilterField>
   )
-  const typeFilter = (
-    <LogsFilterField>
-      <Select
-        items={logTypeItems}
-        value={logType}
-        onValueChange={(value) => {
-          const nextLogType =
-            value !== null && isLogTypeValue(value) ? value : LOG_TYPE_ALL_VALUE
-          setDraft((current) => {
-            const base =
-              current.sourceKey === searchState.sourceKey
-                ? current
-                : searchState
-            return {
-              sourceKey: searchState.sourceKey,
-              filters: base.filters,
-              logType: nextLogType,
-            }
-          })
-        }}
-      >
-        <SelectTrigger>
-          <SelectValue>{logTypeLabel}</SelectValue>
-        </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false}>
-          <SelectGroup>
-            {LOG_TYPE_FILTERS.map((type) => (
-              <SelectItem key={type.value} value={type.value}>
-                {t(type.label)}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-    </LogsFilterField>
-  )
+  const typeFilter =
+    currentSection === 'error' ? null : (
+      <LogsFilterField>
+        <Select
+          items={logTypeItems}
+          value={logType}
+          onValueChange={(value) => {
+            const nextLogType =
+              value !== null && isLogTypeValue(value)
+                ? value
+                : LOG_TYPE_ALL_VALUE
+            setDraft((current) => {
+              const base =
+                current.sourceKey === searchState.sourceKey
+                  ? current
+                  : searchState
+              return {
+                sourceKey: searchState.sourceKey,
+                filters: base.filters,
+                logType: nextLogType,
+              }
+            })
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue>{logTypeLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {LOG_TYPE_FILTERS.map((type) => (
+                <SelectItem key={type.value} value={type.value}>
+                  {t(type.label)}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </LogsFilterField>
+    )
   const advancedFilters = (
     <>
       <LogsFilterField>

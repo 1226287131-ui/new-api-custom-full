@@ -483,6 +483,7 @@ export const STATIC_I18N_KEYS = [
   'Usage Logs',
   'API usage records',
   'Drawing Logs',
+  'Error Logs',
   'Drawing task records',
   'Task Logs',
   'System task records',
