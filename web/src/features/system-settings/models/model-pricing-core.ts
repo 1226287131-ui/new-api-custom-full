@@ -264,12 +264,14 @@ export function buildPreviewRows(
       const resolutionRows = (['480p', '720p', '768p', '1080p', '1440p', '4k'] as const)
         .filter((resolution) => taskResolutionPrices[resolution])
         .map((resolution) => {
-          const label =
-            resolution === '4k'
-              ? '4K'
-              : resolution === '768p'
-                ? '768P'
-                : resolution
+          let label: string = resolution
+          if (resolution === '4k') {
+            label = '4K'
+          } else if (resolution === '1440p') {
+            label = '2K'
+          } else if (resolution === '768p') {
+            label = '768P'
+          }
           return `${label}: $${taskResolutionPrices[resolution]} / ${t(
             mode === 'per-second' ? 'second' : 'request'
           )}`

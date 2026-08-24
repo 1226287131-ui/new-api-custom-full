@@ -234,11 +234,12 @@ func ScheduledDiscountMultiplier(model string, at time.Time) float64 {
 // NormalizeTaskBillingResolution keeps request aliases and size strings
 // stable so a price table can be shared by all video task adaptors.
 func NormalizeTaskBillingResolution(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "×", "x")))
+	value = strings.NewReplacer(" ", "", "_", "", "-", "").Replace(value)
 	switch value {
-	case "4k", "2160p", "3840x2160", "2160x3840", "2160x2160":
+	case "4k", "2160p", "2160", "4096p", "4096", "2160x2160":
 		return "4k"
-	case "1440p", "3360x1440", "2560x1440", "1920x1440", "1440x1440", "1440x1920", "1440x2560":
+	case "2k", "1440p", "1440", "2048p", "2048", "1920x1440", "1440x1920", "1440x1440":
 		return "1440p"
 	case "1080p", "1920x1080", "1080x1920", "1792x1024", "1024x1792", "1080x1080":
 		return "1080p"
@@ -248,9 +249,33 @@ func NormalizeTaskBillingResolution(value string) string {
 		return "720p"
 	case "480p", "854x480", "480x854":
 		return "480p"
-	default:
+	}
+
+	parts := strings.Split(value, "x")
+	if len(parts) != 2 {
 		return value
 	}
+	width, widthErr := strconv.Atoi(parts[0])
+	height, heightErr := strconv.Atoi(parts[1])
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return value
+	}
+	longer, shorter := width, height
+	if shorter > longer {
+		longer, shorter = shorter, longer
+	}
+
+	// 4K covers UHD, DCI, scope, and common ultrawide 4K variants. Keep the
+	// range bounded so 5K/8K requests cannot be charged as 4K by mistake.
+	if longer >= 3840 && longer <= 4096 && shorter >= 1600 && shorter <= 2304 {
+		return "4k"
+	}
+	// 2K covers DCI 2K plus QHD/WQHD/QHD+ families. The internal pricing key
+	// remains 1440p for backward-compatible saved pricing configurations.
+	if longer >= 1998 && longer <= 3440 && shorter >= 858 && shorter <= 1800 {
+		return "1440p"
+	}
+	return value
 }
 
 const (

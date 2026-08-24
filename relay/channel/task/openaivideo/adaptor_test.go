@@ -130,6 +130,69 @@ func TestBuildRequestBodyMapsLegacySecondsAndSize(t *testing.T) {
 	assert.NotContains(t, upstreamPayload, "image")
 }
 
+func TestBuildRequestBodyAccepts2KAnd4KSizeAliases(t *testing.T) {
+	tests := []struct {
+		name              string
+		size              string
+		wantResolution    string
+		wantCanonicalSize string
+		wantBillingTier   string
+	}{
+		{name: "2K", size: "2K", wantResolution: "2k", wantCanonicalSize: "2560x1440", wantBillingTier: "1440p"},
+		{name: "4K", size: "4K", wantResolution: "4k", wantCanonicalSize: "3840x2160", wantBillingTier: "4k"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			upstreamPayload, c, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
+				"model":  "seedance-2.0",
+				"prompt": "animate this",
+				"size":   testCase.size,
+			})
+
+			assert.Equal(t, "16:9", upstreamPayload["ratio"])
+			assert.Equal(t, testCase.wantResolution, upstreamPayload["resolution"])
+			request, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantCanonicalSize, request.Size)
+			assert.Equal(t, testCase.wantBillingTier, request.BillingResolution)
+		})
+	}
+}
+
+func TestBuildRequestBodyMapsStandard2KAnd4KSizes(t *testing.T) {
+	tests := []struct {
+		name            string
+		size            string
+		wantRatio       string
+		wantResolution  string
+		wantBillingTier string
+	}{
+		{name: "DCI 2K", size: "2048×1080", wantRatio: "16:9", wantResolution: "2k", wantBillingTier: "1440p"},
+		{name: "2K scope", size: "2048x858", wantRatio: "21:9", wantResolution: "2k", wantBillingTier: "1440p"},
+		{name: "QHD", size: "2560x1440", wantRatio: "16:9", wantResolution: "2k", wantBillingTier: "1440p"},
+		{name: "ultrawide 2K", size: "3440x1440", wantRatio: "21:9", wantResolution: "2k", wantBillingTier: "1440p"},
+		{name: "UHD", size: "3840x2160", wantRatio: "16:9", wantResolution: "4k", wantBillingTier: "4k"},
+		{name: "DCI 4K scope", size: "4096x1716", wantRatio: "21:9", wantResolution: "4k", wantBillingTier: "4k"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			upstreamPayload, c, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
+				"model":  "seedance-2.0",
+				"prompt": "animate this",
+				"size":   testCase.size,
+			})
+
+			assert.Equal(t, testCase.wantRatio, upstreamPayload["ratio"])
+			assert.Equal(t, testCase.wantResolution, upstreamPayload["resolution"])
+			request, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantBillingTier, request.BillingResolution)
+		})
+	}
+}
+
 func TestBuildRequestBodySupportsSeedanceReferenceAliasesAndAspectRatio(t *testing.T) {
 	upstreamPayload, _, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
 		"model":                "seedance-2.0",
@@ -217,6 +280,8 @@ func TestQYSeedance25RejectsUnsupportedCompatibilityValues(t *testing.T) {
 		{name: "reference video duration above 18", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "duration": 19, "videos": []string{"https://videos.example/reference.mp4"}}, code: "invalid_duration"},
 		{name: "frame with images", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "images": []string{"https://images.example/reference.png"}, "start_frame_url": "https://images.example/start.png"}, code: "invalid_frame_parameters"},
 		{name: "end frame without start", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "end_frame_url": "https://images.example/end.png"}, code: "invalid_frame_parameters"},
+		{name: "2K is unsupported", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "size": "2K"}, code: "invalid_video_format"},
+		{name: "4K is unsupported", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "size": "3840x2160"}, code: "invalid_video_format"},
 		{name: "seed below zero", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "seed": -1}, code: "invalid_video_parameters"},
 		{name: "grid strength above 0.5", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "grid_strength": 0.51}, code: "invalid_video_parameters"},
 	}

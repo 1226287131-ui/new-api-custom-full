@@ -584,8 +584,11 @@ func normalizeSize(payload map[string]any) (string, error) {
 	if size == "" {
 		return "", fmt.Errorf("size field is required")
 	}
-	if _, supported := constant.MiniMaxH3ResolutionTierForSize(size); !supported {
-		return "", fmt.Errorf("size must be one of the documented MiniMax-H3 dimensions")
+	if _, supported := constant.MiniMaxH3ResolutionTierForSize(size); supported {
+		return size, nil
+	}
+	if normalizeStandardH3BillingResolution(size) == "" {
+		return "", fmt.Errorf("size must be a documented MiniMax-H3 dimension or a standard video resolution")
 	}
 	return size, nil
 }

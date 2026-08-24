@@ -56,12 +56,30 @@ func TestResolveH3BillingResolutionRecognizesStandardAliases(t *testing.T) {
 		"768p":      h3BillingResolution768,
 		"1920x1080": h3BillingResolution1080,
 		"2K":        "1440p",
-		"3840x2160": "4k",
+		"4K":        "4k",
 	}
 
 	for value, want := range tests {
 		got, err := resolveH3BillingResolution(value, "", "", 0, false)
 		require.NoErrorf(t, err, "value %s", value)
 		assert.Equalf(t, want, got, "value %s", value)
+	}
+}
+
+func TestResolveH3BillingResolutionRecognizesStandard2KAnd4KSizes(t *testing.T) {
+	tests := map[string]string{
+		"2048x1080": "1440p",
+		"2048x858":  "1440p",
+		"2560x1600": "1440p",
+		"3440x1440": "1440p",
+		"4096x2160": "4k",
+		"4096x1716": "4k",
+		"3840x1600": "4k",
+	}
+
+	for size, want := range tests {
+		got, err := resolveH3BillingResolution("", "", size, 0, false)
+		require.NoErrorf(t, err, "size %s", size)
+		assert.Equalf(t, want, got, "size %s", size)
 	}
 }

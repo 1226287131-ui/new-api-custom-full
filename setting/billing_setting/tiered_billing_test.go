@@ -147,6 +147,54 @@ func TestResolveTaskBillingPriceByResolutionOnly(t *testing.T) {
 	assert.Equal(t, "1440p", selection.Resolution)
 }
 
+func TestResolveTaskBillingPriceRecognizesStandard2KAnd4KSizes(t *testing.T) {
+	saved := billingSetting.TaskBillingPricing
+	billingSetting.TaskBillingPricing = map[string]TaskBillingPriceConfig{
+		"video-standard-resolutions": {
+			Mode: BillingModePerSecond,
+			ResolutionPrices: map[string]float64{
+				"1440p": 0.1,
+				"4k":    0.16,
+			},
+		},
+	}
+	t.Cleanup(func() { billingSetting.TaskBillingPricing = saved })
+
+	tests := []struct {
+		name       string
+		resolution string
+		wantTier   string
+		wantPrice  float64
+	}{
+		{name: "2K alias", resolution: "2K", wantTier: "1440p", wantPrice: 0.1},
+		{name: "2K DCI", resolution: "2048x1080", wantTier: "1440p", wantPrice: 0.1},
+		{name: "2K scope", resolution: "858×2048", wantTier: "1440p", wantPrice: 0.1},
+		{name: "QHD", resolution: "2560x1440", wantTier: "1440p", wantPrice: 0.1},
+		{name: "ultrawide 2K", resolution: "2560x1080", wantTier: "1440p", wantPrice: 0.1},
+		{name: "QHD plus", resolution: "3200x1800", wantTier: "1440p", wantPrice: 0.1},
+		{name: "ultrawide QHD", resolution: "3440x1440", wantTier: "1440p", wantPrice: 0.1},
+		{name: "legacy 1440p portrait", resolution: "1440x1920", wantTier: "1440p", wantPrice: 0.1},
+		{name: "4K alias", resolution: "4K", wantTier: "4k", wantPrice: 0.16},
+		{name: "UHD", resolution: "3840x2160", wantTier: "4k", wantPrice: 0.16},
+		{name: "DCI 4K", resolution: "4096x2160", wantTier: "4k", wantPrice: 0.16},
+		{name: "4K scope", resolution: "1716x4096", wantTier: "4k", wantPrice: 0.16},
+		{name: "ultrawide 4K", resolution: "3840x1600", wantTier: "4k", wantPrice: 0.16},
+		{name: "legacy 4K square", resolution: "2160x2160", wantTier: "4k", wantPrice: 0.16},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			selection, configured, err := ResolveTaskBillingPrice("video-standard-resolutions", testCase.resolution)
+			require.NoError(t, err)
+			assert.True(t, configured)
+			assert.Equal(t, testCase.wantTier, selection.Resolution)
+			assert.Equal(t, testCase.wantPrice, selection.Price)
+		})
+	}
+
+	assert.Equal(t, "7680x4320", NormalizeTaskBillingResolution("7680x4320"))
+}
+
 func TestResolveTaskBillingPriceMapsMiniMaxH3AndStandardSizes(t *testing.T) {
 	saved := billingSetting.TaskBillingPricing
 	billingSetting.TaskBillingPricing = map[string]TaskBillingPriceConfig{

@@ -51,6 +51,7 @@ export const TASK_RESOLUTION_TIERS = [
 
 export function formatTaskResolutionLabel(tier: TaskResolution): string {
   if (tier === '4k') return '4K'
+  if (tier === '1440p') return '2K'
   if (tier === '768p') return '768P'
   return tier
 }

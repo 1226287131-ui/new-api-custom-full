@@ -133,7 +133,7 @@ func TestMiniMaxVideoStripsLegacyConflictingFields(t *testing.T) {
 	}
 }
 
-func TestMiniMaxVideoRequiresDocumentedSizeAndValidMediaURLs(t *testing.T) {
+func TestMiniMaxVideoRequiresRecognizedSizeAndValidMediaURLs(t *testing.T) {
 	tests := []struct {
 		name    string
 		payload string
@@ -146,8 +146,8 @@ func TestMiniMaxVideoRequiresDocumentedSizeAndValidMediaURLs(t *testing.T) {
 		},
 		{
 			name:    "unsupported size",
-			payload: `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"1920x1080"}`,
-			want:    "documented MiniMax-H3 dimensions",
+			payload: `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"1280x736"}`,
+			want:    "documented MiniMax-H3 dimension or a standard video resolution",
 		},
 		{
 			name:    "invalid reference",
@@ -176,6 +176,36 @@ func TestMiniMaxVideoCanonicalizesDocumentedSize(t *testing.T) {
 	size, err := normalizeSize(map[string]any{"size": "1920 × 1088"})
 	require.NoError(t, err)
 	assert.Equal(t, "1920x1088", size)
+}
+
+func TestMiniMaxVideoAcceptsStandard2KAnd4KSizes(t *testing.T) {
+	tests := []struct {
+		name           string
+		size           string
+		normalizedSize string
+		billingTier    string
+	}{
+		{name: "2K alias", size: "2K", normalizedSize: "2k", billingTier: "1440p"},
+		{name: "4K alias", size: "4K", normalizedSize: "4k", billingTier: "4k"},
+		{name: "2K DCI", size: "2048×858", normalizedSize: "2048x858", billingTier: "1440p"},
+		{name: "4K DCI", size: "4096x1716", normalizedSize: "4096x1716", billingTier: "4k"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"` + testCase.size + `"}`
+			c, adaptor, info := newMiniMaxVideoJSONContext(t, payload)
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+			request, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.normalizedSize, request.Size)
+			assert.Equal(t, testCase.billingTier, request.BillingResolution)
+
+			upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
+			assert.Equal(t, testCase.normalizedSize, upstream["size"])
+		})
+	}
 }
 
 func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {

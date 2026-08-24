@@ -124,6 +124,7 @@ function emptyTaskResolutionPrices(): Record<TaskResolution, string> {
 
 function formatTaskResolutionLabel(resolution: TaskResolution): string {
   if (resolution === '4k') return '4K'
+  if (resolution === '1440p') return '2K'
   if (resolution === '768p') return '768P'
   return resolution
 }

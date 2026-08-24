@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 )
 
 const (
@@ -121,22 +122,11 @@ func classifyH3Megapixels(value float64) (string, error) {
 }
 
 func normalizeStandardH3BillingResolution(value string) string {
-	switch value {
-	case "480p", "480", "854x480", "480x854":
-		return h3BillingResolution480
-	case "720p", "720", "1280x720", "720x1280":
-		return "720p"
-	case "768p", "768", "1366x768", "768x1366", "1280x768", "768x1280":
-		return h3BillingResolution768
-	case "1080p", "1080", "1920x1080", "1080x1920", "1792x1024", "1024x1792", "1080x1080":
-		return h3BillingResolution1080
-	case "2k", "1440p", "1440", "3360x1440", "2560x1440", "1920x1440", "1440x1440", "1440x1920", "1440x2560":
-		return "1440p"
-	case "4k", "2160p", "3840x2160", "2160x3840", "2160x2160":
-		return "4k"
-	default:
-		return ""
+	switch tier := billing_setting.NormalizeTaskBillingResolution(value); tier {
+	case "480p", "720p", "768p", "1080p", "1440p", "4k":
+		return tier
 	}
+	return ""
 }
 
 func classifyH3Size(value string) (string, bool, error) {
@@ -145,6 +135,9 @@ func classifyH3Size(value string) (string, bool, error) {
 		return "", false, nil
 	}
 	if tier, ok := constant.MiniMaxH3ResolutionTierForSize(normalized); ok {
+		return tier, true, nil
+	}
+	if tier := normalizeStandardH3BillingResolution(normalized); tier != "" {
 		return tier, true, nil
 	}
 	parts := strings.Split(normalized, "x")

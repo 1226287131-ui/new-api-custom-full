@@ -24,6 +24,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -382,12 +383,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 
 	request := relaycommon.TaskSubmitReq{
-		Model:    modelName,
-		Prompt:   prompt,
-		Images:   images,
-		Duration: duration,
-		Seconds:  strconv.Itoa(duration),
-		Size:     size,
+		Model:             modelName,
+		Prompt:            prompt,
+		Images:            images,
+		Duration:          duration,
+		Seconds:           strconv.Itoa(duration),
+		Size:              size,
+		BillingResolution: billing_setting.NormalizeTaskBillingResolution(resolution),
 		Metadata: map[string]any{
 			"videos":        videos,
 			"audios":        audios,
@@ -838,6 +840,8 @@ func normalizeVideoFormat(payload map[string]any, profile videoProfile) (string,
 			switch strings.ToLower(payloadString(payload, "quality")) {
 			case "4k":
 				resolution = "4k"
+			case "2k":
+				resolution = "2k"
 			case "1080p", "high":
 				resolution = "1080p"
 			default:
@@ -855,7 +859,7 @@ func normalizeVideoFormat(payload map[string]any, profile videoProfile) (string,
 		return "", "", "", fmt.Errorf("ratio must be one of 21:9, 16:9, 4:3, 1:1, 3:4, or 9:16")
 	}
 	if profile.forceResolution == "" && !isSupportedProfileResolution(resolution, profile) {
-		return "", "", "", fmt.Errorf("resolution must be one of 480p, 720p, or 1080p")
+		return "", "", "", fmt.Errorf("resolution must be one of 480p, 720p, 1080p, 2K, or 4K")
 	}
 	return ratio, resolution, canonicalSize(ratio, resolution), nil
 }
@@ -881,7 +885,7 @@ func isSupportedProfileResolution(resolution string, profile videoProfile) bool 
 		}
 		return false
 	}
-	return resolution == "480p" || resolution == "720p" || resolution == "1080p"
+	return resolution == "480p" || resolution == "720p" || resolution == "1080p" || resolution == "2k" || resolution == "4k"
 }
 
 func isSupportedVideoRatio(ratio string, allowAuto bool) bool {
@@ -904,9 +908,14 @@ func videoFormatFromSize(size string, profile videoProfile) (string, string, err
 		}
 		return ratio, profile.forceResolution, nil
 	}
-	switch strings.ToLower(strings.TrimSpace(size)) {
+	normalizedSize := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(size, "×", "x")))
+	switch normalizedSize {
+	case "2k":
+		return "16:9", "2k", nil
+	case "4k":
+		return "16:9", "4k", nil
 	case "854x480", "480x854":
-		return map[string]string{"854x480": "16:9", "480x854": "9:16"}[strings.ToLower(strings.TrimSpace(size))], "480p", nil
+		return map[string]string{"854x480": "16:9", "480x854": "9:16"}[normalizedSize], "480p", nil
 	case "1280x720":
 		return "16:9", "720p", nil
 	case "720x1280":
@@ -919,10 +928,9 @@ func videoFormatFromSize(size string, profile videoProfile) (string, string, err
 		return "9:16", "1080p", nil
 	default:
 		if len(profile.allowedResolutions) > 0 {
-			ratio, err := ratioFromSize(size)
+			ratio, err := ratioFromSize(normalizedSize)
 			if err == nil {
-				normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(size, "×", "x")))
-				parts := strings.Split(normalized, "x")
+				parts := strings.Split(normalizedSize, "x")
 				if len(parts) == 2 {
 					width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
 					height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
@@ -940,9 +948,66 @@ func videoFormatFromSize(size string, profile videoProfile) (string, string, err
 					}
 				}
 			}
+			return "", "", fmt.Errorf("size is not supported")
+		}
+		billingResolution := billing_setting.NormalizeTaskBillingResolution(normalizedSize)
+		if billingResolution == "1440p" {
+			ratio, err := nearestSupportedRatioFromSize(normalizedSize)
+			if err != nil {
+				return "", "", err
+			}
+			return ratio, "2k", nil
+		}
+		if billingResolution == "4k" {
+			ratio, err := nearestSupportedRatioFromSize(normalizedSize)
+			if err != nil {
+				return "", "", err
+			}
+			return ratio, "4k", nil
 		}
 		return "", "", fmt.Errorf("size is not supported")
 	}
+}
+
+// nearestSupportedRatioFromSize keeps the generic OpenAI Video contract on
+// its documented ratio enum when a common DCI or ultrawide 2K/4K size has a
+// ratio that is not represented exactly by that enum.
+func nearestSupportedRatioFromSize(size string) (string, error) {
+	if ratio, err := ratioFromSize(size); err == nil {
+		return ratio, nil
+	}
+
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("size must use the widthxheight format")
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return "", fmt.Errorf("size must use positive width and height")
+	}
+
+	requestedRatio := float64(width) / float64(height)
+	closestRatio := ""
+	closestDistance := math.MaxFloat64
+	for _, candidate := range []struct {
+		name  string
+		value float64
+	}{
+		{name: "21:9", value: 21.0 / 9.0},
+		{name: "16:9", value: 16.0 / 9.0},
+		{name: "4:3", value: 4.0 / 3.0},
+		{name: "1:1", value: 1},
+		{name: "3:4", value: 3.0 / 4.0},
+		{name: "9:16", value: 9.0 / 16.0},
+	} {
+		distance := math.Abs(requestedRatio - candidate.value)
+		if distance < closestDistance {
+			closestRatio = candidate.name
+			closestDistance = distance
+		}
+	}
+	return closestRatio, nil
 }
 
 func ratioFromSize(size string) (string, error) {
@@ -992,6 +1057,10 @@ func canonicalSize(ratio, resolution string) string {
 		height = 480
 	case "1080p":
 		height = 1080
+	case "2k":
+		height = 1440
+	case "4k":
+		height = 2160
 	}
 	width := height
 	switch ratio {
