@@ -78,12 +78,14 @@ func VideoCacheSourceForTask(task *model.Task, channel *model.Channel) (VideoCac
 		// an unrelated host.
 		headers = make(http.Header)
 	}
+	channelSetting := channel.GetSetting()
 	return VideoCacheSource{
-		URL:           candidate,
-		DataURL:       dataURL,
-		Headers:       headers,
-		Proxy:         channel.GetSetting().Proxy,
-		TrustedOrigin: baseURL,
+		URL:               candidate,
+		DataURL:           dataURL,
+		Headers:           headers,
+		Proxy:             channelSetting.Proxy,
+		UseDedicatedProxy: channelSetting.VideoCacheProxyEnabled,
+		TrustedOrigin:     baseURL,
 	}, nil
 }
 

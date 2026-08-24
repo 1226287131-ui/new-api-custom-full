@@ -58,12 +58,14 @@ func newVideoCacheHTTPClient(source VideoCacheSource) (*http.Client, error) {
 	return newProtectedFetchProxyHTTPClientIPv4(parsedProxyURL, getProtection, validateURL)
 }
 
-// videoCacheProxy resolves a download-only proxy. VIDEO_CACHE_PROXY takes
-// precedence over a channel proxy, so caching can use a dedicated egress
-// without changing task submission or status polling routes.
+// videoCacheProxy resolves a download-only proxy. A channel must explicitly
+// opt in before VIDEO_CACHE_PROXY is used, keeping domestic channels on their
+// normal direct or channel-proxy download path.
 func videoCacheProxy(source VideoCacheSource) string {
-	if configured := strings.TrimSpace(os.Getenv(videoCacheProxyEnv)); configured != "" {
-		return configured
+	if source.UseDedicatedProxy {
+		if configured := strings.TrimSpace(os.Getenv(videoCacheProxyEnv)); configured != "" {
+			return configured
+		}
 	}
 	return strings.TrimSpace(source.Proxy)
 }

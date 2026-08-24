@@ -56,11 +56,12 @@ func CachedVideoPath(taskID string) (string, bool) {
 // VideoCacheSource describes one authenticated or inline video source.
 // Exactly one of URL and DataURL should normally be set.
 type VideoCacheSource struct {
-	URL           string
-	DataURL       string
-	Headers       http.Header
-	Proxy         string
-	TrustedOrigin string // configured channel origin; never taken from user input
+	URL               string
+	DataURL           string
+	Headers           http.Header
+	Proxy             string
+	UseDedicatedProxy bool
+	TrustedOrigin     string // configured channel origin; never taken from user input
 }
 
 // CacheVideoSource stores a remote or data URL video in the local cache.

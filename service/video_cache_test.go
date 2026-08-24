@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,15 +49,25 @@ func TestVideoCacheProxyPrefersDedicatedDownloadProxy(t *testing.T) {
 	t.Setenv(videoCacheProxyEnv, "socks5h://video-egress:1080")
 
 	assert.Equal(t, "socks5h://video-egress:1080", videoCacheProxy(VideoCacheSource{
-		Proxy: "http://channel-proxy.example:8080",
+		Proxy:             "http://channel-proxy.example:8080",
+		UseDedicatedProxy: true,
 	}))
 }
 
-func TestVideoCacheProxyFallsBackToChannelProxy(t *testing.T) {
-	t.Setenv(videoCacheProxyEnv, "")
+func TestVideoCacheProxyKeepsUnselectedChannelOnItsOwnProxy(t *testing.T) {
+	t.Setenv(videoCacheProxyEnv, "socks5h://video-egress:1080")
 
 	assert.Equal(t, "http://channel-proxy.example:8080", videoCacheProxy(VideoCacheSource{
 		Proxy: " http://channel-proxy.example:8080 ",
+	}))
+}
+
+func TestVideoCacheProxyFallsBackToChannelProxyWhenDedicatedEgressIsUnavailable(t *testing.T) {
+	t.Setenv(videoCacheProxyEnv, "")
+
+	assert.Equal(t, "http://channel-proxy.example:8080", videoCacheProxy(VideoCacheSource{
+		Proxy:             " http://channel-proxy.example:8080 ",
+		UseDedicatedProxy: true,
 	}))
 }
 
@@ -314,6 +325,23 @@ func TestVideoCacheSourceForTaskUsesContentEndpointAndBearer(t *testing.T) {
 	assert.Equal(t, "https://upstream.example/v1/videos/provider-task/content", source.URL)
 	assert.Equal(t, "Bearer provider-key", source.Headers.Get("Authorization"))
 	assert.Equal(t, baseURL, source.TrustedOrigin)
+}
+
+func TestVideoCacheSourceForTaskPropagatesDedicatedProxySelection(t *testing.T) {
+	baseURL := "https://upstream.example"
+	task := &model.Task{
+		TaskID: "task_public",
+		PrivateData: model.TaskPrivateData{
+			Key:            "provider-key",
+			UpstreamTaskID: "provider-task",
+		},
+	}
+	channel := &model.Channel{Type: constant.ChannelTypeSora, Key: "channel-key", BaseURL: &baseURL}
+	channel.SetSetting(dto.ChannelSettings{VideoCacheProxyEnabled: true})
+
+	source, err := VideoCacheSourceForTask(task, channel)
+	require.NoError(t, err)
+	assert.True(t, source.UseDedicatedProxy)
 }
 
 func TestVideoCacheSourceForTaskDoesNotSendCredentialsToExternalResultURL(t *testing.T) {
