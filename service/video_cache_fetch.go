@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 )
+
+const videoCacheProxyEnv = "VIDEO_CACHE_PROXY"
 
 // newVideoCacheHTTPClient creates the protected client used for a task's
 // provider result. A channel origin may use a non-standard port, but that
@@ -17,8 +20,9 @@ func newVideoCacheHTTPClient(source VideoCacheSource) (*http.Client, error) {
 	getProtection := func() (*common.SSRFProtection, bool, error) {
 		return currentVideoCacheProtection(source)
 	}
+	proxyURL := videoCacheProxy(source)
 	if strings.TrimSpace(source.TrustedOrigin) == "" {
-		if strings.TrimSpace(source.Proxy) == "" {
+		if proxyURL == "" {
 			return newProtectedFetchHTTPClientWithProxyAndValidatorIPv4(
 				nil,
 				nil,
@@ -27,17 +31,17 @@ func newVideoCacheHTTPClient(source VideoCacheSource) (*http.Client, error) {
 				ValidateSSRFProtectedFetchURL,
 			), nil
 		}
-		proxyURL, _, err := common.ParseProxyURLRuntime(source.Proxy)
+		parsedProxyURL, _, err := common.ParseProxyURLRuntime(proxyURL)
 		if err != nil {
 			return nil, fmt.Errorf("parse video cache proxy: %w", err)
 		}
-		return newProtectedFetchProxyHTTPClientIPv4(proxyURL, getProtection, ValidateSSRFProtectedFetchURL)
+		return newProtectedFetchProxyHTTPClientIPv4(parsedProxyURL, getProtection, ValidateSSRFProtectedFetchURL)
 	}
 
 	validateURL := func(rawURL string) error {
 		return validateVideoCacheFetchURL(source, rawURL)
 	}
-	if strings.TrimSpace(source.Proxy) == "" {
+	if proxyURL == "" {
 		return newProtectedFetchHTTPClientWithProxyAndValidatorIPv4(
 			nil,
 			nil,
@@ -47,11 +51,21 @@ func newVideoCacheHTTPClient(source VideoCacheSource) (*http.Client, error) {
 		), nil
 	}
 
-	proxyURL, _, err := common.ParseProxyURLRuntime(source.Proxy)
+	parsedProxyURL, _, err := common.ParseProxyURLRuntime(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse video cache proxy: %w", err)
 	}
-	return newProtectedFetchProxyHTTPClientIPv4(proxyURL, getProtection, validateURL)
+	return newProtectedFetchProxyHTTPClientIPv4(parsedProxyURL, getProtection, validateURL)
+}
+
+// videoCacheProxy resolves a download-only proxy. VIDEO_CACHE_PROXY takes
+// precedence over a channel proxy, so caching can use a dedicated egress
+// without changing task submission or status polling routes.
+func videoCacheProxy(source VideoCacheSource) string {
+	if configured := strings.TrimSpace(os.Getenv(videoCacheProxyEnv)); configured != "" {
+		return configured
+	}
+	return strings.TrimSpace(source.Proxy)
 }
 
 func currentVideoCacheProtection(source VideoCacheSource) (*common.SSRFProtection, bool, error) {

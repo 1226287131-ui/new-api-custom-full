@@ -44,6 +44,22 @@ func TestResolveVideoResultURL(t *testing.T) {
 	assert.Equal(t, "/api/video.mp4", ResolveVideoResultURL("not-a-url", "/api/video.mp4"))
 }
 
+func TestVideoCacheProxyPrefersDedicatedDownloadProxy(t *testing.T) {
+	t.Setenv(videoCacheProxyEnv, "socks5h://video-egress:1080")
+
+	assert.Equal(t, "socks5h://video-egress:1080", videoCacheProxy(VideoCacheSource{
+		Proxy: "http://channel-proxy.example:8080",
+	}))
+}
+
+func TestVideoCacheProxyFallsBackToChannelProxy(t *testing.T) {
+	t.Setenv(videoCacheProxyEnv, "")
+
+	assert.Equal(t, "http://channel-proxy.example:8080", videoCacheProxy(VideoCacheSource{
+		Proxy: " http://channel-proxy.example:8080 ",
+	}))
+}
+
 func TestVideoResultURLFailureReason(t *testing.T) {
 	assert.Equal(t,
 		"upstream video generation returned no final video URL",
