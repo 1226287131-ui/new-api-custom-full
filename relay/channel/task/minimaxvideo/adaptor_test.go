@@ -183,12 +183,15 @@ func TestMiniMaxVideoAcceptsStandard2KAnd4KSizes(t *testing.T) {
 		name           string
 		size           string
 		normalizedSize string
+		upstreamSize   string
 		billingTier    string
 	}{
-		{name: "2K alias", size: "2K", normalizedSize: "2k", billingTier: "1440p"},
-		{name: "4K alias", size: "4K", normalizedSize: "4k", billingTier: "4k"},
-		{name: "2K DCI", size: "2048×858", normalizedSize: "2048x858", billingTier: "1440p"},
-		{name: "4K DCI", size: "4096x1716", normalizedSize: "4096x1716", billingTier: "4k"},
+		{name: "2K uppercase alias", size: "2K", normalizedSize: "2k", upstreamSize: "2K", billingTier: "1440p"},
+		{name: "2K lowercase alias", size: "2k", normalizedSize: "2k", upstreamSize: "2K", billingTier: "1440p"},
+		{name: "4K uppercase alias", size: "4K", normalizedSize: "4k", upstreamSize: "4K", billingTier: "4k"},
+		{name: "4K lowercase alias", size: "4k", normalizedSize: "4k", upstreamSize: "4K", billingTier: "4k"},
+		{name: "2K DCI", size: "2048×858", normalizedSize: "2048x858", upstreamSize: "2048x858", billingTier: "1440p"},
+		{name: "4K DCI", size: "4096x1716", normalizedSize: "4096x1716", upstreamSize: "4096x1716", billingTier: "4k"},
 	}
 
 	for _, testCase := range tests {
@@ -203,7 +206,7 @@ func TestMiniMaxVideoAcceptsStandard2KAnd4KSizes(t *testing.T) {
 			assert.Equal(t, testCase.billingTier, request.BillingResolution)
 
 			upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
-			assert.Equal(t, testCase.normalizedSize, upstream["size"])
+			assert.Equal(t, testCase.upstreamSize, upstream["size"])
 		})
 	}
 }
@@ -214,7 +217,7 @@ func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {
 	require.NoError(t, writer.WriteField("model", "MiniMax-H3"))
 	require.NoError(t, writer.WriteField("prompt", "参考图片生成视频"))
 	require.NoError(t, writer.WriteField("duration", "12"))
-	require.NoError(t, writer.WriteField("size", "1920x1088"))
+	require.NoError(t, writer.WriteField("size", "2k"))
 	require.NoError(t, writer.WriteField("workflow_id", "mj"))
 	require.NoError(t, writer.WriteField("audio", "true"))
 	require.NoError(t, writer.WriteField("images", "https://example.com/person.png"))
@@ -236,7 +239,7 @@ func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {
 	defer form.RemoveAll()
 
 	assert.Equal(t, []string{"12"}, form.Value["seconds"])
-	assert.Equal(t, []string{"1920x1088"}, form.Value["size"])
+	assert.Equal(t, []string{"2K"}, form.Value["size"])
 	assert.Equal(t, []string{"mj"}, form.Value["workflow_id"])
 	assert.Equal(t, []string{"https://example.com/person.png"}, form.Value["images"])
 	assert.NotContains(t, form.Value, "duration")

@@ -297,7 +297,7 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 		{name: "model", value: taskcommon.DefaultString(info.UpstreamModelName, normalized.request.Model), set: true},
 		{name: "prompt", value: normalized.request.Prompt, set: true},
 		{name: "seconds", value: normalized.request.Seconds, set: true},
-		{name: "size", value: normalized.request.Size, set: true},
+		{name: "size", value: canonicalMiniMaxUpstreamSize(normalized.request.Size), set: true},
 		{name: "workflow_id", value: payloadStringValue(normalized.payload, "workflow_id"), set: true},
 	}
 	for _, field := range fields {
@@ -665,7 +665,7 @@ func buildNormalizedJSONPayload(modelName, prompt string, duration int, size, wo
 		"model":       modelName,
 		"prompt":      prompt,
 		"seconds":     duration,
-		"size":        size,
+		"size":        canonicalMiniMaxUpstreamSize(size),
 		"workflow_id": workflowID,
 	}
 	if len(media.images) > 0 {
@@ -678,6 +678,19 @@ func buildNormalizedJSONPayload(modelName, prompt string, duration int, size, wo
 		payload["reference_audios"] = media.audios
 	}
 	return payload
+}
+
+// canonicalMiniMaxUpstreamSize preserves MiniMax's case-sensitive 2K and 4K enums.
+// Internal task metadata stays lowercase so it continues to match billing tiers.
+func canonicalMiniMaxUpstreamSize(size string) string {
+	switch strings.ToLower(strings.TrimSpace(size)) {
+	case "2k":
+		return "2K"
+	case "4k":
+		return "4K"
+	default:
+		return size
+	}
 }
 
 func collectMedia(payload, metadata map[string]any, form *multipart.Form) (mediaReferences, error) {
