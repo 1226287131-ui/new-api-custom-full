@@ -147,14 +147,18 @@ func TestResolveTaskBillingPriceByResolutionOnly(t *testing.T) {
 	assert.Equal(t, "1440p", selection.Resolution)
 }
 
-func TestResolveTaskBillingPriceMapsMiniMaxH3ArbitrarySizes(t *testing.T) {
+func TestResolveTaskBillingPriceMapsMiniMaxH3AndStandardSizes(t *testing.T) {
 	saved := billingSetting.TaskBillingPricing
 	billingSetting.TaskBillingPricing = map[string]TaskBillingPriceConfig{
 		"MiniMax-H3": {
 			Mode: BillingModePerSecond,
 			ResolutionPrices: map[string]float64{
+				"480p":  0.02,
+				"720p":  0.03,
 				"768p":  0.04,
 				"1080p": 0.072,
+				"1440p": 0.1,
+				"4k":    0.16,
 			},
 		},
 	}
@@ -166,11 +170,25 @@ func TestResolveTaskBillingPriceMapsMiniMaxH3ArbitrarySizes(t *testing.T) {
 		wantTier  string
 		wantPrice float64
 	}{
-		{name: "documented medium widescreen size", size: "1280x736", wantTier: "768p", wantPrice: 0.04},
-		{name: "low custom size", size: "864x480", wantTier: "768p", wantPrice: 0.04},
-		{name: "high square size", size: "1024x1024", wantTier: "1080p", wantPrice: 0.072},
+		{name: "documented 480p size", size: "864x480", wantTier: "480p", wantPrice: 0.02},
+		{name: "documented 768p square size", size: "1024x1024", wantTier: "768p", wantPrice: 0.04},
 		{name: "high widescreen size", size: "2208x960", wantTier: "1080p", wantPrice: 0.072},
 		{name: "high portrait size", size: "1920x1088", wantTier: "1080p", wantPrice: 0.072},
+		{name: "standard 720p size", size: "1280x720", wantTier: "720p", wantPrice: 0.03},
+		{name: "standard 1080p size", size: "1920x1080", wantTier: "1080p", wantPrice: 0.072},
+		{name: "standard 2k size", size: "2560x1440", wantTier: "1440p", wantPrice: 0.1},
+		{name: "standard 4k size", size: "3840x2160", wantTier: "4k", wantPrice: 0.16},
+		{name: "standard 480p alias", size: "480p", wantTier: "480p", wantPrice: 0.02},
+		{name: "standard 720p alias", size: "720p", wantTier: "720p", wantPrice: 0.03},
+		{name: "standard 768p alias", size: "768p", wantTier: "768p", wantPrice: 0.04},
+		{name: "standard 1080p alias", size: "1080p", wantTier: "1080p", wantPrice: 0.072},
+		{name: "standard 2k alias", size: "2k", wantTier: "1440p", wantPrice: 0.1},
+		{name: "standard 4k alias", size: "4k", wantTier: "4k", wantPrice: 0.16},
+		{name: "numeric 480p alias", size: "480", wantTier: "480p", wantPrice: 0.02},
+		{name: "numeric 720p alias", size: "720", wantTier: "720p", wantPrice: 0.03},
+		{name: "numeric 1080p alias", size: "1080", wantTier: "1080p", wantPrice: 0.072},
+		{name: "numeric 2k alias", size: "1440", wantTier: "1440p", wantPrice: 0.1},
+		{name: "numeric 4k alias", size: "2160", wantTier: "4k", wantPrice: 0.16},
 	}
 
 	for _, testCase := range tests {
@@ -184,7 +202,7 @@ func TestResolveTaskBillingPriceMapsMiniMaxH3ArbitrarySizes(t *testing.T) {
 	}
 }
 
-func TestResolveTaskBillingPriceRejectsUndocumentedMiniMaxH3Size(t *testing.T) {
+func TestResolveTaskBillingPriceRejectsUnknownMiniMaxH3Size(t *testing.T) {
 	saved := billingSetting.TaskBillingPricing
 	billingSetting.TaskBillingPricing = map[string]TaskBillingPriceConfig{
 		"MiniMax-H3": {
@@ -197,7 +215,7 @@ func TestResolveTaskBillingPriceRejectsUndocumentedMiniMaxH3Size(t *testing.T) {
 	}
 	t.Cleanup(func() { billingSetting.TaskBillingPricing = saved })
 
-	_, configured, err := ResolveTaskBillingPrice("MiniMax-H3", "1280x720")
+	_, configured, err := ResolveTaskBillingPrice("MiniMax-H3", "10000x10000")
 	require.Error(t, err)
 	assert.True(t, configured)
 	assert.Contains(t, err.Error(), "requires a configured resolution")

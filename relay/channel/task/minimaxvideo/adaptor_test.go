@@ -172,6 +172,12 @@ func TestMiniMaxVideoRequiresDocumentedSizeAndValidMediaURLs(t *testing.T) {
 	}
 }
 
+func TestMiniMaxVideoCanonicalizesDocumentedSize(t *testing.T) {
+	size, err := normalizeSize(map[string]any{"size": "1920 × 1088"})
+	require.NoError(t, err)
+	assert.Equal(t, "1920x1088", size)
+}
+
 func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)

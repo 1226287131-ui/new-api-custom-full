@@ -26,6 +26,7 @@ import (
 )
 
 const (
+	h3BillingResolution480  = constant.MiniMaxH3Resolution480P
 	h3BillingResolution768  = constant.MiniMaxH3Resolution768P
 	h3BillingResolution1080 = constant.MiniMaxH3Resolution1080P
 
@@ -36,10 +37,9 @@ const (
 	h3HighMaxMegapixels = 2.0
 )
 
-// resolveH3BillingResolution converts MiniMax H3's many quality/size
-// representations into the two local price tiers. It only returns the
-// internal billing tier; the original request fields remain untouched for the
-// upstream payload.
+// resolveH3BillingResolution converts MiniMax H3 quality and size values into
+// local billing tiers. It only returns the internal billing tier; the original
+// request fields remain untouched for the upstream payload.
 func resolveH3BillingResolution(
 	resolution, clarity, size string,
 	megapixels float64, megapixelsProvided bool,
@@ -79,10 +79,16 @@ func classifyH3QualityValue(value string) (string, bool, error) {
 	normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "×", "x")))
 	normalized = strings.NewReplacer(" ", "", "_", "", "-", "").Replace(normalized)
 	switch normalized {
-	case "480p", "480", "720p", "720", "768p", "768", "low", "medium", "standard":
+	case "low", "medium", "standard":
 		return h3BillingResolution768, true, nil
-	case "1080p", "1080", "2k", "1440p", "1440", "4k", "high":
+	case "high":
 		return h3BillingResolution1080, true, nil
+	}
+	if tier, ok := constant.MiniMaxH3ResolutionTierForSize(normalized); ok {
+		return tier, true, nil
+	}
+	if tier := normalizeStandardH3BillingResolution(normalized); tier != "" {
+		return tier, true, nil
 	}
 
 	if strings.HasSuffix(normalized, "mp") {
@@ -112,6 +118,25 @@ func classifyH3Megapixels(value float64) (string, error) {
 		return h3BillingResolution1080, nil
 	}
 	return "", fmt.Errorf("megapixels %.4g exceeds the supported H3 high-quality band", value)
+}
+
+func normalizeStandardH3BillingResolution(value string) string {
+	switch value {
+	case "480p", "480", "854x480", "480x854":
+		return h3BillingResolution480
+	case "720p", "720", "1280x720", "720x1280":
+		return "720p"
+	case "768p", "768", "1366x768", "768x1366", "1280x768", "768x1280":
+		return h3BillingResolution768
+	case "1080p", "1080", "1920x1080", "1080x1920", "1792x1024", "1024x1792", "1080x1080":
+		return h3BillingResolution1080
+	case "2k", "1440p", "1440", "3360x1440", "2560x1440", "1920x1440", "1440x1440", "1440x1920", "1440x2560":
+		return "1440p"
+	case "4k", "2160p", "3840x2160", "2160x3840", "2160x2160":
+		return "4k"
+	default:
+		return ""
+	}
 }
 
 func classifyH3Size(value string) (string, bool, error) {

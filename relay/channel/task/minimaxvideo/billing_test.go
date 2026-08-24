@@ -1,7 +1,6 @@
 package minimaxvideo
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,39 +8,60 @@ import (
 )
 
 func TestResolveH3BillingResolutionUsesDocumentedSizeTiers(t *testing.T) {
-	lowTierSizes := make(map[string]struct{})
-	for _, size := range strings.Fields(`
-		448x448 576x576 640x640 736x736 800x800 864x864 928x928 960x960
-		384x576 448x672 544x800 576x896 640x960 704x1056 736x1120 800x1184
-		576x384 672x448 800x544 896x576 960x640 1056x704 1120x736 1184x800
-		384x544 480x640 576x736 640x832 672x928 736x992 800x1056 832x1120
-		544x384 640x480 736x576 832x640 928x672 992x736 1056x800 1120x832
-		352x608 416x736 480x864 544x960 608x1056 640x1152 672x1216 736x1280
-		608x352 736x416 864x480 960x544 1056x608 1152x640 1216x672 1280x736
-		704x288 864x352 992x416 1120x480 1216x512 1312x576 1408x608 1472x640
-	`) {
-		lowTierSizes[size] = struct{}{}
+	tests := map[string]string{
+		"864x480":   h3BillingResolution480,
+		"480x864":   h3BillingResolution480,
+		"640x640":   h3BillingResolution480,
+		"544x800":   h3BillingResolution480,
+		"800x544":   h3BillingResolution480,
+		"576x736":   h3BillingResolution480,
+		"736x576":   h3BillingResolution480,
+		"992x416":   h3BillingResolution480,
+		"1376x768":  h3BillingResolution768,
+		"768x1376":  h3BillingResolution768,
+		"1024x1024": h3BillingResolution768,
+		"832x1248":  h3BillingResolution768,
+		"1248x832":  h3BillingResolution768,
+		"896x1184":  h3BillingResolution768,
+		"1184x896":  h3BillingResolution768,
+		"1568x672":  h3BillingResolution768,
+		"1920x1088": h3BillingResolution1080,
+		"1088x1920": h3BillingResolution1080,
+		"1440x1440": h3BillingResolution1080,
+		"1184x1760": h3BillingResolution1080,
+		"1760x1184": h3BillingResolution1080,
+		"1248x1664": h3BillingResolution1080,
+		"1664x1248": h3BillingResolution1080,
+		"2208x960":  h3BillingResolution1080,
 	}
-	require.Len(t, lowTierSizes, 64)
-	require.Len(t, supportedSizes, 109)
+	require.Len(t, tests, 24)
 
-	for size := range supportedSizes {
-		want := h3BillingResolution1080
-		if _, lowTier := lowTierSizes[size]; lowTier {
-			want = h3BillingResolution768
-		}
+	for size, want := range tests {
 		got, err := resolveH3BillingResolution("", "", size, 0, false)
 		require.NoErrorf(t, err, "size %s", size)
 		assert.Equalf(t, want, got, "size %s", size)
 	}
-
-	got, err := resolveH3BillingResolution("", "", "1280x736", 0, false)
-	require.NoError(t, err)
-	assert.Equal(t, h3BillingResolution768, got)
 }
 
 func TestResolveH3BillingResolutionRejectsUndocumentedPixelSize(t *testing.T) {
-	_, err := resolveH3BillingResolution("", "", "1280x720", 0, false)
+	_, err := resolveH3BillingResolution("", "", "1280x736", 0, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "documented MiniMax-H3 dimensions")
+}
+
+func TestResolveH3BillingResolutionRecognizesStandardAliases(t *testing.T) {
+	tests := map[string]string{
+		"480p":      h3BillingResolution480,
+		"1280x720":  "720p",
+		"768p":      h3BillingResolution768,
+		"1920x1080": h3BillingResolution1080,
+		"2K":        "1440p",
+		"3840x2160": "4k",
+	}
+
+	for value, want := range tests {
+		got, err := resolveH3BillingResolution(value, "", "", 0, false)
+		require.NoErrorf(t, err, "value %s", value)
+		assert.Equalf(t, want, got, "value %s", value)
+	}
 }

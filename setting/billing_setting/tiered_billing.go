@@ -280,11 +280,30 @@ func isMiniMaxH3Model(model string) bool {
 func normalizeMiniMaxH3Resolution(value string) (string, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "×", "x")))
 	normalized = strings.NewReplacer(" ", "", "_", "", "-", "").Replace(normalized)
+	if tier, ok := constant.MiniMaxH3ResolutionTierForSize(normalized); ok {
+		return tier, true
+	}
+	switch tier := NormalizeTaskBillingResolution(normalized); tier {
+	case "480p", "720p", "768p", "1080p", "1440p", "4k":
+		return tier, true
+	}
 	switch normalized {
-	case "480p", "480", "720p", "720", "768p", "768", "low", "medium", "standard":
-		return "768p", true
-	case "1080p", "1080", "2k", "1440p", "1440", "4k", "high":
+	case "2k":
+		return "1440p", true
+	case "480":
+		return "480p", true
+	case "720":
+		return "720p", true
+	case "1080":
 		return "1080p", true
+	case "1440":
+		return "1440p", true
+	case "2160":
+		return "4k", true
+	case "low", "medium", "standard":
+		return constant.MiniMaxH3Resolution768P, true
+	case "high":
+		return constant.MiniMaxH3Resolution1080P, true
 	}
 
 	if strings.HasSuffix(normalized, "mp") {
@@ -303,9 +322,6 @@ func normalizeMiniMaxH3Resolution(value string) (string, bool) {
 	parts := strings.Split(normalized, "x")
 	if len(parts) != 2 {
 		return "", false
-	}
-	if tier, ok := constant.MiniMaxH3ResolutionTierForSize(normalized); ok {
-		return tier, true
 	}
 	width, widthErr := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
 	height, heightErr := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
