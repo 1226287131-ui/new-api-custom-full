@@ -107,7 +107,6 @@ func TestMiniMaxVideoStripsLegacyConflictingFields(t *testing.T) {
   "prompt_enhance": true,
   "resolution": "1080p",
   "clarity": "high",
-  "aspect_ratio": "9:16",
   "megapixels": 2,
   "metadata": {"multiple": 16},
   "input_reference": "https://example.com/person.png",
@@ -127,7 +126,7 @@ func TestMiniMaxVideoStripsLegacyConflictingFields(t *testing.T) {
 	}, upstream["reference_audios"])
 	for _, field := range []string{
 		"duration", "audio", "mode", "prompt_enhance", "resolution", "clarity",
-		"aspect_ratio", "megapixels", "metadata", "reference_video_audios",
+		"megapixels", "metadata", "reference_video_audios",
 	} {
 		assert.NotContains(t, upstream, field)
 	}
@@ -159,6 +158,11 @@ func TestMiniMaxVideoRequiresRecognizedSizeAndValidMediaURLs(t *testing.T) {
 			payload: `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"1920x1088","workflow_id":"unknown"}`,
 			want:    "workflow_id must be one of",
 		},
+		{
+			name:    "missing super resolution aspect ratio",
+			payload: `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"4K","workflow_id":"cf-multi-reference"}`,
+			want:    "aspect_ratio is required when size is 2K or 4K",
+		},
 	}
 
 	for _, testCase := range tests {
@@ -185,11 +189,12 @@ func TestMiniMaxVideoAcceptsStandard2KAnd4KSizes(t *testing.T) {
 		normalizedSize string
 		upstreamSize   string
 		billingTier    string
+		aspectRatio    string
 	}{
-		{name: "2K uppercase alias", size: "2K", normalizedSize: "2k", upstreamSize: "2K", billingTier: "1440p"},
-		{name: "2K lowercase alias", size: "2k", normalizedSize: "2k", upstreamSize: "2K", billingTier: "1440p"},
-		{name: "4K uppercase alias", size: "4K", normalizedSize: "4k", upstreamSize: "4K", billingTier: "4k"},
-		{name: "4K lowercase alias", size: "4k", normalizedSize: "4k", upstreamSize: "4K", billingTier: "4k"},
+		{name: "2K uppercase alias", size: "2K", normalizedSize: "2k", upstreamSize: "2K", billingTier: "1440p", aspectRatio: "16:9"},
+		{name: "2K lowercase alias", size: "2k", normalizedSize: "2k", upstreamSize: "2K", billingTier: "1440p", aspectRatio: "16:9"},
+		{name: "4K uppercase alias", size: "4K", normalizedSize: "4k", upstreamSize: "4K", billingTier: "4k", aspectRatio: "9:16"},
+		{name: "4K lowercase alias", size: "4k", normalizedSize: "4k", upstreamSize: "4K", billingTier: "4k", aspectRatio: "9:16"},
 		{name: "2K DCI", size: "2048×858", normalizedSize: "2048x858", upstreamSize: "2048x858", billingTier: "1440p"},
 		{name: "4K DCI", size: "4096x1716", normalizedSize: "4096x1716", upstreamSize: "4096x1716", billingTier: "4k"},
 	}
@@ -197,6 +202,9 @@ func TestMiniMaxVideoAcceptsStandard2KAnd4KSizes(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			payload := `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"` + testCase.size + `"}`
+			if testCase.aspectRatio != "" {
+				payload = `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"` + testCase.size + `","aspect_ratio":"` + testCase.aspectRatio + `"}`
+			}
 			c, adaptor, info := newMiniMaxVideoJSONContext(t, payload)
 			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 
@@ -207,6 +215,11 @@ func TestMiniMaxVideoAcceptsStandard2KAnd4KSizes(t *testing.T) {
 
 			upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
 			assert.Equal(t, testCase.upstreamSize, upstream["size"])
+			if testCase.aspectRatio != "" {
+				assert.Equal(t, testCase.aspectRatio, upstream["aspect_ratio"])
+			} else {
+				assert.NotContains(t, upstream, "aspect_ratio")
+			}
 		})
 	}
 }
@@ -219,6 +232,7 @@ func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {
 	require.NoError(t, writer.WriteField("duration", "12"))
 	require.NoError(t, writer.WriteField("size", "2k"))
 	require.NoError(t, writer.WriteField("workflow_id", "mj"))
+	require.NoError(t, writer.WriteField("aspect_ratio", "16:9"))
 	require.NoError(t, writer.WriteField("audio", "true"))
 	require.NoError(t, writer.WriteField("images", "https://example.com/person.png"))
 	require.NoError(t, writer.Close())
@@ -241,6 +255,7 @@ func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {
 	assert.Equal(t, []string{"12"}, form.Value["seconds"])
 	assert.Equal(t, []string{"2K"}, form.Value["size"])
 	assert.Equal(t, []string{"mj"}, form.Value["workflow_id"])
+	assert.Equal(t, []string{"16:9"}, form.Value["aspect_ratio"])
 	assert.Equal(t, []string{"https://example.com/person.png"}, form.Value["images"])
 	assert.NotContains(t, form.Value, "duration")
 	assert.NotContains(t, form.Value, "audio")

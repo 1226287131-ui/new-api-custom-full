@@ -155,6 +155,17 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_size", http.StatusBadRequest)
 	}
+	aspectRatio, aspectRatioProvided, err := normalizeAspectRatio(payload, nil)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_aspect_ratio", http.StatusBadRequest)
+	}
+	if isMiniMaxSuperResolutionSize(size) && !aspectRatioProvided {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("aspect_ratio is required when size is 2K or 4K"),
+			"missing_aspect_ratio",
+			http.StatusBadRequest,
+		)
+	}
 	billingResolution, err := resolveH3BillingResolution("", "", size, 0, false)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
@@ -173,13 +184,16 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := validateMediaURLs(media); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_reference_media", http.StatusBadRequest)
 	}
-	upstreamPayload := buildNormalizedJSONPayload(modelName, prompt, duration, size, workflowID, media)
+	upstreamPayload := buildNormalizedJSONPayload(modelName, prompt, duration, size, aspectRatio, workflowID, media)
 
 	requestMetadata := map[string]any{
 		"reference_image_count": media.imageCount(),
 		"reference_video_count": media.videoCount(),
 		"reference_audio_count": media.audioCount(),
 		"size":                  size,
+	}
+	if aspectRatioProvided {
+		requestMetadata["aspect_ratio"] = aspectRatio
 	}
 
 	request := relaycommon.TaskSubmitReq{
@@ -289,6 +303,7 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 		return nil
 	}
 
+	aspectRatio := payloadStringValue(normalized.payload, "aspect_ratio")
 	fields := []struct {
 		name  string
 		value string
@@ -299,6 +314,7 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 		{name: "seconds", value: normalized.request.Seconds, set: true},
 		{name: "size", value: canonicalMiniMaxUpstreamSize(normalized.request.Size), set: true},
 		{name: "workflow_id", value: payloadStringValue(normalized.payload, "workflow_id"), set: true},
+		{name: "aspect_ratio", value: aspectRatio, set: aspectRatio != ""},
 	}
 	for _, field := range fields {
 		if field.set {
@@ -660,13 +676,16 @@ func parseAudio(payload, metadata map[string]any) (bool, error) {
 	return parsed, nil
 }
 
-func buildNormalizedJSONPayload(modelName, prompt string, duration int, size, workflowID string, media mediaReferences) map[string]any {
+func buildNormalizedJSONPayload(modelName, prompt string, duration int, size, aspectRatio, workflowID string, media mediaReferences) map[string]any {
 	payload := map[string]any{
 		"model":       modelName,
 		"prompt":      prompt,
 		"seconds":     duration,
 		"size":        canonicalMiniMaxUpstreamSize(size),
 		"workflow_id": workflowID,
+	}
+	if aspectRatio != "" {
+		payload["aspect_ratio"] = aspectRatio
 	}
 	if len(media.images) > 0 {
 		payload["images"] = media.images
@@ -690,6 +709,15 @@ func canonicalMiniMaxUpstreamSize(size string) string {
 		return "4K"
 	default:
 		return size
+	}
+}
+
+func isMiniMaxSuperResolutionSize(size string) bool {
+	switch strings.ToLower(strings.TrimSpace(size)) {
+	case "2k", "4k":
+		return true
+	default:
+		return false
 	}
 }
 
