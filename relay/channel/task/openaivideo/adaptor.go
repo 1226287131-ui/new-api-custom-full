@@ -560,6 +560,19 @@ func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error
 			result.Progress = taskcommon.ProgressInProgress
 		}
 	case "success", "succeeded", "completed":
+		// Some OpenAI-video-compatible providers expose the completed media
+		// only as metadata.url. It is intentionally considered only after a
+		// terminal-success status, because metadata may contain input assets
+		// while a task is still queued or running.
+		if result.Url == "" {
+			for _, value := range []map[string]any{raw, data} {
+				metadata, _ := value["metadata"].(map[string]any)
+				if candidate := firstString(metadata, "result_url", "video_url", "download_url", "file_url", "output_url", "url"); candidate != "" {
+					result.Url = candidate
+					break
+				}
+			}
+		}
 		if (errorCode != "" || errorMessage != "") && result.Url == "" {
 			result.Status = model.TaskStatusFailure
 			result.Reason = errorMessage

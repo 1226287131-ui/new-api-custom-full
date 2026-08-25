@@ -681,6 +681,28 @@ func TestParseTaskResultHandlesNestedResultAndIgnoresInputURL(t *testing.T) {
 	assert.Equal(t, "https://videos.example/final.mp4", completed.Url)
 }
 
+func TestParseTaskResultUsesCompletedMetadataURL(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+
+	queued, err := adaptor.ParseTaskResult([]byte(`{
+		"id":"task_upstream",
+		"status":"queued",
+		"metadata":{"url":"https://videos.example/not-ready.mp4"}
+	}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusQueued, queued.Status)
+	assert.Empty(t, queued.Url)
+
+	completed, err := adaptor.ParseTaskResult([]byte(`{
+		"id":"task_upstream",
+		"status":"completed",
+		"metadata":{"url":"https://videos.example/final.mp4"}
+	}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSuccess, completed.Status)
+	assert.Equal(t, "https://videos.example/final.mp4", completed.Url)
+}
+
 func TestParseTaskResultHandlesStatusesAndErrors(t *testing.T) {
 	tests := []struct {
 		name   string
