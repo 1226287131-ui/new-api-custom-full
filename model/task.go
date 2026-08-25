@@ -342,7 +342,9 @@ func GetRecentSuccessfulVideoTasksForCache(cutoffUnix int64, limit int) []*Task 
 	var tasks []*Task
 	err := DB.Where("status = ?", TaskStatusSuccess).
 		Where("(finish_time = 0 OR finish_time >= ?)", cutoffUnix).
-		Order("finish_time").Order("id").Limit(limit).Find(&tasks).Error
+		// Prioritize recent completions so a full batch of already-cached older
+		// rows cannot indefinitely hide a fresh cache miss.
+		Order("finish_time DESC").Order("id DESC").Limit(limit).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
