@@ -185,11 +185,7 @@ func MarkVideoCacheFailure(task *model.Task, cacheErr error) {
 	attempts := task.PrivateData.VideoCacheAttempts + 1
 	task.PrivateData.VideoCacheAttempts = attempts
 	task.PrivateData.VideoCacheLastError = truncateVideoCacheError(cacheErr)
-	if attempts <= videoCacheRetryMaxAttempts {
-		task.PrivateData.VideoCacheNextRetryAt = time.Now().Add(videoCacheRetryDelay(attempts)).Unix()
-	} else {
-		task.PrivateData.VideoCacheNextRetryAt = 0
-	}
+	task.PrivateData.VideoCacheNextRetryAt = time.Now().Add(videoCacheRetryDelay(attempts)).Unix()
 }
 
 // MarkVideoTaskCached records the first completed local cache write. It is

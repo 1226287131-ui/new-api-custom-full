@@ -22,7 +22,6 @@ const (
 	defaultVideoCacheTTL             = 48 * time.Hour
 	defaultVideoCacheCleanupInterval = time.Hour
 	videoCacheRetryInterval          = 30 * time.Second
-	videoCacheRetryMaxAttempts       = 8
 	videoCacheRetryBatchSize         = 100
 )
 
@@ -342,9 +341,6 @@ func RetryVideoTaskCaches(ctx context.Context) error {
 			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
 			continue
 		}
-		if task.PrivateData.VideoCacheAttempts >= videoCacheRetryMaxAttempts {
-			continue
-		}
 		if next := task.PrivateData.VideoCacheNextRetryAt; next > now.Unix() {
 			continue
 		}
@@ -359,9 +355,7 @@ func RetryVideoTaskCaches(ctx context.Context) error {
 		}
 		if _, err = CacheVideoTask(ctx, task, channel); err != nil {
 			MarkVideoCacheFailure(task, err)
-			if task.PrivateData.VideoCacheAttempts >= videoCacheRetryMaxAttempts {
-				common.SysError(fmt.Sprintf("video task %s cache retry exhausted after %d attempts: %s", task.TaskID, task.PrivateData.VideoCacheAttempts, truncateVideoCacheError(err)))
-			}
+			common.SysError(fmt.Sprintf("video task %s cache retry %d failed; next retry at %s: %s", task.TaskID, task.PrivateData.VideoCacheAttempts, time.Unix(task.PrivateData.VideoCacheNextRetryAt, 0).Format(time.RFC3339), truncateVideoCacheError(err)))
 			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
 			continue
 		}

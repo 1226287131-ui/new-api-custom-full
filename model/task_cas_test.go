@@ -3,11 +3,13 @@ package model
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -163,6 +165,37 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 	assert.Equal(t, task.PrivateData.ResultURL, snap.ResultURL)
 	assert.Equal(t, task.PrivateData.VideoCachedAt, snap.VideoCachedAt)
 	assert.JSONEq(t, string(task.Data), string(snap.Data))
+}
+
+func TestGetRecentSuccessfulVideoTasksForCacheFiltersBeforeLimit(t *testing.T) {
+	truncateTables(t)
+
+	now := time.Now().Unix()
+	for i := 0; i < 110; i++ {
+		insertTask(t, &Task{
+			TaskID:     "task_cached_" + strconv.Itoa(i),
+			Platform:   constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMaxVideo)),
+			Status:     TaskStatusSuccess,
+			FinishTime: now - int64(i),
+			PrivateData: TaskPrivateData{VideoCachedAt: now},
+		})
+	}
+	insertTask(t, &Task{
+		TaskID:     "task_uncached_video",
+		Platform:   constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMaxVideo)),
+		Status:     TaskStatusSuccess,
+		FinishTime: now - 200,
+	})
+	insertTask(t, &Task{
+		TaskID:     "task_uncached_non_video",
+		Platform:   constant.TaskPlatformSuno,
+		Status:     TaskStatusSuccess,
+		FinishTime: now - 201,
+	})
+
+	tasks := GetRecentSuccessfulVideoTasksForCache(now-3600, 100)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "task_uncached_video", tasks[0].TaskID)
 }
 
 // ---------------------------------------------------------------------------

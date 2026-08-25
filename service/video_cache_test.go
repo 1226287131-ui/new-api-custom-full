@@ -261,6 +261,34 @@ func TestRetryVideoTaskCachesSuccessfulTaskAfterTransientFailure(t *testing.T) {
 	assert.FileExists(t, filepath.Join(videoCacheDir(), task.TaskID+".mp4"))
 }
 
+func TestRetryVideoTaskCachesDoesNotAbandonAnExhaustedTask(t *testing.T) {
+	truncate(t)
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	channel := &model.Channel{Id: 982, Type: constant.ChannelTypeKling, Key: "channel-key", Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(channel).Error)
+	task := &model.Task{
+		TaskID:     "task_retry_after_many_failures",
+		Platform:   constant.TaskPlatform("kling"),
+		ChannelId:  channel.Id,
+		Status:     model.TaskStatusSuccess,
+		Progress:   "100%",
+		FinishTime: time.Now().Unix(),
+		PrivateData: model.TaskPrivateData{
+			UpstreamResultURL:     "data:video/mp4;base64," + base64.StdEncoding.EncodeToString([]byte("recovered-video")),
+			VideoCacheAttempts:    8,
+			VideoCacheNextRetryAt: time.Now().Add(-time.Minute).Unix(),
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, RetryVideoTaskCaches(context.Background()))
+	var saved model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
+	assert.NotZero(t, saved.PrivateData.VideoCachedAt)
+	assert.Zero(t, saved.PrivateData.VideoCacheAttempts)
+	assert.FileExists(t, filepath.Join(videoCacheDir(), task.TaskID+".mp4"))
+}
+
 func TestCacheRemoteVideoWithHeaders(t *testing.T) {
 	cacheDir := t.TempDir()
 	t.Setenv("VIDEO_CACHE_DIR", cacheDir)

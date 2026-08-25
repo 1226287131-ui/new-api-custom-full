@@ -332,19 +332,28 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 	return tasks
 }
 
-// GetRecentSuccessfulVideoTasksForCache returns recent successful tasks that
-// may still need a local video cache. The caller filters platforms and checks
-// the cache file because private_data is JSON and its shape varies by DB.
+// GetRecentSuccessfulVideoTasksForCache returns recent successful video tasks
+// that do not yet have a recorded local cache. Filtering before the limit is
+// essential: a busy instance can have more than one batch of cached rows.
 func GetRecentSuccessfulVideoTasksForCache(cutoffUnix int64, limit int) []*Task {
 	if limit <= 0 {
 		return nil
 	}
 	var tasks []*Task
-	err := DB.Where("status = ?", TaskStatusSuccess).
-		Where("(finish_time = 0 OR finish_time >= ?)", cutoffUnix).
-		// Prioritize recent completions so a full batch of already-cached older
-		// rows cannot indefinitely hide a fresh cache miss.
-		Order("finish_time DESC").Order("id DESC").Limit(limit).Find(&tasks).Error
+	query := DB.Where("status = ?", TaskStatusSuccess).
+		Where("LOWER(platform) IN ?", constant.VideoTaskPlatformValues()).
+		Where("(finish_time = 0 OR finish_time >= ?)", cutoffUnix)
+
+	switch {
+	case common.UsingMainDatabase(common.DatabaseTypePostgreSQL):
+		query = query.Where("COALESCE(NULLIF(private_data->>'video_cached_at', '')::bigint, 0) = 0")
+	case common.UsingMainDatabase(common.DatabaseTypeMySQL), common.UsingMainDatabase(common.DatabaseTypeSQLite):
+		query = query.Where("COALESCE(json_extract(private_data, '$.video_cached_at'), 0) = 0")
+	default:
+		return nil
+	}
+
+	err := query.Order("finish_time DESC").Order("id DESC").Limit(limit).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}

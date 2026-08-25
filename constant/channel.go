@@ -206,31 +206,38 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeMiniMaxVideo:   "MiniMax Video",
 }
 
+var videoTaskChannelTypes = map[int]struct{}{
+	ChannelTypeOpenAI:         {},
+	ChannelTypeAli:            {},
+	ChannelTypeGemini:         {},
+	ChannelTypeMiniMax:        {},
+	ChannelTypeVertexAi:       {},
+	ChannelTypeVolcEngine:     {},
+	ChannelTypeKling:          {},
+	ChannelTypeJimeng:         {},
+	ChannelTypeVidu:           {},
+	ChannelTypeDoubaoVideo:    {},
+	ChannelTypeSora:           {},
+	ChannelTypeNewAPIVideo:    {},
+	ChannelTypeOpenAIVideo:    {},
+	ChannelTypeGrokVideo:      {},
+	ChannelTypeMiniMaxVideo:   {},
+}
+
+var videoTaskPlatformNames = []string{
+	"openai", "ali", "gemini", "minimax", "vertexai", "vertex",
+	"volcengine", "kling", "jimeng", "vidu", "doubaovideo", "doubao-video",
+	"sora", "newapi-video", "newapi_video", "openai-video", "openai_video",
+	"grok-video", "grok_video", "minimax-video", "minimax_video",
+}
+
 // IsVideoTaskChannelType reports whether a channel is handled by the async
 // video task pipeline. ChannelTypeOpenAI is included because its task route
 // uses the Sora adaptor for video generation; normal chat requests do not
 // create Task rows and are unaffected.
 func IsVideoTaskChannelType(channelType int) bool {
-	switch channelType {
-	case ChannelTypeOpenAI,
-		ChannelTypeAli,
-		ChannelTypeGemini,
-		ChannelTypeMiniMax,
-		ChannelTypeVertexAi,
-		ChannelTypeVolcEngine,
-		ChannelTypeKling,
-		ChannelTypeJimeng,
-		ChannelTypeVidu,
-		ChannelTypeDoubaoVideo,
-		ChannelTypeSora,
-		ChannelTypeNewAPIVideo,
-		ChannelTypeOpenAIVideo,
-		ChannelTypeGrokVideo,
-		ChannelTypeMiniMaxVideo:
-		return true
-	default:
-		return false
-	}
+	_, ok := videoTaskChannelTypes[channelType]
+	return ok
 }
 
 // IsVideoTaskPlatform is the platform-string counterpart used by task DTOs,
@@ -239,15 +246,25 @@ func IsVideoTaskPlatform(platform TaskPlatform) bool {
 	if channelType, err := strconv.Atoi(string(platform)); err == nil {
 		return IsVideoTaskChannelType(channelType)
 	}
-	switch strings.ToLower(strings.TrimSpace(string(platform))) {
-	case "openai", "ali", "gemini", "minimax", "vertexai", "vertex",
-		"volcengine", "kling", "jimeng", "vidu", "doubaovideo", "doubao-video",
-		"sora", "newapi-video", "newapi_video", "openai-video", "openai_video",
-		"grok-video", "grok_video", "minimax-video", "minimax_video":
-		return true
-	default:
-		return false
+	name := strings.ToLower(strings.TrimSpace(string(platform)))
+	for _, videoPlatform := range videoTaskPlatformNames {
+		if name == videoPlatform {
+			return true
+		}
 	}
+	return false
+}
+
+// VideoTaskPlatformValues returns all persisted task platform values which
+// belong to the asynchronous video pipeline, including legacy provider names.
+// Callers may use it in database predicates before applying an upper limit.
+func VideoTaskPlatformValues() []string {
+	values := make([]string, 0, len(videoTaskChannelTypes)+len(videoTaskPlatformNames))
+	for channelType := range videoTaskChannelTypes {
+		values = append(values, strconv.Itoa(channelType))
+	}
+	values = append(values, videoTaskPlatformNames...)
+	return values
 }
 
 func GetChannelTypeName(channelType int) string {
