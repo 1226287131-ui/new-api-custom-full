@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,11 +73,12 @@ func TestMiniMaxVideoBuildsStrictH3TextPayload(t *testing.T) {
 	info.UpstreamModelName = "minimax_h3"
 
 	assert.Equal(t, map[string]any{
-		"model":       "minimax_h3",
-		"prompt":      "清晨的海边公路",
-		"seconds":     float64(8),
-		"size":        "1920x1088",
-		"workflow_id": "multi-reference",
+		"model":          "minimax_h3",
+		"prompt":         "清晨的海边公路",
+		"prompt_enhance": "false",
+		"seconds":        float64(8),
+		"size":           "1920x1088",
+		"workflow_id":    "multi-reference",
 	}, readJSONBody(t, mustBuildBody(t, adaptor, c, info)))
 }
 
@@ -125,10 +127,36 @@ func TestMiniMaxVideoStripsLegacyConflictingFields(t *testing.T) {
 		"https://example.com/music.mp3",
 	}, upstream["reference_audios"])
 	for _, field := range []string{
-		"duration", "audio", "mode", "prompt_enhance", "resolution", "clarity",
+		"duration", "audio", "mode", "resolution", "clarity",
 		"megapixels", "metadata", "reference_video_audios",
 	} {
 		assert.NotContains(t, upstream, field)
+	}
+	assert.Equal(t, "false", upstream["prompt_enhance"])
+}
+
+func TestMiniMaxVideoForcesPromptEnhancementSetting(t *testing.T) {
+	tests := []struct {
+		name             string
+		configured       bool
+		downstreamField  string
+		expectedUpstream string
+	}{
+		{name: "disabled when omitted", expectedUpstream: "false"},
+		{name: "disabled overrides true", downstreamField: `,"prompt_enhance":true`, expectedUpstream: "false"},
+		{name: "enabled when omitted", configured: true, expectedUpstream: "true"},
+		{name: "enabled overrides false", configured: true, downstreamField: `,"prompt_enhance":false`, expectedUpstream: "true"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, adaptor, info := newMiniMaxVideoJSONContext(t, `{"model":"MiniMax-H3","prompt":"scene","seconds":5,"size":"1920x1088"`+testCase.downstreamField+`}`)
+			info.ChannelSetting = dto.ChannelSettings{MiniMaxVideoPromptEnhance: testCase.configured}
+			adaptor.Init(info)
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			upstream := readJSONBody(t, mustBuildBody(t, adaptor, c, info))
+			assert.Equal(t, testCase.expectedUpstream, upstream["prompt_enhance"])
+		})
 	}
 }
 
@@ -253,12 +281,43 @@ func TestMiniMaxVideoMultipartStripsConflictingFields(t *testing.T) {
 	defer form.RemoveAll()
 
 	assert.Equal(t, []string{"12"}, form.Value["seconds"])
+	assert.Equal(t, []string{"false"}, form.Value["prompt_enhance"])
 	assert.Equal(t, []string{"2K"}, form.Value["size"])
 	assert.Equal(t, []string{"mj"}, form.Value["workflow_id"])
 	assert.Equal(t, []string{"16:9"}, form.Value["aspect_ratio"])
 	assert.Equal(t, []string{"https://example.com/person.png"}, form.Value["images"])
 	assert.NotContains(t, form.Value, "duration")
 	assert.NotContains(t, form.Value, "audio")
+}
+
+func TestMiniMaxVideoMultipartForcesPromptEnhancementSetting(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "MiniMax-H3"))
+	require.NoError(t, writer.WriteField("prompt", "scene"))
+	require.NoError(t, writer.WriteField("seconds", "5"))
+	require.NoError(t, writer.WriteField("size", "1920x1088"))
+	require.NoError(t, writer.WriteField("prompt_enhance", "false"))
+	require.NoError(t, writer.Close())
+
+	c, adaptor, info := newMiniMaxVideoMultipartContext(t, &body, writer.FormDataContentType())
+	info.ChannelSetting = dto.ChannelSettings{MiniMaxVideoPromptEnhance: true}
+	adaptor.Init(info)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "https://upstream.example/v1/videos", nil)
+	require.NoError(t, adaptor.BuildRequestHeader(c, request, info))
+	_, params, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	form, err := multipart.NewReader(bytes.NewReader(encoded), params["boundary"]).ReadForm(4 * 1024 * 1024)
+	require.NoError(t, err)
+	defer form.RemoveAll()
+
+	assert.Equal(t, []string{"true"}, form.Value["prompt_enhance"])
 }
 
 func TestMiniMaxVideoParsesCompletedTaskAndReturnsLocalVideoURL(t *testing.T) {

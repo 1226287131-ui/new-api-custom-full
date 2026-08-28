@@ -11,9 +11,9 @@ import (
 )
 
 type ChannelSettings struct {
-	ForceFormat            bool   `json:"force_format,omitempty"`
-	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
-	Proxy                  string `json:"proxy"`
+	ForceFormat       bool   `json:"force_format,omitempty"`
+	ThinkingToContent bool   `json:"thinking_to_content,omitempty"`
+	Proxy             string `json:"proxy"`
 	// VideoCacheProxyEnabled routes only completed-video downloads through the
 	// deployment's dedicated cache egress. It never affects normal relay traffic.
 	VideoCacheProxyEnabled bool   `json:"video_cache_proxy_enabled,omitempty"`
@@ -29,6 +29,9 @@ type ChannelSettings struct {
 	// HTTP2ConnectionShards spreads HTTP/2 traffic across N independent transports
 	// (1-8). Zero/unset means 1. Ignored when HTTPProtocol is "http1".
 	HTTP2ConnectionShards int `json:"http2_connection_shards,omitempty"`
+	// MiniMaxVideoPromptEnhance controls the prompt enhancement flag sent by the
+	// MiniMax Video adapter. The upstream contract expects this value as a string.
+	MiniMaxVideoPromptEnhance bool `json:"minimax_video_prompt_enhance,omitempty"`
 }
 
 const (

@@ -105,12 +105,14 @@ type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	apiKey          string
 	baseURL         string
+	promptEnhance   bool
 	responseAdaptor openaivideo.TaskAdaptor
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = info.ApiKey
 	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
+	a.promptEnhance = info.ChannelSetting.MiniMaxVideoPromptEnhance
 	a.responseAdaptor.Init(info)
 }
 
@@ -271,6 +273,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 	payload := clonePayload(normalized.payload)
 	payload["model"] = taskcommon.DefaultString(info.UpstreamModelName, normalized.request.Model)
+	payload["prompt_enhance"] = strconv.FormatBool(a.promptEnhance)
 	body, err := common.Marshal(payload)
 	if err != nil {
 		return nil, errors.Wrap(err, "marshal MiniMax Video request")
@@ -311,6 +314,7 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 	}{
 		{name: "model", value: taskcommon.DefaultString(info.UpstreamModelName, normalized.request.Model), set: true},
 		{name: "prompt", value: normalized.request.Prompt, set: true},
+		{name: "prompt_enhance", value: strconv.FormatBool(a.promptEnhance), set: true},
 		{name: "seconds", value: normalized.request.Seconds, set: true},
 		{name: "size", value: canonicalMiniMaxUpstreamSize(normalized.request.Size), set: true},
 		{name: "workflow_id", value: payloadStringValue(normalized.payload, "workflow_id"), set: true},

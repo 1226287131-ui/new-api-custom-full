@@ -139,6 +139,7 @@ import {
 import {
   ADD_MODE_OPTIONS,
   CHANNEL_STATUS_LABELS,
+  CHANNEL_TYPE_MINIMAX_VIDEO,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_OPENAI_VIDEO,
   CHANNEL_TYPE_WARNINGS,
@@ -290,6 +291,7 @@ const SENSITIVE_FORM_FIELDS = [
   'pass_through_body_enabled',
   'system_prompt',
   'system_prompt_override',
+  'minimax_video_prompt_enhance',
   'allow_service_tier',
   'disable_store',
   'allow_safety_identifier',
@@ -342,6 +344,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
     values.system_prompt_override ||
+    values.minimax_video_prompt_enhance ||
     (values.http_protocol && values.http_protocol !== 'auto') ||
     (values.http2_connection_shards != null &&
       values.http2_connection_shards > 1) ||
@@ -752,6 +755,9 @@ export function ChannelMutateDrawer({
   )
   const currentProxy = form.watch('proxy')
   const currentVideoCacheProxyEnabled = form.watch('video_cache_proxy_enabled')
+  const currentMiniMaxVideoPromptEnhance = form.watch(
+    'minimax_video_prompt_enhance'
+  )
   const currentHttpProtocol = form.watch('http_protocol')
   const currentHttp2ConnectionShards = form.watch('http2_connection_shards')
   const currentSystemPrompt = form.watch('system_prompt')
@@ -1023,6 +1029,7 @@ export function ChannelMutateDrawer({
     currentDisableTaskPollingSleep ||
     currentProxy?.trim() ||
     currentVideoCacheProxyEnabled ||
+    currentMiniMaxVideoPromptEnhance ||
     currentSystemPrompt?.trim() ||
     currentSystemPromptOverride ||
     (currentHttpProtocol && currentHttpProtocol !== 'auto') ||
@@ -4148,6 +4155,33 @@ export function ChannelMutateDrawer({
                                         )}
                                       </FormDescription>
                                       <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              )}
+
+                              {currentType === CHANNEL_TYPE_MINIMAX_VIDEO && (
+                                <FormField
+                                  control={form.control}
+                                  name='minimax_video_prompt_enhance'
+                                  render={({ field }) => (
+                                    <FormItem className='flex items-center justify-between px-4 py-3'>
+                                      <div className='space-y-0.5'>
+                                        <FormLabel>
+                                          {t('MiniMax Video Prompt Enhancement')}
+                                        </FormLabel>
+                                        <FormDescription>
+                                          {t(
+                                            'Force prompt_enhance to the selected value for every MiniMax Video request.'
+                                          )}
+                                        </FormDescription>
+                                      </div>
+                                      <FormControl>
+                                        <Switch
+                                          checked={field.value === true}
+                                          onCheckedChange={field.onChange}
+                                        />
+                                      </FormControl>
                                     </FormItem>
                                   )}
                                 />
