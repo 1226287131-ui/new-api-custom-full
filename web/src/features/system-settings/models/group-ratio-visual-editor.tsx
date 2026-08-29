@@ -76,6 +76,7 @@ import {
 } from '@/components/ui/sheet'
 
 import { safeJsonParse } from '../utils/json-parser'
+import { GroupUserRatioDialog } from './group-user-ratio-dialog'
 
 type GroupRatioVisualEditorProps = {
   groupRatio: string
@@ -652,6 +653,9 @@ function GroupPricingTable({
                     >
                       <Info className='h-4 w-4' />
                     </Button>
+                    {row.name.trim() && (
+                      <GroupUserRatioDialog group={row.name.trim()} />
+                    )}
                     <Button
                       variant='ghost'
                       size='sm'

@@ -56,6 +56,18 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hostty
 		relayInfo.UsingGroup = autoGroup.(string)
 	}
 
+	// A user-specific rule takes precedence over the existing user-group matrix
+	// and the billing group's base ratio. Missing or invalid database reads fall
+	// back to the established ratio resolution path.
+	if ratio, ok, err := model.GetGroupUserRatio(relayInfo.UserId, relayInfo.UsingGroup); err != nil {
+		common.SysError("failed to load user-specific group ratio: " + err.Error())
+	} else if ok {
+		groupRatioInfo.GroupSpecialRatio = ratio
+		groupRatioInfo.GroupRatio = ratio
+		groupRatioInfo.HasSpecialRatio = true
+		return groupRatioInfo
+	}
+
 	// check user group special ratio
 	userGroupRatio, ok := ratio_setting.GetGroupGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup)
 	if ok {

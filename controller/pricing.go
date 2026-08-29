@@ -43,8 +43,10 @@ func GetPricing(c *gin.Context) {
 	}
 	var group string
 	if exists {
-		user, err := model.GetUserCache(userId.(int))
-		if err == nil {
+		id, ok := userId.(int)
+		if !ok || id <= 0 {
+			common.SysError("invalid user id in pricing context")
+		} else if user, err := model.GetUserCache(id); err == nil {
 			group = user.Group
 			for g := range groupRatio {
 				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
@@ -52,6 +54,17 @@ func GetPricing(c *gin.Context) {
 					groupRatio[g] = ratio
 				}
 			}
+			// A user-specific rule has the highest priority and must also be
+			// reflected in the model plaza prices shown to this user.
+			for g := range groupRatio {
+				if ratio, configured, ratioErr := model.GetGroupUserRatio(id, g); ratioErr != nil {
+					common.SysError("failed to load user-specific group ratio for pricing: " + ratioErr.Error())
+				} else if configured {
+					groupRatio[g] = ratio
+				}
+			}
+		} else {
+			common.SysError("failed to load user for pricing: " + err.Error())
 		}
 	}
 

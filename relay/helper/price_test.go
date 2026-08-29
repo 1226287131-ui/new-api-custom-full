@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -13,7 +14,9 @@ import (
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
@@ -62,6 +65,40 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, "stream", info.TieredBillingSnapshot.EstimatedTier)
 	require.Equal(t, billing_setting.BillingModeTieredExpr, info.TieredBillingSnapshot.BillingMode)
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
+}
+
+func TestHandleGroupRatioUserOverrideTakesPrecedence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Use a test-only identity so this process-wide cache key cannot overlap
+	// with the model tests that exercise persistence separately.
+	const userID = 709702
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.GroupUserRatio{}))
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	savedGroupRatios := ratio_setting.GroupRatio2JSONString()
+	savedGroupGroupRatios := ratio_setting.GroupGroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(savedGroupRatios))
+		require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(savedGroupGroupRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":2,"default":1}`))
+	require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(`{"customer":{"vip":3}}`))
+	require.NoError(t, model.DB.Create(&model.GroupUserRatio{UserID: userID, Group: "vip", Ratio: 0.4}).Error)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("group", "vip")
+	info := &relaycommon.RelayInfo{UserId: userID, UserGroup: "customer", UsingGroup: "vip"}
+
+	groupRatio := HandleGroupRatio(ctx, info)
+	require.True(t, groupRatio.HasSpecialRatio)
+	require.Equal(t, 0.4, groupRatio.GroupRatio)
+	require.Equal(t, 0.4, groupRatio.GroupSpecialRatio)
 }
 
 func TestModelPriceHelperTieredPreConsumeMaxTokensFallback(t *testing.T) {

@@ -29,6 +29,8 @@ import type {
   UpdateOptionResponse,
   UpstreamChannelsResponse,
   UpstreamRatiosResponse,
+  GroupUserRatioMutationResponse,
+  GroupUserRatioResponse,
 } from './types'
 
 export async function getSystemOptions() {
@@ -87,6 +89,36 @@ export async function listSystemTasks(limit = 20) {
 export async function resetModelRatios() {
   const res = await api.post<UpdateOptionResponse>(
     '/api/option/rest_model_ratio'
+  )
+  return res.data
+}
+
+export async function getGroupUserRatios(
+  group: string
+): Promise<GroupUserRatioResponse> {
+  const res = await api.get<GroupUserRatioResponse>(
+    `/api/group/${encodeURIComponent(group)}/user-ratios`
+  )
+  return res.data
+}
+
+export async function upsertGroupUserRatio(
+  group: string,
+  payload: { user_id: number; ratio: number }
+): Promise<GroupUserRatioMutationResponse> {
+  const res = await api.put<GroupUserRatioMutationResponse>(
+    `/api/group/${encodeURIComponent(group)}/user-ratios`,
+    payload
+  )
+  return res.data
+}
+
+export async function deleteGroupUserRatio(
+  group: string,
+  userId: number
+): Promise<GroupUserRatioMutationResponse> {
+  const res = await api.delete<GroupUserRatioMutationResponse>(
+    `/api/group/${encodeURIComponent(group)}/user-ratios/${userId}`
   )
   return res.data
 }

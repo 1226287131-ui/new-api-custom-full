@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/glebarez/sqlite"
 	"github.com/shopspring/decimal"
@@ -528,6 +529,40 @@ func TestRecalculate_ActualQuotaZero(t *testing.T) {
 	// No change (early return)
 	assert.Equal(t, initQuota, getUserQuota(t, userID))
 	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestRecalculateTaskQuotaByTokensUsesBillingContextGroupRatio(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	savedModelRatios := ratio_setting.ModelRatio2JSONString()
+	savedGroupRatios := ratio_setting.GroupRatio2JSONString()
+	savedGroupGroupRatios := ratio_setting.GroupGroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatios))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(savedGroupRatios))
+		require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(savedGroupGroupRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"test-model":2}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":4}`))
+	require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(`{"default":{"default":3}}`))
+
+	const userID, tokenID, channelID = 30, 30, 30
+	const initialQuota, tokenRemain = 1000000000, 1000000000
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-recalc-snapshot", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 1, tokenID, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.GroupRatio = 0.25
+	require.NoError(t, model.DB.Create(task).Error)
+
+	RecalculateTaskQuotaByTokens(ctx, task, 1000)
+
+	expectedQuota, err := common.QuotaFromFloatStrict(1000 * 2 * 0.25 * common.QuotaPerUnit)
+	require.NoError(t, err)
+	assert.Equal(t, expectedQuota, task.Quota)
+	assert.Equal(t, initialQuota-(expectedQuota-1), getUserQuota(t, userID))
 }
 
 func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {

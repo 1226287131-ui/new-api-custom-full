@@ -39,6 +39,30 @@ export type UpdateOptionResponse = {
   message: string
 }
 
+export type GroupUserRatioEntry = {
+  id: number
+  user_id: number
+  group: string
+  ratio: number
+  username: string
+  email: string
+  display_name: string
+  created_at: number
+  updated_at: number
+}
+
+export type GroupUserRatioResponse = {
+  success: boolean
+  message: string
+  data?: GroupUserRatioEntry[]
+}
+
+export type GroupUserRatioMutationResponse = {
+  success: boolean
+  message: string
+  data?: GroupUserRatioEntry
+}
+
 export type ConfirmPaymentComplianceResponse = {
   success: boolean
   message: string
