@@ -713,7 +713,10 @@ func TestParseTaskResultHandlesStatusesAndErrors(t *testing.T) {
 		{name: "queued", body: `{"status":"queued"}`, expect: model.TaskStatusQueued},
 		{name: "running", body: `{"status":"running","progress":42,"message":"still working"}`, expect: model.TaskStatusInProgress},
 		{name: "completed without URL", body: `{"status":"completed"}`, expect: model.TaskStatusSuccess},
+		{name: "queued prompt mentioning failure", body: `{"status":"queued","prompt":"生成失败时请保留历史记录"}`, expect: model.TaskStatusQueued},
 		{name: "failed", body: `{"status":"failed","error":{"code":"generation_failed","message":"provider rejected the request"}}`, expect: model.TaskStatusFailure, reason: "provider rejected the request"},
+		{name: "fail status", body: `{"status":"fail","message":"provider rejected the request"}`, expect: model.TaskStatusFailure, reason: "provider rejected the request"},
+		{name: "processing with embedded failure", body: `{"status":"processing","progress":95,"input":"生成失败：请重新提交任务","images":["生成失败：请重新提交任务"]}`, expect: model.TaskStatusFailure, reason: "生成失败：请重新提交任务"},
 	}
 
 	for _, test := range tests {
