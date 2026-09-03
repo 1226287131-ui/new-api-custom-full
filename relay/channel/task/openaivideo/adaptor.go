@@ -555,12 +555,6 @@ func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error
 			result.Progress = taskcommon.ProgressQueued
 		}
 	case "running", "processing", "in_progress":
-		if failureReason := openAIVideoEmbeddedFailureReason(raw, data); failureReason != "" {
-			result.Status = model.TaskStatusFailure
-			result.Progress = taskcommon.ProgressComplete
-			result.Reason = failureReason
-			break
-		}
 		result.Status = model.TaskStatusInProgress
 		if result.Progress == "" {
 			result.Progress = taskcommon.ProgressInProgress
@@ -588,7 +582,7 @@ func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error
 		if result.Progress == "" {
 			result.Progress = taskcommon.ProgressComplete
 		}
-	case "fail", "failure", "failed", "error", "cancelled", "canceled", "rejected", "rejected_by_provider", "aborted":
+	case "failure", "failed", "error", "cancelled", "canceled":
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
 		result.Reason = errorMessage
@@ -1502,70 +1496,11 @@ func normalizeOpenAIVideoStatus(status string) string {
 		return dto.VideoStatusInProgress
 	case "success", "succeeded", "completed":
 		return dto.VideoStatusCompleted
-	case "fail", "failure", "failed", "error", "cancelled", "canceled", "rejected", "rejected_by_provider", "aborted":
+	case "failure", "failed", "error", "cancelled", "canceled":
 		return dto.VideoStatusFailed
 	default:
 		return dto.VideoStatusQueued
 	}
-}
-
-// openAIVideoEmbeddedFailureReason recognizes OpenAI-video-compatible
-// providers that keep status=processing while putting their terminal failure
-// in request/input/prompt or asset-list fields. Treating that payload as
-// in-progress causes polling to wait until the global timeout.
-func openAIVideoEmbeddedFailureReason(maps ...map[string]any) string {
-	for _, data := range maps {
-		if data == nil {
-			continue
-		}
-		for _, key := range []string{"input", "prompt", "message", "detail", "reason", "error_message", "fail_reason"} {
-			if reason := openAIVideoFailureText(firstString(data, key)); reason != "" {
-				return reason
-			}
-		}
-		for _, key := range []string{"images", "videos", "audios", "files"} {
-			items, ok := data[key].([]any)
-			if !ok {
-				continue
-			}
-			for _, item := range items {
-				text, ok := item.(string)
-				if ok {
-					if reason := openAIVideoFailureText(text); reason != "" {
-						return reason
-					}
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func openAIVideoFailureText(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-	normalized := strings.ToLower(strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(text))
-	for _, marker := range []string{
-		"generationfailed",
-		"videogenerationfailed",
-		"requestparametersormaterialformat",
-		"materialreadfailed",
-		"invalidmaterial",
-		"invalid_request",
-		"failedtogenerate",
-		"生成失败",
-		"素材读取失败",
-		"素材格式不符合要求",
-		"请求参数或素材格式不符合要求",
-		"请重新提交任务",
-	} {
-		if strings.Contains(normalized, marker) {
-			return text
-		}
-	}
-	return ""
 }
 
 func responseError(maps ...map[string]any) (string, string) {
