@@ -404,12 +404,15 @@ func fetchNativeGeminiImage(imageURL string, info *relaycommon.RelayInfo) (strin
 	}
 
 	client := service.GetImageCacheHTTPClient()
-	if info != nil && strings.TrimSpace(info.ChannelSetting.Proxy) != "" {
-		proxyClient, err := service.GetImageCacheHTTPClientWithProxy(info.ChannelSetting.Proxy)
-		if err != nil {
-			return "", "", fmt.Errorf("create image fetch proxy: %w", err)
+	if info != nil {
+		proxy := service.ResolveChannelProxy(info.ChannelSetting)
+		if proxy != "" {
+			proxyClient, err := service.GetImageCacheHTTPClientWithProxy(proxy)
+			if err != nil {
+				return "", "", fmt.Errorf("create image fetch proxy: %w", err)
+			}
+			client = proxyClient
 		}
-		client = proxyClient
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), nativeGeminiImageFetchTimeout)

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -20,18 +21,32 @@ import (
 )
 
 var (
-	httpClient              *http.Client
-	ssrfProtectedHTTPClient *http.Client
-	imageCacheHTTPClient    *http.Client
+	httpClient                *http.Client
+	ssrfProtectedHTTPClient   *http.Client
+	imageCacheHTTPClient      *http.Client
 	imageCacheProxyClientLock sync.Mutex
-	imageCacheProxyClients  = make(map[string]*http.Client)
-	protectedClientLock     sync.RWMutex
-	proxyClients            = proxyHTTPClientCache{
+	imageCacheProxyClients    = make(map[string]*http.Client)
+	protectedClientLock       sync.RWMutex
+	proxyClients              = proxyHTTPClientCache{
 		clients: make(map[string]*http.Client),
 		aliases: make(map[string]string),
 	}
 	legacyProxyURLWarnings sync.Map
 )
+
+const upstreamEgressProxyEnv = "UPSTREAM_EGRESS_PROXY"
+
+// ResolveChannelProxy selects the outbound proxy for channel traffic. The
+// dedicated upstream egress is opt-in per channel and falls back to the
+// channel's configured proxy when the deployment has not configured it.
+func ResolveChannelProxy(settings dto.ChannelSettings) string {
+	if settings.UpstreamEgressProxyEnabled {
+		if configured := strings.TrimSpace(os.Getenv(upstreamEgressProxyEnv)); configured != "" {
+			return configured
+		}
+	}
+	return strings.TrimSpace(settings.Proxy)
+}
 
 type proxyHTTPClientCache struct {
 	mutex   sync.RWMutex
@@ -470,7 +485,10 @@ func GetHttpClientWithProxy(rawProxyURL string) (*http.Client, error) {
 // GetHttpClientWithProxy / GetHttpClient for the empty-proxy case.
 func GetHttpClientWithProxySettings(rawProxyURL string, settings dto.ChannelSettings) (*http.Client, error) {
 	policy := NormalizeHTTPTransportPolicy(settings)
-	trimmedProxyURL := strings.TrimSpace(rawProxyURL)
+	if trimmedRawProxyURL := strings.TrimSpace(rawProxyURL); trimmedRawProxyURL != "" {
+		settings.Proxy = trimmedRawProxyURL
+	}
+	trimmedProxyURL := ResolveChannelProxy(settings)
 
 	if trimmedProxyURL == "" {
 		return getOrCreateDirectClient(policy)

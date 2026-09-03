@@ -59,3 +59,37 @@ describe('Dedicated video cache egress setting', () => {
     )
   })
 })
+
+describe('Dedicated upstream egress setting', () => {
+  test('serializes only explicit opt-in and restores it for editing', () => {
+    const disabled = JSON.parse(
+      buildSettingJSON(CHANNEL_FORM_DEFAULT_VALUES)
+    ) as Record<string, unknown>
+    assert.equal('upstream_egress_proxy_enabled' in disabled, false)
+
+    const enabledSettings = buildSettingJSON({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      upstream_egress_proxy_enabled: true,
+    })
+    assert.equal(
+      (JSON.parse(enabledSettings) as Record<string, unknown>)
+        .upstream_egress_proxy_enabled,
+      true
+    )
+
+    const channel = {
+      ...({} as Channel),
+      setting: enabledSettings,
+      channel_info: {
+        is_multi_key: false,
+        multi_key_size: 0,
+        multi_key_polling_index: 0,
+        multi_key_mode: 'random',
+      },
+    } as Channel
+    assert.equal(
+      transformChannelToFormDefaults(channel).upstream_egress_proxy_enabled,
+      true
+    )
+  })
+})

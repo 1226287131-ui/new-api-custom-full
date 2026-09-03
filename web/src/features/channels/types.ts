@@ -84,6 +84,7 @@ export interface ChannelSettings {
   thinking_to_content?: boolean
   proxy?: string
   video_cache_proxy_enabled?: boolean
+  upstream_egress_proxy_enabled?: boolean
   pass_through_body_enabled?: boolean
   system_prompt?: string
   system_prompt_override?: boolean

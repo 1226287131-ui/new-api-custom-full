@@ -146,7 +146,14 @@ func videoProxy(c *gin.Context, public bool) {
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(fallbackURL)), "data:") {
 			_, cacheErr = service.CacheVideoDataURL(c.Request.Context(), task.TaskID, fallbackURL)
 		} else {
-			_, cacheErr = service.CacheRemoteVideoWithHeaders(c.Request.Context(), task.TaskID, fallbackURL, channel.GetSetting().Proxy, fallbackHeaders)
+			channelSetting := channel.GetSetting()
+			_, cacheErr = service.CacheVideoSource(c.Request.Context(), task.TaskID, service.VideoCacheSource{
+				URL:               fallbackURL,
+				Headers:           fallbackHeaders,
+				Proxy:             channelSetting.Proxy,
+				UseDedicatedProxy: channelSetting.VideoCacheProxyEnabled,
+				TrustedOrigin:     channel.GetBaseURL(),
+			})
 			task.PrivateData.UpstreamResultURL = fallbackURL
 		}
 		if cacheErr == nil {

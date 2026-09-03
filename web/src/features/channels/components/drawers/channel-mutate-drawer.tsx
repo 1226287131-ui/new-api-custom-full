@@ -286,6 +286,7 @@ const SENSITIVE_FORM_FIELDS = [
   'force_format',
   'thinking_to_content',
   'proxy',
+  'upstream_egress_proxy_enabled',
   'http_protocol',
   'http2_connection_shards',
   'pass_through_body_enabled',
@@ -343,6 +344,8 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.force_format ||
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
+    values.video_cache_proxy_enabled ||
+    values.upstream_egress_proxy_enabled ||
     values.system_prompt_override ||
     values.minimax_video_prompt_enhance ||
     (values.http_protocol && values.http_protocol !== 'auto') ||
@@ -755,6 +758,9 @@ export function ChannelMutateDrawer({
   )
   const currentProxy = form.watch('proxy')
   const currentVideoCacheProxyEnabled = form.watch('video_cache_proxy_enabled')
+  const currentUpstreamEgressProxyEnabled = form.watch(
+    'upstream_egress_proxy_enabled'
+  )
   const currentMiniMaxVideoPromptEnhance = form.watch(
     'minimax_video_prompt_enhance'
   )
@@ -1029,6 +1035,7 @@ export function ChannelMutateDrawer({
     currentDisableTaskPollingSleep ||
     currentProxy?.trim() ||
     currentVideoCacheProxyEnabled ||
+    currentUpstreamEgressProxyEnabled ||
     currentMiniMaxVideoPromptEnhance ||
     currentSystemPrompt?.trim() ||
     currentSystemPromptOverride ||
@@ -4306,6 +4313,32 @@ export function ChannelMutateDrawer({
                                     <Switch
                                       checked={field.value}
                                       onCheckedChange={field.onChange}
+                                    />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name='upstream_egress_proxy_enabled'
+                              render={({ field }) => (
+                                <FormItem className='flex items-center justify-between px-4 py-3'>
+                                  <div className='space-y-0.5'>
+                                    <FormLabel>
+                                      {t('Use dedicated upstream egress proxy')}
+                                    </FormLabel>
+                                    <FormDescription>
+                                      {t(
+                                        "Route this channel's upstream requests through the dedicated egress. Client traffic remains on this server."
+                                      )}
+                                    </FormDescription>
+                                  </div>
+                                  <FormControl>
+                                    <Switch
+                                      checked={field.value === true}
+                                      onCheckedChange={field.onChange}
+                                      disabled={sensitiveLocked}
                                     />
                                   </FormControl>
                                 </FormItem>

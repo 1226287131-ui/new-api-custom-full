@@ -46,6 +46,25 @@ func initDefaultHTTPClientFixture(t *testing.T) *http.Client {
 	return httpClient
 }
 
+func TestResolveChannelProxyUsesDedicatedUpstreamEgressOptIn(t *testing.T) {
+	settings := dto.ChannelSettings{Proxy: "socks5://channel.example:1080"}
+	t.Setenv(upstreamEgressProxyEnv, "socks5h://egress.example:1080")
+
+	assert.Equal(t, "socks5://channel.example:1080", ResolveChannelProxy(settings))
+
+	settings.UpstreamEgressProxyEnabled = true
+	assert.Equal(t, "socks5h://egress.example:1080", ResolveChannelProxy(settings))
+}
+
+func TestResolveChannelProxyFallsBackWhenDedicatedEgressIsUnavailable(t *testing.T) {
+	settings := dto.ChannelSettings{
+		Proxy:                      "http://channel.example:8080",
+		UpstreamEgressProxyEnabled: true,
+	}
+	t.Setenv(upstreamEgressProxyEnv, "")
+	assert.Equal(t, settings.Proxy, ResolveChannelProxy(settings))
+}
+
 func TestShardedRoundTripperPerOriginRotation(t *testing.T) {
 	s := &shardedRoundTripper{n: 4}
 	originA := "https://a.example:443"

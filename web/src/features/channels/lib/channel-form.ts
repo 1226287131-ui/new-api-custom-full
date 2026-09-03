@@ -259,6 +259,7 @@ export const channelFormSchema = z
       .optional()
       .refine(isOptionalProxyURL, ERROR_MESSAGES.INVALID_PROXY),
     video_cache_proxy_enabled: z.boolean().optional(),
+    upstream_egress_proxy_enabled: z.boolean().optional(),
     http_protocol: z.enum(['auto', 'http1']).optional(),
     http2_connection_shards: z.number().int().optional(),
     pass_through_body_enabled: z.boolean().optional(),
@@ -434,6 +435,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   thinking_to_content: false,
   proxy: '',
   video_cache_proxy_enabled: false,
+  upstream_egress_proxy_enabled: false,
   http_protocol: HTTP_PROTOCOL_AUTO,
   http2_connection_shards: 1,
   pass_through_body_enabled: false,
@@ -477,6 +479,7 @@ export function transformChannelToFormDefaults(
     thinking_to_content: false,
     proxy: '',
     video_cache_proxy_enabled: false,
+    upstream_egress_proxy_enabled: false,
     http_protocol: HTTP_PROTOCOL_AUTO as 'auto' | 'http1',
     http2_connection_shards: 1,
     pass_through_body_enabled: false,
@@ -498,6 +501,8 @@ export function transformChannelToFormDefaults(
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
         video_cache_proxy_enabled: parsed.video_cache_proxy_enabled === true,
+        upstream_egress_proxy_enabled:
+          parsed.upstream_egress_proxy_enabled === true,
         http_protocol: protocol,
         http2_connection_shards: protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
@@ -630,6 +635,10 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
 
   if (formData.video_cache_proxy_enabled === true) {
     settingObj.video_cache_proxy_enabled = true
+  }
+
+  if (formData.upstream_egress_proxy_enabled === true) {
+    settingObj.upstream_egress_proxy_enabled = true
   }
 
   const protocol = normalizeHttpProtocol(formData.http_protocol)

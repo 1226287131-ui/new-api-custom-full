@@ -20,7 +20,8 @@ func FetchCodexChannelModels(channel *model.Channel) ([]string, error) {
 		return nil, fmt.Errorf("codex channel does not support multi-key model discovery")
 	}
 
-	client, err := NewProxyHttpClient(channel.GetSetting().Proxy)
+	channelSettings := channel.GetSetting()
+	client, err := GetHttpClientWithProxySettings(channelSettings.Proxy, channelSettings)
 	if err != nil {
 		return nil, err
 	}

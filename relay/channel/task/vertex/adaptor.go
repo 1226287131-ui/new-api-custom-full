@@ -111,7 +111,7 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 
 	proxy := ""
 	if info != nil {
-		proxy = info.ChannelSetting.Proxy
+		proxy = service.ResolveChannelProxy(info.ChannelSetting)
 	}
 	token, err := vertexcore.AcquireAccessToken(*adc, proxy)
 	if err != nil {

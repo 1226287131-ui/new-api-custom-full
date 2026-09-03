@@ -202,7 +202,7 @@ func prepareImageCacheJob(c *gin.Context, info *relaycommon.RelayInfo, body []by
 	for index := range sources {
 		sources[index].Headers = headers
 		if info != nil {
-			sources[index].Proxy = info.ChannelSetting.Proxy
+			sources[index].Proxy = service.ResolveChannelProxy(info.ChannelSetting)
 		}
 	}
 

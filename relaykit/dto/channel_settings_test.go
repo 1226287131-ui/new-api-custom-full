@@ -556,6 +556,17 @@ func TestChannelSettingsHTTPTransportJSONRoundTrip(t *testing.T) {
 	assert.NotContains(t, string(encoded), "http_protocol")
 }
 
+func TestChannelSettingsDedicatedUpstreamEgressJSONRoundTrip(t *testing.T) {
+	settings := ChannelSettings{UpstreamEgressProxyEnabled: true}
+	encoded, err := json.Marshal(settings)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"upstream_egress_proxy_enabled":true`)
+
+	var decoded ChannelSettings
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.True(t, decoded.UpstreamEgressProxyEnabled)
+}
+
 func TestChannelSettingsValidateHTTPTransport(t *testing.T) {
 	require.NoError(t, (&ChannelSettings{}).ValidateHTTPTransport())
 	require.NoError(t, (&ChannelSettings{HTTPProtocol: "AUTO"}).ValidateHTTPTransport())

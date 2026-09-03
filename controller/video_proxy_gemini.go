@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 )
 
@@ -37,7 +38,7 @@ func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) 
 		return "", fmt.Errorf("api key not available for task")
 	}
 
-	proxy := channel.GetSetting().Proxy
+	proxy := service.ResolveChannelProxy(channel.GetSetting())
 	resp, err := adaptor.FetchTask(baseURL, apiKey, map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
@@ -176,7 +177,7 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
-	}, channel.GetSetting().Proxy)
+	}, service.ResolveChannelProxy(channel.GetSetting()))
 	if err != nil {
 		return "", fmt.Errorf("fetch task failed: %w", err)
 	}

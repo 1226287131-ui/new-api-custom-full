@@ -17,6 +17,11 @@ type ChannelSettings struct {
 	// VideoCacheProxyEnabled routes only completed-video downloads through the
 	// deployment's dedicated cache egress. It never affects normal relay traffic.
 	VideoCacheProxyEnabled bool   `json:"video_cache_proxy_enabled,omitempty"`
+	// UpstreamEgressProxyEnabled routes this channel's upstream relay and task
+	// polling traffic through the deployment's dedicated upstream egress. The
+	// egress URL is read from UPSTREAM_EGRESS_PROXY; when it is unset, the
+	// channel's normal Proxy setting is retained.
+	UpstreamEgressProxyEnabled bool   `json:"upstream_egress_proxy_enabled,omitempty"`
 	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt           string `json:"system_prompt,omitempty"`
 	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
