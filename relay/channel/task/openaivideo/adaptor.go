@@ -72,8 +72,10 @@ var defaultVideoProfile = videoProfile{
 	name:               "default",
 	defaultDuration:    5,
 	minDuration:        5,
-	maxDuration:        15,
-	allowedDurations:   []int{5, 10, 15},
+	maxDuration:        30,
+	// Accept any integer duration within the profile's 5-30 second range.
+	// The upstream API does not require the legacy 5/10/15-second grid.
+	allowedDurations:   nil,
 	maxReferenceImages: defaultMaxReferenceImages,
 	maxReferenceVideos: defaultMaxReferenceVideos,
 	maxReferenceAudios: defaultMaxReferenceAudios,
