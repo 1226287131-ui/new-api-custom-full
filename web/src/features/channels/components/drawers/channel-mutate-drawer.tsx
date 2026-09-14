@@ -4112,59 +4112,127 @@ export function ChannelMutateDrawer({
                               )}
 
                               {currentType === CHANNEL_TYPE_OPENAI_VIDEO && (
-                                <FormField
-                                  control={form.control}
-                                  name='openai_video_profile'
-                                  render={({ field }) => (
-                                    <FormItem className='px-4 py-3'>
-                                      <FormLabel>
-                                        {t('Openai Video Profile')}
-                                      </FormLabel>
-                                      <Select
-                                        items={[
-                                          {
-                                            value: 'auto',
-                                            label: t('Auto (model aliases)'),
-                                          },
-                                          {
-                                            value: 'seedance-2.5',
-                                            label: t(
-                                              'Seedance 2.5 (unrestricted model names)'
-                                            ),
-                                          },
-                                        ]}
-                                        value={field.value || 'auto'}
-                                        onValueChange={field.onChange}
-                                      >
-                                        <FormControl>
-                                          <SelectTrigger>
-                                            <SelectValue />
-                                          </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent
-                                          alignItemWithTrigger={false}
-                                        >
-                                          <SelectGroup>
-                                            <SelectItem value='auto'>
-                                              {t('Auto (model aliases)')}
-                                            </SelectItem>
-                                            <SelectItem value='seedance-2.5'>
-                                              {t(
+                                <>
+                                  <FormField
+                                    control={form.control}
+                                    name='openai_video_profile'
+                                    render={({ field }) => (
+                                      <FormItem className='px-4 py-3'>
+                                        <FormLabel>
+                                          {t('Openai Video Profile')}
+                                        </FormLabel>
+                                        <Select
+                                          items={[
+                                            {
+                                              value: 'auto',
+                                              label: t('Auto (model aliases)'),
+                                            },
+                                            {
+                                              value: 'seedance-2.5',
+                                              label: t(
                                                 'Seedance 2.5 (unrestricted model names)'
-                                              )}
-                                            </SelectItem>
-                                          </SelectGroup>
-                                        </SelectContent>
-                                      </Select>
-                                      <FormDescription>
-                                        {t(
-                                          'When enabled, every downstream model on this channel uses the Seedance 2.5 request contract. Model mapping still controls the upstream model name.'
-                                        )}
-                                      </FormDescription>
-                                      <FormMessage />
-                                    </FormItem>
-                                  )}
-                                />
+                                              ),
+                                            },
+                                          ]}
+                                          value={field.value || 'auto'}
+                                          onValueChange={field.onChange}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent
+                                            alignItemWithTrigger={false}
+                                          >
+                                            <SelectGroup>
+                                              <SelectItem value='auto'>
+                                                {t('Auto (model aliases)')}
+                                              </SelectItem>
+                                              <SelectItem value='seedance-2.5'>
+                                                {t(
+                                                  'Seedance 2.5 (unrestricted model names)'
+                                                )}
+                                              </SelectItem>
+                                            </SelectGroup>
+                                          </SelectContent>
+                                        </Select>
+                                        <FormDescription>
+                                          {t(
+                                            'When enabled, every downstream model on this channel uses the Seedance 2.5 request contract. Model mapping still controls the upstream model name.'
+                                          )}
+                                        </FormDescription>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name='openai_video_endpoint'
+                                    render={({ field }) => (
+                                      <FormItem className='px-4 py-3'>
+                                        <FormLabel>
+                                          {t('Openai Video Endpoint')}
+                                        </FormLabel>
+                                        <Select
+                                          items={[
+                                            {
+                                              value: '/v1/videos',
+                                              label: t(
+                                                'Standard (/v1/videos)'
+                                              ),
+                                            },
+                                            {
+                                              value: '/v1/video/generations',
+                                              label: t(
+                                                'Legacy (/v1/video/generations)'
+                                              ),
+                                            },
+                                            {
+                                              value: '/v1/videos/generations',
+                                              label: t(
+                                                'Generations (/v1/videos/generations)'
+                                              ),
+                                            },
+                                          ]}
+                                          value={field.value || '/v1/videos'}
+                                          onValueChange={field.onChange}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent
+                                            alignItemWithTrigger={false}
+                                          >
+                                            <SelectGroup>
+                                              <SelectItem value='/v1/videos'>
+                                                {t('Standard (/v1/videos)')}
+                                              </SelectItem>
+                                              <SelectItem value='/v1/video/generations'>
+                                                {t(
+                                                  'Legacy (/v1/video/generations)'
+                                                )}
+                                              </SelectItem>
+                                              <SelectItem value='/v1/videos/generations'>
+                                                {t(
+                                                  'Generations (/v1/videos/generations)'
+                                                )}
+                                              </SelectItem>
+                                            </SelectGroup>
+                                          </SelectContent>
+                                        </Select>
+                                        <FormDescription>
+                                          {t(
+                                            'Select the upstream OpenAI Video route. Generations routes send aspect_ratio instead of ratio.'
+                                          )}
+                                        </FormDescription>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                </>
                               )}
 
                               {currentType === CHANNEL_TYPE_MINIMAX_VIDEO && (

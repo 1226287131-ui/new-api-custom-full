@@ -74,6 +74,71 @@ func TestBuildRequestURLUsesOpenAIVideoEndpoint(t *testing.T) {
 	assert.Equal(t, "openai-video", (&TaskAdaptor{}).GetChannelName())
 }
 
+func TestBuildRequestURLSupportsConfiguredOpenAIVideoEndpoints(t *testing.T) {
+	for _, endpoint := range []string{
+		"/v1/videos",
+		"/v1/video/generations",
+		"/v1/videos/generations",
+		"/unknown",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+				ApiKey:          "sk-test",
+				ChannelBaseUrl:  "https://upstream.example/",
+				ChannelSetting: dto.ChannelSettings{OpenAIVideoEndpoint: endpoint},
+			}}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+
+			requestURL, err := adaptor.BuildRequestURL(info)
+			require.NoError(t, err)
+			wantEndpoint := endpoint
+			if endpoint == "/unknown" {
+				wantEndpoint = "/v1/videos"
+			}
+			assert.Equal(t, "https://upstream.example"+wantEndpoint, requestURL)
+		})
+	}
+}
+
+func TestBuildRequestBodyUsesAspectRatioForGenerationsEndpoints(t *testing.T) {
+	for _, endpoint := range []string{"/v1/video/generations", "/v1/videos/generations"} {
+		t.Run(endpoint, func(t *testing.T) {
+			upstreamPayload, c, adaptor, info := buildOpenAIVideoRequestBody(t, map[string]any{
+				"model":  "seedance-2.0",
+				"prompt": "animate this",
+				"ratio":  "9:16",
+			})
+			info.ChannelSetting.OpenAIVideoEndpoint = endpoint
+
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			encoded, err := io.ReadAll(body)
+			require.NoError(t, err)
+			require.NoError(t, common.Unmarshal(encoded, &upstreamPayload))
+			assert.Equal(t, "9:16", upstreamPayload["aspect_ratio"])
+			assert.NotContains(t, upstreamPayload, "ratio")
+		})
+	}
+}
+
+func TestBuildRequestBodyKeepsRatioForStandardEndpoint(t *testing.T) {
+	upstreamPayload, c, adaptor, info := buildOpenAIVideoRequestBody(t, map[string]any{
+		"model":  "seedance-2.0",
+		"prompt": "animate this",
+		"ratio":  "9:16",
+	})
+	info.ChannelSetting.OpenAIVideoEndpoint = "/v1/videos"
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(body)
+	require.NoError(t, err)
+	require.NoError(t, common.Unmarshal(encoded, &upstreamPayload))
+	assert.Equal(t, "9:16", upstreamPayload["ratio"])
+	assert.NotContains(t, upstreamPayload, "aspect_ratio")
+}
+
 func TestBuildRequestBodyPreservesSeedanceMediaAndPrompt(t *testing.T) {
 	prompt := strings.Repeat("animate the reference subject with a smooth camera move; ", 999) + "finish with a smooth camera move"
 	upstreamPayload, c, adaptor, info := buildOpenAIVideoRequestBody(t, map[string]any{
@@ -795,6 +860,28 @@ func TestFetchTaskUsesOpenAIVideoStatusEndpoint(t *testing.T) {
 	defer server.Close()
 
 	resp, err := (&TaskAdaptor{}).FetchTask(server.URL, "sk-test", map[string]any{"task_id": "task_upstream"}, "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestFetchTaskUsesConfiguredOpenAIVideoStatusEndpoint(t *testing.T) {
+	service.InitHttpClient()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/video/generations/task_upstream", r.URL.Path)
+		assert.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ApiKey:          "sk-test",
+		ChannelBaseUrl:  server.URL,
+		ChannelSetting: dto.ChannelSettings{OpenAIVideoEndpoint: "/v1/video/generations"},
+	}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	resp, err := adaptor.FetchTask(server.URL, "sk-test", map[string]any{"task_id": "task_upstream"}, "")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

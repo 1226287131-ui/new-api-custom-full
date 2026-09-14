@@ -33,6 +33,12 @@ import (
 const normalizedRequestContextKey = "openai_video_normalized_request"
 
 const (
+	openAIVideoEndpointStandard    = "/v1/videos"
+	openAIVideoEndpointLegacy      = "/v1/video/generations"
+	openAIVideoEndpointGenerations = "/v1/videos/generations"
+)
+
+const (
 	defaultMaxReferenceImages = 9
 	defaultMaxReferenceVideos = 3
 	defaultMaxReferenceAudios = 3
@@ -131,13 +137,19 @@ type normalizedVideoRequest struct {
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	apiKey  string
-	baseURL string
+	apiKey   string
+	baseURL  string
+	endpoint string
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
+	if info == nil {
+		a.endpoint = openAIVideoEndpointStandard
+		return
+	}
 	a.apiKey = info.ApiKey
 	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
+	a.endpoint = normalizeOpenAIVideoEndpoint(info.ChannelSetting.OpenAIVideoEndpoint)
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *taskdto.TaskError {
@@ -348,7 +360,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	upstreamPayload["model"] = modelName
 	upstreamPayload["duration"] = duration
-	upstreamPayload["ratio"] = ratio
+	endpoint := a.endpointForInfo(info)
+	if isOpenAIVideoGenerationsEndpoint(endpoint) {
+		upstreamPayload["aspect_ratio"] = ratio
+		delete(upstreamPayload, "ratio")
+	} else {
+		upstreamPayload["ratio"] = ratio
+	}
 	upstreamPayload["resolution"] = resolution
 	if startFrameURL != "" {
 		upstreamPayload["start_frame_url"] = startFrameURL
@@ -428,8 +446,8 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	return map[string]float64{"seconds": float64(normalized.request.Duration)}
 }
 
-func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
-	return a.baseURL + "/v1/videos", nil
+func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	return a.baseURL + a.endpointForInfo(info), nil
 }
 
 func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
@@ -454,6 +472,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		payload[key] = value
 	}
 	payload["model"] = info.UpstreamModelName
+	if isOpenAIVideoGenerationsEndpoint(a.endpointForInfo(info)) {
+		if ratio, exists := payload["ratio"]; exists {
+			payload["aspect_ratio"] = ratio
+		}
+		delete(payload, "ratio")
+	}
 
 	body, err := common.Marshal(payload)
 	if err != nil {
@@ -511,7 +535,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	requestURL := strings.TrimRight(baseURL, "/") + "/v1/videos/" + url.PathEscape(taskID)
+	requestURL := strings.TrimRight(baseURL, "/") + normalizeOpenAIVideoEndpoint(a.endpoint) + "/" + url.PathEscape(taskID)
 	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, err
@@ -524,6 +548,34 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
 	return client.Do(req)
+}
+
+func (a *TaskAdaptor) endpointForInfo(info *relaycommon.RelayInfo) string {
+	if info != nil && info.ChannelMeta != nil {
+		return normalizeOpenAIVideoEndpoint(info.ChannelSetting.OpenAIVideoEndpoint)
+	}
+	return normalizeOpenAIVideoEndpoint(a.endpoint)
+}
+
+func normalizeOpenAIVideoEndpoint(endpoint string) string {
+	normalized := strings.TrimSpace(endpoint)
+	if normalized == "" {
+		return openAIVideoEndpointStandard
+	}
+	if !strings.HasPrefix(normalized, "/") {
+		normalized = "/" + normalized
+	}
+	normalized = strings.TrimRight(normalized, "/")
+	switch normalized {
+	case openAIVideoEndpointStandard, openAIVideoEndpointLegacy, openAIVideoEndpointGenerations:
+		return normalized
+	default:
+		return openAIVideoEndpointStandard
+	}
+}
+
+func isOpenAIVideoGenerationsEndpoint(endpoint string) bool {
+	return endpoint == openAIVideoEndpointLegacy || endpoint == openAIVideoEndpointGenerations
 }
 
 func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error) {

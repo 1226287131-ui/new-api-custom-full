@@ -28,6 +28,9 @@ type ChannelSettings struct {
 	// OpenAIVideoProfile selects the request contract for channel type 60.
 	// "seedance-2.5" applies the SD2.5 contract independently of model name.
 	OpenAIVideoProfile string `json:"openai_video_profile,omitempty"`
+	// OpenAIVideoEndpoint selects the upstream OpenAI Video API route. Empty
+	// values use the current standard endpoint (/v1/videos).
+	OpenAIVideoEndpoint string `json:"openai_video_endpoint,omitempty"`
 	// HTTPProtocol controls outbound HTTP version negotiation for this channel.
 	// Accepted values: "", "auto" (default), "http1".
 	HTTPProtocol string `json:"http_protocol,omitempty"`
