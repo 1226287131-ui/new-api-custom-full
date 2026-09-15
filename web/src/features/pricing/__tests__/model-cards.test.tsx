@@ -88,6 +88,98 @@ afterEach(() => {
 })
 
 describe('model cards', () => {
+  it.each([
+    { mode: 'per-second' as const, unit: '/ second' },
+    { mode: 'per-request' as const, unit: '/ request' },
+  ])(
+    'keeps a single $mode video price and its unit on the resolution row',
+    ({ mode, unit }) => {
+      render(
+        <ModelCard
+          model={pricingModel({
+            quota_type: 1,
+            task_billing_pricing: { mode, resolution_prices: { '720p': 3.5 } },
+          })}
+          onClick={vi.fn()}
+        />
+      )
+      const tier = screen.getByText('720p').parentElement
+      if (!tier) throw new Error('Expected a video resolution row')
+      expect(tier).toHaveClass('inline-flex', 'items-baseline')
+      const amount = within(tier).getByRole('definition')
+      expect(amount).toHaveTextContent(`$3.5 ${unit}`)
+      expect(amount).toHaveClass('inline-flex', 'flex-nowrap')
+      expect(tier.parentElement).toHaveClass('flex', 'flex-wrap')
+    }
+  )
+
+  it('keeps each image resolution with its price and unit after group and recharge conversion', () => {
+    render(
+      <ModelCard
+        model={pricingModel({
+          quota_type: 1,
+          billing_mode: 'image_resolution',
+          image_resolution_prices: { '1K': 0.5, '2K': 0.8, '4K': 1 },
+        })}
+        onClick={vi.fn()}
+        selectedGroup='premium'
+        showRechargePrice
+        priceRate={3}
+        usdExchangeRate={6}
+      />
+    )
+    for (const [label, value] of [
+      ['1K', '$0.75'],
+      ['2K', '$1.2'],
+      ['4K', '$1.5'],
+    ]) {
+      const tier = screen.getByText(label).parentElement
+      if (!tier) throw new Error('Expected an image resolution row')
+      expect(tier).toHaveClass('inline-flex', 'items-baseline')
+      const amount = within(tier).getByRole('definition')
+      expect(amount).toHaveTextContent(`${value} / Image`)
+      expect(amount).toHaveClass('flex-nowrap')
+    }
+    expect(screen.getAllByText('/ Image')).toHaveLength(3)
+  })
+
+  it('allows all six video tiers to wrap without hiding prices or splitting off their units', () => {
+    render(
+      <ModelCard
+        model={pricingModel({
+          quota_type: 1,
+          task_billing_pricing: {
+            mode: 'per-second',
+            resolution_prices: {
+              '480p': 0,
+              '720p': 0.1,
+              '768p': 0.2,
+              '1080p': 0.3,
+              '1440p': 0.4,
+              '4k': 123456.789,
+            },
+          },
+        })}
+        onClick={vi.fn()}
+      />
+    )
+    const tiers = screen.getByText('480p').closest('dl')
+    if (!tiers) throw new Error('Expected a resolution price list')
+    expect(tiers).toHaveClass('flex', 'flex-wrap')
+    expect(within(tiers).getAllByRole('term')).toHaveLength(6)
+    expect(within(tiers).getByText('2K')).toBeVisible()
+    expect(within(tiers).getByText('$0')).toBeVisible()
+    const tier = screen.getByText('4K').parentElement
+    if (!tier) throw new Error('Expected the 4K resolution row')
+    const amount = within(tier).getByRole('definition')
+    expect(amount).toHaveTextContent('$123,456.789 / second')
+    expect(amount).toHaveClass('max-w-full', 'min-w-0', 'flex-nowrap')
+    expect(within(amount).getByText('/ second')).toHaveClass(
+      'shrink-0',
+      'whitespace-nowrap'
+    )
+  })
+
   it('shows separate generic and image cache prices including a free image cache', () => {
     render(
       <CachedPriceCell

@@ -80,18 +80,26 @@ export function ResolutionPriceCell(props: {
     }
   }
   return (
-    <div className='col-span-full min-w-0 space-y-1'>
-      <div className='grid grid-cols-3 gap-2'>
+    <div className='col-span-full flex min-w-0 flex-col gap-1'>
+      <dl className='flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1'>
         {metrics.map((metric) => (
-          <div key={metric.label}>
-            <span className='text-muted-foreground block text-xs'>
-              {metric.label}
-            </span>
-            <span className='font-mono text-sm'>{metric.value}</span>
+          <div
+            key={metric.label}
+            className='inline-flex max-w-full min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5'
+          >
+            <dt className='text-muted-foreground text-xs'>{metric.label}</dt>
+            <dd className='inline-flex max-w-full min-w-0 flex-nowrap items-baseline gap-1 font-mono text-sm font-semibold tabular-nums'>
+              <span className='min-w-0 [overflow-wrap:anywhere]'>
+                {metric.value}
+              </span>
+              <span className='text-muted-foreground shrink-0 font-sans text-xs font-normal whitespace-nowrap'>
+                {' '}
+                / {unit}
+              </span>
+            </dd>
           </div>
         ))}
-      </div>
-      <div className='text-muted-foreground text-xs'>/ {unit}</div>
+      </dl>
       <ScheduledDiscountNotice state={discount} compact />
     </div>
   )
