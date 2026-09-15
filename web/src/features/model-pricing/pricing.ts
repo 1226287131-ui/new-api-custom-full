@@ -31,6 +31,7 @@ import {
   buildModelSnapshots,
   type ModelPricingSnapshot,
 } from '@/features/system-settings/models/model-pricing-snapshots'
+import type { PricingSyncValues } from '@/features/system-settings/types'
 
 import type { ModelPricingEntry } from './api'
 
@@ -218,7 +219,9 @@ export function pricingRow(
   let billingMode: ModelRatioData['billingMode'] = 'per-token'
   if (row?.billingMode === 'tiered_expr') billingMode = 'tiered_expr'
   else if (row?.billingMode === 'per-second') billingMode = 'per-second'
-  else if (row?.price) billingMode = 'per-request'
+  else if (row?.price || values.ImageResolutionPrice) {
+    billingMode = 'per-request'
+  }
   return {
     ...row,
     name,
@@ -294,7 +297,8 @@ export function applyPricingDraft(
 function applyPricingValues(
   options: PricingOptions,
   values: PricingValues,
-  names: string[]
+  names: string[],
+  preserveImageResolutionPrices = true
 ): PricingOptions {
   return Object.fromEntries(
     PRICING_KEYS.map((key) => {
@@ -318,7 +322,11 @@ function applyPricingValues(
         return [key, JSON.stringify(map)]
       }
       // The image resolution editor owns this field separately from the model editor.
-      if (key === 'ImageResolutionPrice' && values[key] === undefined) {
+      if (
+        preserveImageResolutionPrices &&
+        key === 'ImageResolutionPrice' &&
+        values[key] === undefined
+      ) {
         return [key, JSON.stringify(map)]
       }
       for (const name of names) {
@@ -384,19 +392,26 @@ export function pricingValuesByModel(
 
 export function applyPriceSyncSelections(
   options: PricingOptions,
-  selections: Record<string, Record<string, number | string>>
+  selections: Record<string, PricingSyncValues>
 ): PricingOptions {
   let result = options
   const existingModels = pricingValuesByModel(options)
   for (const [name, fields] of Object.entries(selections)) {
     const existing = existingModels.get(name)
+    const explicitMode = typeof fields.billing_mode === 'string'
     const next: PricingValues = {
       'billing_setting.task_billing_pricing':
-        existing?.['billing_setting.task_billing_pricing'],
+        fields.task_billing_pricing ??
+        (explicitMode
+          ? undefined
+          : existing?.['billing_setting.task_billing_pricing']),
       'billing_setting.scheduled_discount':
+        fields.scheduled_discount ??
         existing?.['billing_setting.scheduled_discount'],
+      ImageResolutionPrice: fields.image_resolution_price,
     }
     const expression =
+      (!explicitMode || fields.billing_mode === 'tiered_expr') &&
       typeof fields.billing_expr === 'string' &&
       fields.billing_expr.trim() !== ''
     if (expression) {
@@ -404,13 +419,17 @@ export function applyPriceSyncSelections(
       next['billing_setting.billing_expr'] = fields.billing_expr
     } else {
       const fixed = fields.model_price !== undefined
-      next['billing_setting.billing_mode'] =
-        fixed &&
-        (existing?.['billing_setting.billing_mode'] === 'per-second' ||
-          existing?.['billing_setting.task_billing_pricing']?.mode ===
-            'per-second')
-          ? 'per-second'
-          : 'ratio'
+      let mode = fields.billing_mode
+      if (mode === undefined) {
+        mode = fields.task_billing_pricing?.mode
+      }
+      if (mode === undefined && fixed) {
+        mode =
+          existing?.['billing_setting.billing_mode'] ??
+          existing?.['billing_setting.task_billing_pricing']?.mode
+      }
+      if (mode !== 'per-second' && mode !== 'per-request') mode = 'ratio'
+      next['billing_setting.billing_mode'] = mode
       for (const [field, value] of Object.entries(fields)) {
         if (field === 'billing_mode' || field === 'billing_expr') continue
         if (fixed && field !== 'model_price') continue
@@ -423,19 +442,26 @@ export function applyPriceSyncSelections(
           key !== 'billing_setting.plugin_billing_expr' &&
           key !== 'ImageResolutionPrice' &&
           key !== 'billing_setting.task_billing_pricing' &&
-          key !== 'billing_setting.scheduled_discount'
+          key !== 'billing_setting.scheduled_discount' &&
+          (typeof value === 'number' || typeof value === 'string')
         ) {
           next[key] = value
         }
       }
     }
     const validated = pricingFromDraft(pricingRow(name, next))
+    if (fields.image_resolution_price !== undefined) {
+      validated.ImageResolutionPrice = fields.image_resolution_price
+      if (!explicitMode || fields.billing_mode === 'image_resolution') {
+        validated['billing_setting.billing_mode'] = 'image_resolution'
+      }
+    }
     if (expression) {
       // Sync is a literal import. The editor may normalize request-rule
       // parentheses, which would otherwise produce another upstream diff.
       validated['billing_setting.billing_expr'] = fields.billing_expr
     }
-    result = applyPricingValues(result, validated, [name])
+    result = applyPricingValues(result, validated, [name], !explicitMode)
   }
   return result
 }

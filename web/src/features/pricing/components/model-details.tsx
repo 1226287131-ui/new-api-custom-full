@@ -124,6 +124,7 @@ import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelDetailsApi } from './model-details-api'
 import { ModelDetailsPerformance } from './model-details-performance'
+import { ModelTaskSuccessRate } from './model-task-success-rate'
 import { ScheduledDiscountNotice } from './scheduled-discount-notice'
 
 // ----------------------------------------------------------------------------
@@ -1777,6 +1778,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                 }}
               />
             )}
+            <ModelTaskSuccessRate model={props.model} />
             <GroupPricingSection
               model={props.model}
               groupRatio={props.groupRatio}

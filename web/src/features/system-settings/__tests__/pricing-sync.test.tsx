@@ -38,12 +38,41 @@ import { api } from '@/lib/api'
 import { UpstreamRatioSync } from '../models/upstream-ratio-sync'
 import {
   getSyncPriceLines,
+  getSyncPriceKind,
   type PricingSourceSelections,
 } from '../models/upstream-ratio-sync-helpers'
 import { UpstreamRatioSyncTable } from '../models/upstream-ratio-sync-table'
 import type { PricingSyncModels } from '../types'
 
 const expression = 'tier("base", p * 2 + c * 8 + cr * 0)'
+
+it('previews seconds, image tiers and a video default using their source units', () => {
+  expect(
+    getSyncPriceKind({ model_price: 0.2, billing_mode: 'per-second' })
+  ).toBe('second')
+  expect(
+    getSyncPriceLines(
+      { model_price: 0.2, billing_mode: 'per-second' },
+      (key) => key
+    )
+  ).toEqual([{ label: 'Per-second', value: '$0.2' }])
+  expect(
+    getSyncPriceLines(
+      { image_resolution_price: { '1K': 0, '2K': 0.2, '4K': 0.4 } },
+      (key) => key
+    )
+  ).toEqual([
+    { label: '1K', value: '$0 / image' },
+    { label: '2K', value: '$0.2 / image' },
+    { label: '4K', value: '$0.4 / image' },
+  ])
+  expect(
+    getSyncPriceLines(
+      { task_billing_pricing: { mode: 'per-second', default_price: 0.2 } },
+      (key) => key
+    )
+  ).toEqual([{ label: 'Default', value: '$0.2 / second' }])
+})
 const differences = {
   m: {
     model_ratio: {
@@ -160,17 +189,34 @@ describe('pricing synchronization', () => {
     ).not.toBeInTheDocument()
     const user = userEvent.setup()
     const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
-    await user.click(screen.getByRole('button', { name: 'Copy billing expression' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Copy billing expression' })
+    )
     expect(copy).toHaveBeenCalledWith(expression)
   })
 
   it('shows every parsed tier and falls back to the full expression when pricing cannot be parsed safely', () => {
-    const tiered = 'len <= 128000 ? tier("base", p * 2 + c * 8 + cr * 0.2) : tier("long", p * 4 + c * 12 + cr * 0.4)'
+    const tiered =
+      'len <= 128000 ? tier("base", p * 2 + c * 8 + cr * 0.2) : tier("long", p * 4 + c * 12 + cr * 0.4)'
     const custom = 'tier("custom", p * 2 + c * 8) * max(1, param("factor"))'
-    render(<TableFixture prices={{
-      tiered: { current: {}, upstreams: { upstream: { billing_mode: 'tiered_expr', billing_expr: tiered } } },
-      custom: { current: {}, upstreams: { upstream: { billing_mode: 'tiered_expr', billing_expr: custom } } },
-    }} />)
+    render(
+      <TableFixture
+        prices={{
+          tiered: {
+            current: {},
+            upstreams: {
+              upstream: { billing_mode: 'tiered_expr', billing_expr: tiered },
+            },
+          },
+          custom: {
+            current: {},
+            upstreams: {
+              upstream: { billing_mode: 'tiered_expr', billing_expr: custom },
+            },
+          },
+        }}
+      />
+    )
     expect(screen.queryByText(tiered)).not.toBeInTheDocument()
     expect(screen.getByText(/128,000/)).toBeVisible()
     expect(screen.getByText('$0.2')).toBeVisible()
@@ -411,8 +457,12 @@ describe('pricing synchronization', () => {
     const preview = screen.getByRole('alertdialog', {
       name: 'Preview price changes',
     })
-    expect(within(preview).getByText(/Expression pricing/)).toHaveTextContent('Input: $2')
-    expect(within(preview).getByText(/Expression pricing/)).toHaveTextContent('Output: $8')
+    expect(within(preview).getByText(/Expression pricing/)).toHaveTextContent(
+      'Input: $2'
+    )
+    expect(within(preview).getByText(/Expression pricing/)).toHaveTextContent(
+      'Output: $8'
+    )
     expect(within(preview).queryByText(expression)).not.toBeInTheDocument()
     expect(patch).not.toHaveBeenCalled()
     await user.click(

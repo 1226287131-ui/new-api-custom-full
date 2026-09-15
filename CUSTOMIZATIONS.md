@@ -37,8 +37,12 @@ are separate from this NewAPI repository.
 - The new atomic model-pricing API preserves `ImageResolutionPrice`,
   `billing_setting.task_billing_pricing` and
   `billing_setting.scheduled_discount`, including optimistic concurrency,
-  reset and rollback behavior. Ordinary price synchronization does not erase
-  the custom resolution prices or scheduled discounts.
+  reset and rollback behavior. Editing another model price field retains
+  separately configured image resolution prices. Legacy base-price imports
+  without an explicit billing mode retain local resolution prices. An explicit
+  upstream billing mode replaces the previous pricing strategy, including
+  incompatible resolution tables; supplied image/task tables and discounts
+  are imported. Local discounts survive imports that omit a discount.
 - New built-in expressions do not silently replace administrator-configured
   legacy prices. Frozen group/user ratios and scheduled discounts continue
   through image reservation adjustments and asynchronous task settlement.
@@ -392,6 +396,124 @@ unbounded header wait. This is distinct from an already-open response stream.
 
 No production migration, upstream paid request, GitHub push or live deployment
 is part of this source integration verification.
+
+## Post-merge review fixes
+
+The independent review found three behavioral gaps that a successful build did
+not detect: accepted video tasks could be refunded and discarded on a client
+disconnect, the model-management pricing panel omitted image resolution prices
+from its complete draft, and upstream synchronization ignored per-second versus
+per-request billing modes.
+
+- Native legacy video submission now uses a bounded upstream operation lifetime
+  independent of the client connection, while cancellation before sending still
+  stops the request. An accepted result proceeds to persistence and settlement;
+  client cancellation and submission expiry do not discard its upstream ID.
+  The submission limit defaults to 30 minutes and respects a positive configured
+  `RELAY_TIMEOUT`, including a longer timeout. The database insert has a separate
+  30-second context; the existing Reserve/Settle interfaces do not gain a hard
+  timeout. Pinned plugins retain their submission context, including the official
+  Responses bridge's independently bounded context. This is not an outbox or
+  a guarantee against process crashes, database outages, or an upstream timeout
+  before an acceptance ID can be recovered.
+- Model-management saves retain the existing image resolution table, including
+  explicit zero prices, without overriding a selected expression billing mode.
+- Price synchronization follows the source's explicit billing mode, imports
+  custom resolution tables and discount objects, and displays the matching unit
+  in the selection and confirmation previews.
+
+Review-fix validation on 2026-09-15:
+
+- `go test ./controller -run '^(TestLegacyVideoAcceptedDisconnectDatabase|TestImmediateTaskSettlementDatabase)$' -count=1 -v`
+  passed separately with `TEST_TASK_DB_DIALECT=sqlite`, `mysql`, and `postgres`.
+  MySQL/PostgreSQL used dedicated loopback `TEST_MYSQL_DSN`/`TEST_POSTGRES_DSN`
+  databases. Actual versions were SQLite 3.50.4, MySQL 8.4.6 and PostgreSQL 17.6.
+  Both response-header and response-body disconnect windows preserve one task,
+  one upstream submission, and consistent wallet, used-quota and consume-log
+  values; repeated settlement/refund calls do not charge or refund again.
+- `go test ./controller -run '^TestModelPricingExtensionsDatabaseMatrix$' -count=1 -v`
+  passed on the same three engines with dedicated `AUDIT_MYSQL_DSN` and
+  `AUDIT_POSTGRES_DSN` databases. It verifies image tiers (including zero),
+  discounts, video tiers, and per-second to per-request changes through actual
+  pricing PATCH/GET and runtime pricing resolution.
+- Frontend regression files `pricing.test.ts`, `editor-layout.test.tsx`, and
+  `pricing-sync.test.tsx` passed together: 36 tests. Typecheck, changed-file lint,
+  and `bun run build` passed. Existing translation keys cover all seven locales.
+- `go build -p 2 ./...` and `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -p 2 .`
+  passed with the rebuilt frontend embedded. The D: build mirror matches all
+  eleven changed frontend source files; its final `dist` replaces the previous
+  generated output, which was backed up locally.
+- The final root-module `go test -p 2 ./...` rerun passed with no tests skipped
+  to suppress a failure. Database tests requiring explicit DSNs were verified
+  separately against the three real engines above.
+
+A full-suite run encountered `SQLITE_BUSY` in the unchanged official
+`TestSecurityAccountDeletionConcurrentRequestsHaveOneWinner` test. Independent
+reproduction passed without changes. The failed run had committed deletion and
+the auth-version increment but returned no success response; review identifies
+the subsequent session revocation as the lock-contention boundary. The official
+authentication implementation and its safety assertions were not changed or
+weakened as part of this repair. The subsequent complete suite also passed;
+the observed SQLite concurrency failure remains documented here.
+
+The scratch MySQL and PostgreSQL services were stopped after verification, with
+their local data retained. No production database, server, GitHub branch or live
+deployment was changed by this repair.
+
+## Model plaza task success rate
+
+Video and other models backed by the task log show their recent generation
+success rate in the model card and detail view, independently of the existing
+request-performance indicators. The rolling cohort consists of task submissions
+in the last hour. Only `SUCCESS` and `FAILURE` form the denominator:
+`success / (success + failure) * 100`. Unfinished and unknown-status tasks are
+reported as pending, never silently counted as failures. A model with no recent
+tasks shows no generation records; a model with only pending tasks shows that
+generation is still in progress. A failed statistics request is not an empty
+cohort and must not display a fabricated percentage.
+
+The public statistics contain model-level counts only, limited to models and
+groups visible to the current viewer. They aggregate those visible groups and
+do not change with the frontend's price-group selector. Identity comes from the
+task's saved client-facing model name, never by combining upstream model aliases.
+Only persisted task records are included; rejected requests that never created
+a task are outside this task-log metric. The separate legacy Midjourney log is
+not part of the Task-table metric.
+
+The UI reuses the existing card/detail composition and a shared batch query,
+with separate loading/error states. Statistics refresh without reloading prices
+or blocking the model plaza. Backend aggregation is cached and bounded by a
+query timeout, with no changes to submission, quota, settlement, or task status.
+
+Validation on 2026-09-16:
+
+- The real task-statistics database matrix passed on SQLite 3.50.4, MySQL 8.4.6,
+  and PostgreSQL 17.6. It covers submission-window boundaries, pending exclusion,
+  zero versus absent rates, client model aliases, JSON null compatibility,
+  model/group visibility, cached-snapshot filtering, cancellation, and private
+  no-store responses. The five-second failed-refresh cache was code-reviewed,
+  not fault-injection tested. The local database services were stopped afterward.
+- Fifteen new frontend regression tests passed, including card/detail wiring,
+  tooltip counts, shared queries, login cache isolation, and error states.
+  Typecheck, changed-file lint, seven-locale synchronization, and production
+  build passed. Desktop and 390 x 844 browser checks verified the percentage,
+  no-records, all-pending, and failed-query views without horizontal overflow.
+  Browser checks used synthetic local fixtures, not production requests.
+- Final frontend sources matched the build mirror. The generated `web/dist`
+  was refreshed after preserving its previous output outside the repository.
+  `go build -p 2 ./...` and the Linux/amd64 CGO-disabled executable build passed
+  with that rebuilt frontend embedded.
+- The first full Go run encountered an unchanged upstream HTTP/2 test failure:
+  `TestUpstreamGetBody_HTTP2CannotRetryWithoutGetBody` received a Windows socket
+  reset instead of its expected retry-error text. That test passed independently
+  without edits, and the subsequent complete `go test -p 2 ./...` passed. No
+  assertion was removed or weakened. The observed intermittent failure remains
+  a separate upstream-test concern.
+
+At the end of local validation, this feature had not been committed, pushed, or
+deployed. It adds read-only statistics and does not change the database schema
+or billing paths. The subsequent release was authorized on 2026-09-16; deployment
+verification is recorded separately from these local test results.
 
 Do not commit deployment `.env` files, API keys, database dumps, logs, cached
 images, or cached videos. Each deployment should keep its own database and

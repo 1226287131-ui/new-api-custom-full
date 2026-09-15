@@ -26,6 +26,7 @@ type PricingPluginVariant struct {
 }
 
 type Pricing struct {
+	IsTaskModel            bool                                     `json:"is_task_model,omitempty"`
 	TaskBillingPricing     *billing_setting.TaskBillingPriceConfig  `json:"task_billing_pricing,omitempty"`
 	ScheduledDiscount      *billing_setting.ScheduledDiscountConfig `json:"scheduled_discount,omitempty"`
 	ImageResolutionPrices  *ratio_setting.ImageResolutionPrice      `json:"image_resolution_prices,omitempty"`
@@ -232,6 +233,7 @@ func updatePricing() {
 	}
 
 	modelGroupsMap := make(map[string]*types.Set[string])
+	taskModels := make(map[string]bool)
 
 	for _, ability := range enableAbilities {
 		groups, ok := modelGroupsMap[ability.Model]
@@ -240,6 +242,18 @@ func updatePricing() {
 			modelGroupsMap[ability.Model] = groups
 		}
 		groups.Add(ability.Group)
+		// Mixed chat/image providers (OpenAI, Gemini, Vertex, Alibaba, etc.)
+		// need a plugin model binding below; their channel type alone is not
+		// evidence that every advertised model creates asynchronous tasks.
+		switch ability.ChannelType {
+		case constant.ChannelTypeKling, constant.ChannelTypeJimeng, constant.ChannelTypeVidu,
+			constant.ChannelTypeDoubaoVideo, constant.ChannelTypeSora, constant.ChannelTypeNewAPIVideo,
+			constant.ChannelTypeOpenAIVideo, constant.ChannelTypeGrokVideo, constant.ChannelTypeMiniMaxVideo,
+			constant.ChannelTypeTaskPlugin, constant.ChannelTypeSunoAPI:
+			taskModels[ability.Model] = true
+		case constant.ChannelTypeGemini, constant.ChannelTypeVertexAi:
+			taskModels[ability.Model] = taskModels[ability.Model] || strings.HasPrefix(strings.ToLower(ability.Model), "veo-")
+		}
 	}
 
 	//这里使用切片而不是Set，因为一个模型可能支持多个端点类型，并且第一个端点是优先使用端点
@@ -331,9 +345,15 @@ func updatePricing() {
 	pluginGeneration := jsplugin.DefaultRegistry.Generation()
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
+			IsTaskModel:            taskModels[model],
 			ModelName:              model,
 			EnableGroup:            groups.Items(),
 			SupportedEndpointTypes: modelSupportEndpointTypes[model],
+		}
+		for _, endpoint := range pricing.SupportedEndpointTypes {
+			if endpoint == constant.EndpointTypeOpenAIVideo {
+				pricing.IsTaskModel = true
+			}
 		}
 
 		// 补充模型元数据（描述、标签、供应商、状态）
@@ -396,6 +416,7 @@ func updatePricing() {
 			}
 		}
 		if taskPricing, ok := billing_setting.GetTaskBillingPriceConfig(model); ok {
+			pricing.IsTaskModel = true
 			pricing.TaskBillingPricing = &taskPricing
 			if pricing.BillingMode == "" {
 				pricing.BillingMode = taskPricing.Mode
@@ -413,6 +434,7 @@ func updatePricing() {
 			}
 		}
 		if ok && plugin != nil {
+			pricing.IsTaskModel = true
 			usageSchema, usageExamples := plugin.Meta.UsageForModel(usageModel)
 			pricing.BillingUsageSchema = jsplugin.CloneUsageSchema(usageSchema)
 			pricing.BillingUsageExamples = jsplugin.CloneUsageExamples(usageExamples)

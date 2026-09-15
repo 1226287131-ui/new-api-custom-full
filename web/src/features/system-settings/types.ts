@@ -16,6 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type {
+  ImageResolutionPrices,
+  ScheduledDiscountConfig,
+  TaskBillingPriceConfig,
+} from '@/features/pricing/types'
+
 export type SystemOption = {
   key: string
   value: string
@@ -481,7 +487,11 @@ export type DifferencesMap = Record<
   Partial<Record<RatioType, RatioDifference>>
 >
 
-export type PricingSyncValues = Partial<Record<RatioType, number | string>>
+export type PricingSyncValues = Partial<Record<RatioType, number | string>> & {
+  image_resolution_price?: ImageResolutionPrices
+  task_billing_pricing?: TaskBillingPriceConfig
+  scheduled_discount?: ScheduledDiscountConfig
+}
 export type PricingSyncModels = Record<
   string,
   { current: PricingSyncValues; upstreams: Record<string, PricingSyncValues> }

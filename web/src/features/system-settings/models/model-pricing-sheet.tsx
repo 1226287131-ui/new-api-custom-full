@@ -516,7 +516,10 @@ export const ModelPricingEditorPanel = forwardRef<
     initialPricingMode = hasValue(editData?.price) ? 'per-request' : 'per-token'
   }
   if (editData?.billingMode === 'per-second') initialPricingMode = 'per-second'
-  if (editData?.taskBillingPricing) {
+  if (editData?.billingMode === 'per-request') {
+    initialPricingMode = 'per-request'
+  }
+  if (editData?.taskBillingPricing && editData.billingMode !== 'tiered_expr') {
     initialPricingMode =
       parseTaskBillingPricing(editData.taskBillingPricing)?.mode ??
       initialPricingMode

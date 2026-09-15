@@ -75,6 +75,10 @@ export type BillingPluginVariant = {
 }
 
 export type PricingModel = {
+  is_task_model?: boolean
+  /** Populated by the shared task statistics query, independently of pricing. */
+  task_success_stats?: TaskSuccessStats
+  task_success_status?: 'loading' | 'error' | 'ready'
   billing_plugin_variants?: BillingPluginVariant[]
   id: number
   model_name: string
@@ -126,6 +130,24 @@ export type PricingModel = {
   input_modalities?: Modality[]
   output_modalities?: Modality[]
   capabilities?: ModelCapability[]
+}
+
+export type TaskSuccessStats = {
+  total: number
+  success: number
+  failure: number
+  pending: number
+  success_rate: number | null
+}
+
+export type TaskSuccessRatesResponse = {
+  success: boolean
+  message?: string
+  data: {
+    window_start: number
+    window_end: number
+    models: Record<string, TaskSuccessStats>
+  }
 }
 
 /** Input/output modalities supported by a model. */

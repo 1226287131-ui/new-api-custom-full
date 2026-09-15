@@ -92,11 +92,20 @@ export function ModelPricingPanel(props: {
     try {
       const draft = reset ? null : await editor.current?.commitDraft()
       if (!reset && !draft) return
+      const pricing = draft ? pricingFromDraft(draft) : {}
+      // Resolution prices have their own editor; the atomic API replaces the
+      // complete model, so unrelated price edits must carry them forward.
+      if (draft && entry.configured.ImageResolutionPrice !== undefined) {
+        pricing.ImageResolutionPrice = entry.configured.ImageResolutionPrice
+        if (draft.billingMode !== 'tiered_expr') {
+          pricing['billing_setting.billing_mode'] = 'image_resolution'
+        }
+      }
       await save.mutateAsync([
         {
           model_name: entry.model_name,
           expected_version: entry.version,
-          pricing: draft ? pricingFromDraft(draft) : {},
+          pricing,
           reset,
         },
       ])

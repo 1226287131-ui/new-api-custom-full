@@ -25,6 +25,7 @@ import {
   pricingFromDraft,
   pricingOptions,
   pricingRow,
+  pricingValuesByModel,
 } from '../pricing'
 
 describe('shared model pricing', () => {
@@ -259,6 +260,87 @@ it('retains custom resolution pricing and discount schedules when syncing the ba
   expect(JSON.parse(after['billing_setting.billing_mode']).video).toBe(
     'per-second'
   )
+})
+
+it.each([
+  ['per-second', 'per-request'],
+  ['per-request', 'per-second'],
+] as const)(
+  'uses the upstream %s unit instead of a local %s unit',
+  (source, local) => {
+    const options = pricingOptions({
+      ModelPrice: '{"video":1}',
+      BillingMode: JSON.stringify({ video: local }),
+      TaskBillingPricing: JSON.stringify({
+        video: { mode: local, resolution_prices: { '720p': 5 } },
+      }),
+    })
+    const after = applyPriceSyncSelections(options, {
+      video: { billing_mode: source, model_price: 0.2 },
+    })
+    expect(pricingValuesByModel(after).get('video')).toEqual({
+      ModelPrice: 0.2,
+      'billing_setting.billing_mode': source,
+    })
+  }
+)
+
+it('imports upstream image, video and discount pricing without losing zero prices', () => {
+  const image = { '1K': 0, '2K': 0.2, '4K': 0.4 }
+  const task = {
+    mode: 'per-second' as const,
+    resolution_prices: { '720p': 0, '4k': 0.3 },
+  }
+  const discount = {
+    enabled: true,
+    start: '22:00',
+    end: '06:00',
+    discount: 0.8,
+  }
+  const after = applyPriceSyncSelections(pricingOptions({}), {
+    image: { billing_mode: 'image_resolution', image_resolution_price: image },
+    video: {
+      billing_mode: 'per-second',
+      task_billing_pricing: task,
+      scheduled_discount: discount,
+    },
+  })
+  expect(pricingValuesByModel(after).get('image')).toEqual({
+    ImageResolutionPrice: image,
+    'billing_setting.billing_mode': 'image_resolution',
+  })
+  expect(pricingValuesByModel(after).get('video')).toEqual({
+    'billing_setting.task_billing_pricing': task,
+    'billing_setting.scheduled_discount': discount,
+    'billing_setting.billing_mode': 'per-second',
+  })
+})
+
+it('clears obsolete image tiers when an upstream explicitly switches to a fixed price', () => {
+  const options = pricingOptions({
+    ImageResolutionPrice: '{"image":{"1K":0.1,"2K":0.2,"4K":0.4}}',
+  })
+  const after = applyPriceSyncSelections(options, {
+    image: { billing_mode: 'per-request', model_price: 0.5 },
+  })
+  expect(pricingValuesByModel(after).get('image')).toEqual({
+    ModelPrice: 0.5,
+    'billing_setting.billing_mode': 'per-request',
+  })
+})
+
+it('keeps an explicit upstream expression active when dormant image prices are included', () => {
+  const after = applyPriceSyncSelections(pricingOptions({}), {
+    image: {
+      billing_mode: 'tiered_expr',
+      billing_expr: 'tier("base", p * 2)',
+      image_resolution_price: { '1K': 0, '2K': 0.2, '4K': 0.4 },
+    },
+  })
+  expect(pricingValuesByModel(after).get('image')).toMatchObject({
+    'billing_setting.billing_mode': 'tiered_expr',
+    'billing_setting.billing_expr': 'tier("base", p * 2)',
+  })
 })
 
 it('commits source provider edits while preserving target providers during batch copy', () => {

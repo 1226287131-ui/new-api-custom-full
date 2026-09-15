@@ -18,7 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createContext, useContext } from 'react'
 
-import { BILLING_PRICING_VARS, splitBillingExprAndRequestRules } from '@/features/pricing/lib/billing-expr'
+import {
+  BILLING_PRICING_VARS,
+  splitBillingExprAndRequestRules,
+} from '@/features/pricing/lib/billing-expr'
 import { tryParseVisualConfig } from '@/features/pricing/lib/tier-expr'
 
 import type { PricingSyncValues } from '../types'
@@ -54,7 +57,7 @@ export function getUpstreamDisplayName(
 
 export function getSyncPriceKind(
   values?: PricingSyncValues
-): 'expression' | 'request' | 'token' | 'unset' {
+): 'expression' | 'request' | 'second' | 'resolution' | 'token' | 'unset' {
   if (
     values?.billing_mode === 'tiered_expr' &&
     typeof values.billing_expr === 'string' &&
@@ -62,7 +65,12 @@ export function getSyncPriceKind(
   ) {
     return 'expression'
   }
-  if (typeof values?.model_price === 'number') return 'request'
+  if (values?.image_resolution_price || values?.task_billing_pricing) {
+    return 'resolution'
+  }
+  if (typeof values?.model_price === 'number') {
+    return values.billing_mode === 'per-second' ? 'second' : 'request'
+  }
   if (typeof values?.model_ratio === 'number') return 'token'
   return 'unset'
 }
@@ -77,7 +85,7 @@ export function sameSyncPrice(
     const b = right[field as keyof PricingSyncValues]
     if (typeof a === 'number' && typeof b === 'number') {
       if (Math.abs(a - b) >= 1e-9) return false
-    } else if (a !== b) return false
+    } else if (JSON.stringify(a) !== JSON.stringify(b)) return false
   }
   return true
 }
@@ -88,10 +96,28 @@ export function getSyncPriceLines(
   values: PricingSyncValues,
   t: (key: string) => string
 ): Array<{ label: string; value: string }> {
-  if (getSyncPriceKind(values) === 'request') {
+  if (getSyncPriceKind(values) === 'resolution') {
+    const task = values.task_billing_pricing
+    const unit = task?.mode === 'per-second' ? t('second') : t('request')
+    const prices =
+      values.image_resolution_price ?? task?.resolution_prices ?? {}
+    const lines = Object.entries(prices).map(([resolution, price]) => ({
+      label: resolution === '1440p' ? '2K' : resolution,
+      value: `$${formatPricingNumber(price)} / ${values.image_resolution_price ? t('image') : unit}`,
+    }))
+    if (!values.image_resolution_price && task?.default_price !== undefined) {
+      lines.unshift({
+        label: t('Default'),
+        value: `$${formatPricingNumber(task.default_price)} / ${unit}`,
+      })
+    }
+    return lines
+  }
+  const kind = getSyncPriceKind(values)
+  if (kind === 'request' || kind === 'second') {
     return [
       {
-        label: t('Per-request'),
+        label: kind === 'second' ? t('Per-second') : t('Per-request'),
         value: `$${formatPricingNumber(values.model_price)}`,
       },
     ]
@@ -127,30 +153,47 @@ export function getSyncPriceLines(
   return lines
 }
 
-export function getSyncExpressionPricing(expression: string, t: (key: string) => string) {
-  const { billingExpr, requestRuleExpr } = splitBillingExprAndRequestRules(expression)
+export function getSyncExpressionPricing(
+  expression: string,
+  t: (key: string) => string
+) {
+  const { billingExpr, requestRuleExpr } =
+    splitBillingExprAndRequestRules(expression)
   const config = tryParseVisualConfig(billingExpr)
   if (!config) return null
   // Do not turn malformed or overflowing upstream numbers into free prices.
-  const body = billingExpr.replace(/"(?:\\.|[^"\\])*"/g, '')
+  const body = billingExpr.replaceAll(/"(?:\\.|[^"\\])*"/g, '')
   for (const match of body.matchAll(/\*\s*([+\-\d.eE]+)/g)) {
     if (!Number.isFinite(Number(match[1])) || Number(match[1]) < 0) return null
   }
-  const fields = BILLING_PRICING_VARS.filter((field) =>
-    field.tierField && new RegExp(`\\b${field.key}\\s*\\*`).test(body)
+  const fields = BILLING_PRICING_VARS.filter(
+    (field) =>
+      field.tierField && new RegExp(`\\b${field.key}\\s*\\*`).test(body)
   )
-  const conditionLabels = { p: t('Input tokens'), c: t('Output tokens'), len: t('Length') }
+  const conditionLabels = {
+    p: t('Input tokens'),
+    c: t('Output tokens'),
+    len: t('Length'),
+  }
   return {
     requestRuleExpr,
     tiers: config.tiers.map((tier) => ({
       label: tier.label,
-      condition: tier.conditions.map((condition) =>
-        `${conditionLabels[condition.var]} ${condition.op} ${Number(condition.value).toLocaleString()}`
-      ).join(' ∧ '),
-      lines: fields.map((field) => ({
-        label: t(field.shortLabel),
-        value: `$${formatPricingNumber(Number(tier[field.tierField!]))}`,
-      })),
+      condition: tier.conditions
+        .map(
+          (condition) =>
+            `${conditionLabels[condition.var]} ${condition.op} ${Number(condition.value).toLocaleString()}`
+        )
+        .join(' ∧ '),
+      lines: fields.flatMap((field) => {
+        if (!field.tierField) return []
+        return [
+          {
+            label: t(field.shortLabel),
+            value: `$${formatPricingNumber(Number(tier[field.tierField]))}`,
+          },
+        ]
+      }),
     })),
   }
 }
@@ -167,17 +210,23 @@ export function describeSyncPrice(
         t('Expression pricing'),
         `USD / ${t('1M token')}`,
         ...parsed.tiers.flatMap((tier) => [
-          ...(parsed.tiers.length > 1 ? [tier.condition || tier.label || t('Default')] : []),
+          ...(parsed.tiers.length > 1
+            ? [tier.condition || tier.label || t('Default')]
+            : []),
           ...tier.lines.map((line) => `${line.label}: ${line.value}`),
         ]),
-        ...(parsed.requestRuleExpr ? [`${t('Includes request rules')}: ${parsed.requestRuleExpr}`] : []),
+        ...(parsed.requestRuleExpr
+          ? [`${t('Includes request rules')}: ${parsed.requestRuleExpr}`]
+          : []),
       ].join('\n')
     }
     return `${t('Expression pricing')}\n${values.billing_expr}`
   }
   if (kind === 'unset') return t('Unset price')
-  const unit =
-    kind === 'request' ? `USD / ${t('request')}` : `USD / ${t('1M token')}`
+  let unit = `USD / ${t('1M token')}`
+  if (kind === 'request') unit = `USD / ${t('request')}`
+  if (kind === 'second') unit = `USD / ${t('second')}`
+  if (kind === 'resolution') unit = t('Resolution pricing')
   return [
     unit,
     ...getSyncPriceLines(values, t).map(

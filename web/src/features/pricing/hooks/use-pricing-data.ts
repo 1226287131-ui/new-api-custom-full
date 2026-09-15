@@ -21,16 +21,39 @@ import { useMemo } from 'react'
 
 import { useStatus } from '@/hooks/use-status'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { getPricing } from '../api'
+import { getPricing, getTaskSuccessRates } from '../api'
+import type { PricingModel } from '../types'
 
 export function usePricingData(enabled = true) {
   const { status } = useStatus()
+  const userId = useAuthStore((state) => state.auth.user?.id ?? null)
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['pricing'],
     queryFn: async () => requireServerSuccess(await getPricing()),
     staleTime: 5 * 60 * 1000,
+    enabled,
+  })
+  const taskSuccess = useQuery({
+    queryKey: ['pricing-task-success-rates', userId],
+    queryFn: async () => {
+      const response = requireServerSuccess(await getTaskSuccessRates())
+      if (
+        !response.data?.models ||
+        typeof response.data.models !== 'object' ||
+        Array.isArray(response.data.models)
+      ) {
+        throw new Error('Invalid task success rate response')
+      }
+      return response.data
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    retry: false,
+    meta: { errorToast: false },
     enabled,
   })
 
@@ -43,8 +66,11 @@ export function usePricingData(enabled = true) {
     () => Math.max((status?.usd_exchange_rate as number) ?? priceRate, 0.001),
     [status?.usd_exchange_rate, priceRate]
   )
+  let taskSuccessStatus: PricingModel['task_success_status'] = 'loading'
+  if (taskSuccess.status === 'success') taskSuccessStatus = 'ready'
+  if (taskSuccess.isError) taskSuccessStatus = 'error'
 
-  const models = useMemo(() => {
+  const models = useMemo<PricingModel[]>(() => {
     if (!data?.data || !data?.vendors) return []
 
     const vendorMap = new Map(data.vendors.map((v) => [v.id, v]))
@@ -60,9 +86,11 @@ export function usePricingData(enabled = true) {
         vendor_icon: vendor?.icon,
         vendor_description: vendor?.description,
         group_ratio: data.group_ratio,
+        task_success_stats: taskSuccess.data?.models[model.model_name],
+        task_success_status: taskSuccessStatus,
       }
     })
-  }, [data])
+  }, [data, taskSuccess.data, taskSuccessStatus])
 
   return {
     models,

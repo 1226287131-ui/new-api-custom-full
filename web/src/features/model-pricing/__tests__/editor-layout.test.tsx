@@ -59,6 +59,83 @@ afterEach(() => {
   }
 })
 
+it.each([
+  { mode: 'image_resolution', dormantTask: false },
+  { mode: 'tiered_expr', dormantTask: false },
+  { mode: 'tiered_expr', dormantTask: true },
+])(
+  'preserves image tiers and $mode billing with dormantTask=$dormantTask',
+  async ({ mode, dormantTask }) => {
+    const imagePrices = { '1K': 0, '2K': 0.2, '4K': 0.4 }
+    const configured: PricingValues = {
+      ImageResolutionPrice: imagePrices,
+      'billing_setting.billing_mode': mode,
+      ...(mode === 'tiered_expr'
+        ? { 'billing_setting.billing_expr': 'tier("base", p * 2)' }
+        : {}),
+      ...(dormantTask
+        ? {
+            'billing_setting.task_billing_pricing': {
+              mode: 'per-second' as const,
+              resolution_prices: { '720p': 0.2 },
+            },
+          }
+        : {}),
+    }
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 1, username: 'administrator', role: 100 })
+    usePricingPreferencesStore.setState({ currency: 'USD' })
+    vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data:
+          url === '/api/option/model_pricing'
+            ? {
+                entries: [
+                  {
+                    model_name: 'image-custom',
+                    version: 'v1',
+                    configured,
+                    effective: configured,
+                  },
+                ],
+              }
+            : [],
+        vendors: [],
+      },
+    }))
+    const patch = vi
+      .spyOn(api, 'patch')
+      .mockResolvedValue({ data: { success: true } })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    clients.push(client)
+    render(
+      <QueryClientProvider client={client}>
+        <ModelPricingPanel modelName='image-custom' />
+      </QueryClientProvider>
+    )
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: 'Save model prices' }))
+    await waitFor(() => expect(patch).toHaveBeenCalled())
+    expect(patch.mock.calls[0]?.[1]).toMatchObject({
+      changes: [
+        {
+          model_name: 'image-custom',
+          expected_version: 'v1',
+          pricing: {
+            ImageResolutionPrice: imagePrices,
+            'billing_setting.billing_mode': mode,
+          },
+        },
+      ],
+    })
+  }
+)
+
 it.each(['none', 'standard', 'claude_ttl'] as const)(
   'uses the %s cache profile consistently in current billing and draft previews',
   async (mode) => {

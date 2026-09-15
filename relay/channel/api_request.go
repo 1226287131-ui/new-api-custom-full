@@ -588,6 +588,12 @@ func DoTaskApiRequest(a TaskRequestBuilder, c *gin.Context, info *common.RelayIn
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	if err := c.Request.Context().Err(); err != nil {
+		return nil, err
+	}
+	if info != nil && info.TaskRelayInfo != nil && info.SubmissionContext != nil {
+		req = req.WithContext(info.SubmissionContext)
+	}
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)

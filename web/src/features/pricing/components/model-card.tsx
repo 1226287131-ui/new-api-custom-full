@@ -53,6 +53,7 @@ import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
 import { ResolutionPriceCell } from './resolution-price-cell'
 import { ScheduledDiscountNotice } from './scheduled-discount-notice'
+import { ModelTaskSuccessRate } from './model-task-success-rate'
 
 export interface ModelCardProps {
   model: PricingModel
@@ -352,6 +353,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               <ScheduledDiscountNotice state={discountState} compact />
             )}
           </div>
+          <ModelTaskSuccessRate model={props.model} />
         </div>
         {(groups.length > 0 || endpoints.length > 0) && (
           <dl

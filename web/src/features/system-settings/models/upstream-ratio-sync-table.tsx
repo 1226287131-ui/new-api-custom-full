@@ -150,6 +150,8 @@ export function UpstreamRatioSyncTable(props: UpstreamRatioSyncTableProps) {
     { value: 'expression', label: t('Expression pricing') },
     { value: 'token', label: t('Per-token') },
     { value: 'request', label: t('Per-request') },
+    { value: 'second', label: t('Per-second') },
+    { value: 'resolution', label: t('Resolution pricing') },
   ]
   let content: ReactNode
   if (props.isSyncing) {

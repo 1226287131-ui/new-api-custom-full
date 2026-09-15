@@ -2,6 +2,7 @@ package controller
 
 import (
 	"maps"
+	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -10,6 +11,24 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+func pricingUserGroup(c *gin.Context) string {
+	userID, exists := c.Get("id")
+	if !exists {
+		return ""
+	}
+	id, ok := userID.(int)
+	if !ok || id <= 0 {
+		common.SysError("invalid user id in pricing context")
+		return ""
+	}
+	user, err := model.GetUserCache(id)
+	if err != nil {
+		common.SysError("failed to load user for pricing: " + err.Error())
+		return ""
+	}
+	return user.Group
+}
 
 func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string]string) []model.Pricing {
 	if len(pricing) == 0 {
@@ -87,6 +106,51 @@ func GetPricing(c *gin.Context) {
 		"auto_groups":        service.GetUserAutoGroup(group),
 		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
+}
+
+func GetPricingTaskSuccessRates(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	usableGroups := service.GetUserUsableGroups(pricingUserGroup(c))
+	pricing := filterPricingByUsableGroups(model.GetPricing(), usableGroups)
+	snapshot, err := model.GetTaskSuccessRates(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to load task success rates"})
+		return
+	}
+	type taskSuccessRate struct {
+		model.TaskOutcomeCounts
+		SuccessRate *float64 `json:"success_rate"`
+	}
+	rates := make(map[string]taskSuccessRate)
+	for _, item := range pricing {
+		counts := model.TaskOutcomeCounts{}
+		for group, value := range snapshot.Models[item.ModelName] {
+			if _, allowed := usableGroups[group]; !allowed {
+				continue
+			}
+			if !common.StringsContains(item.EnableGroup, "all") && !common.StringsContains(item.EnableGroup, group) {
+				continue
+			}
+			counts.Total += value.Total
+			counts.Success += value.Success
+			counts.Failure += value.Failure
+			counts.Pending += value.Pending
+		}
+		if !item.IsTaskModel && counts.Total == 0 {
+			continue
+		}
+		rate := taskSuccessRate{TaskOutcomeCounts: counts}
+		if finished := counts.Success + counts.Failure; finished > 0 {
+			percentage := float64(counts.Success) / float64(finished) * 100
+			rate.SuccessRate = &percentage
+		}
+		rates[item.ModelName] = rate
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+		"window_start": snapshot.WindowStart,
+		"window_end":   snapshot.WindowEnd,
+		"models":       rates,
+	}})
 }
 
 func ResetModelRatio(c *gin.Context) {

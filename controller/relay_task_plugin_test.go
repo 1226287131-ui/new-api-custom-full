@@ -34,6 +34,7 @@ type taskSubmissionTestBilling struct {
 	events     *[]string
 	settleErr  error
 	reserveErr error
+	onReserve  func()
 	onSettle   func()
 	refunds    int
 }
@@ -55,6 +56,9 @@ func (b *taskSubmissionTestBilling) NeedsRefund() bool        { return b.refunds
 func (b *taskSubmissionTestBilling) GetPreConsumedQuota() int { return 0 }
 func (b *taskSubmissionTestBilling) Reserve(int) error {
 	*b.events = append(*b.events, "reserve")
+	if b.onReserve != nil {
+		b.onReserve()
+	}
 	return b.reserveErr
 }
 
@@ -233,29 +237,61 @@ func TestExecuteTaskSubmissionPersistsPinnedPluginProvenance(t *testing.T) {
 	assert.Equal(t, "upstream-private", stored.PrivateData.UpstreamTaskID)
 }
 
-func TestExecuteTaskSubmissionRefundsCancellationBeforeDurableBarrier(t *testing.T) {
-	events := make([]string, 0, 2)
-	setupTaskSubmissionDatabase(t, true, &events)
-	billing := &taskSubmissionTestBilling{events: &events}
-	c := taskSubmissionTestContext()
-	requestContext, cancel := context.WithCancel(c.Request.Context())
-	c.Request = c.Request.WithContext(requestContext)
-	info := taskSubmissionRelayInfo(billing)
-
-	outcome, taskErr := executeTaskSubmissionWith(c, info, func(*gin.Context, *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
-		cancel()
-		return &relay.TaskSubmitResult{
-			UpstreamTaskID: "upstream_private",
-			Platform:       constant.TaskPlatform("plugin"),
-		}, nil
-	})
-
-	assert.Nil(t, outcome)
-	require.NotNil(t, taskErr)
-	assert.Equal(t, "request_cancelled", taskErr.Code)
-	assert.Equal(t, []string{"refund"}, events)
-	assert.Equal(t, 1, billing.refunds)
-	assert.False(t, c.Writer.Written())
+func TestExecuteTaskSubmissionPersistsAcceptedTaskDespiteCancellation(t *testing.T) {
+	for _, stage := range []string{"accepted", "submission deadline", "operation deadline", "reserve", "insert"} {
+		t.Run(stage, func(t *testing.T) {
+			events := []string{}
+			database := setupTaskSubmissionDatabase(t, true, &events)
+			c := taskSubmissionTestContext()
+			requestContext, cancel := context.WithCancel(c.Request.Context())
+			defer cancel()
+			c.Request = c.Request.WithContext(requestContext)
+			billing := &taskSubmissionTestBilling{events: &events}
+			if stage == "reserve" {
+				billing.onReserve = cancel
+			}
+			require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:accepted-task-context", func(tx *gorm.DB) {
+				if stage == "insert" {
+					cancel()
+				}
+				assert.NoError(t, tx.Statement.Context.Err())
+				_, bounded := tx.Statement.Context.Deadline()
+				assert.True(t, bounded, "accepted tasks need a bounded database lifetime")
+			}))
+			billing.onSettle = func() { assert.NoError(t, c.Request.Context().Err()) }
+			info := taskSubmissionRelayInfo(billing)
+			if stage == "operation deadline" {
+				info.LockedChannel = &model.Channel{Id: 1, Type: constant.ChannelTypeOpenAIVideo}
+			}
+			outcome, taskErr := executeTaskSubmissionWith(c, info, func(*gin.Context, *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+				if stage == "accepted" {
+					cancel()
+				}
+				if stage == "submission deadline" {
+					expired, cancelDeadline := context.WithDeadline(requestContext, time.Now().Add(-time.Second))
+					defer cancelDeadline()
+					c.Request = c.Request.WithContext(expired)
+					require.ErrorIs(t, c.Request.Context().Err(), context.DeadlineExceeded)
+				}
+				if stage == "operation deadline" {
+					expired, cancelDeadline := context.WithDeadline(info.SubmissionContext, time.Now().Add(-time.Second))
+					defer cancelDeadline()
+					info.SubmissionContext = expired
+					require.ErrorIs(t, info.SubmissionContext.Err(), context.DeadlineExceeded)
+				}
+				return &relay.TaskSubmitResult{UpstreamTaskID: "upstream_private", Platform: "plugin"}, nil
+			})
+			require.Nil(t, taskErr)
+			require.NotNil(t, outcome)
+			assert.Equal(t, []string{"reserve", "insert", "settle"}, events)
+			assert.Zero(t, billing.refunds)
+			var stored []model.Task
+			require.NoError(t, database.Find(&stored).Error)
+			require.Len(t, stored, 1)
+			assert.Equal(t, "upstream_private", stored[0].PrivateData.UpstreamTaskID)
+			assert.False(t, c.Writer.Written())
+		})
+	}
 }
 
 func TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds(t *testing.T) {
@@ -360,8 +396,14 @@ func TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund(t *testi
 func setupTaskSubmissionDatabase(t *testing.T, migrate bool, events *[]string) *gorm.DB {
 	t.Helper()
 	previousDB := model.DB
+	previousLogConsumeEnabled := common.LogConsumeEnabled
+	common.LogConsumeEnabled = false
 	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	connection, err := database.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	require.NoError(t, database.AutoMigrate(&model.User{}, &model.Channel{}, &model.GroupUserRatio{}))
 	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(*gorm.DB) {
 		*events = append(*events, "insert")
 	}))
@@ -369,7 +411,10 @@ func setupTaskSubmissionDatabase(t *testing.T, migrate bool, events *[]string) *
 		require.NoError(t, database.AutoMigrate(&model.Task{}))
 	}
 	model.DB = database
-	t.Cleanup(func() { model.DB = previousDB })
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.LogConsumeEnabled = previousLogConsumeEnabled
+	})
 	return database
 }
 
@@ -383,6 +428,7 @@ func taskSubmissionTestContext() *gin.Context {
 func taskSubmissionRelayInfo(billing relaycommon.BillingSettler) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{
 		UserId:          1,
+		UserQuota:       1_000_000_000,
 		UsingGroup:      "default",
 		OriginModelName: "plugin-model",
 		Billing:         billing,
@@ -420,7 +466,7 @@ func TestImmediateTaskSettlementDatabase(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	models := []any{&model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}}
+	models := []any{&model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.GroupUserRatio{}}
 	require.NoError(t, db.AutoMigrate(models...))
 	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(models...)) })
 	var version string

@@ -52,7 +52,9 @@ export function parseTaskResult() { return {}; }
 			assert.Contains(t, before.Entries[1].Configured, "billing_setting.scheduled_discount")
 
 			imageDraft := model.PricingValues{
-				"ImageResolutionPrice": map[string]any{"1K": 0.0, "2K": 0.2, "4K": 0.4},
+				"ImageResolutionPrice":               map[string]any{"1K": 0.0, "2K": 0.2, "4K": 0.4},
+				"billing_setting.billing_mode":       "image_resolution",
+				"billing_setting.scheduled_discount": map[string]any{"enabled": true, "start": "22:00", "end": "02:00", "discount": 0.75},
 			}
 			videoDraft := model.PricingValues{
 				"billing_setting.billing_mode":          "per-second",
@@ -105,9 +107,11 @@ export function parseTaskResult() { return {}; }
 			require.True(t, ok)
 			assert.Equal(t, 0.0, prices.OneK)
 			assert.Equal(t, 0.4, prices.FourK)
+			assert.Equal(t, 0.75, billing_setting.ScheduledDiscountMultiplier("merge-image", time.Date(2026, 9, 15, 15, 0, 0, 0, time.UTC)))
 			selection, configured, err := billing_setting.ResolveTaskBillingPrice("merge-video", "1920x1080")
 			require.NoError(t, err)
 			assert.True(t, configured)
+			assert.Equal(t, billing_setting.BillingModePerSecond, selection.Mode)
 			assert.Equal(t, 0.2, selection.Price)
 			_, _, err = billing_setting.ResolveTaskBillingPrice("merge-video", "720p")
 			assert.Error(t, err, "a missing configured tier must not fall back to another price")
@@ -133,6 +137,32 @@ export function parseTaskResult() { return {}; }
 			assert.Empty(t, after.Entries[0].Configured)
 			_, configured = billing_setting.GetPluginBillingExpr(pluginKey, "merge-video")
 			assert.False(t, configured)
+
+			// A synchronized fixed price must use the imported unit, including
+			// when the local model was previously charged per second.
+			fixedVersion := before.EmptyVersion
+			for _, mode := range []string{billing_setting.BillingModePerSecond, billing_setting.BillingModePerRequest} {
+				draft := model.PricingValues{"ModelPrice": 0.2, "billing_setting.billing_mode": mode}
+				change := model.ModelPricingChange{ModelName: "merge-sync", ExpectedVersion: fixedVersion, Pricing: draft}
+				response := modelManagementRequest(t, UpdateModelPricingConfig, http.MethodPatch, "/api/option/model_pricing", map[string]any{"changes": []model.ModelPricingChange{change}}, nil)
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				var fixedResponse struct {
+					Success bool                       `json:"success"`
+					Data    model.ModelPricingSnapshot `json:"data"`
+				}
+				modelManagementRequest(t, GetModelPricingConfig, http.MethodGet, "/api/option/model_pricing?model=merge-sync", nil, &fixedResponse)
+				require.True(t, fixedResponse.Success)
+				require.Len(t, fixedResponse.Data.Entries, 1)
+				fixed := fixedResponse.Data.Entries[0]
+				assert.Equal(t, draft, fixed.Configured)
+				assert.Equal(t, draft, fixed.Effective)
+				price, configured := ratio_setting.GetModelPrice("merge-sync", false)
+				require.True(t, configured)
+				assert.Equal(t, 0.2, price)
+				assert.Equal(t, mode, billing_setting.GetTaskBillingMode("merge-sync", false))
+				assert.Equal(t, mode, billing_setting.GetTaskBillingMode("merge-sync", true))
+				fixedVersion = fixed.Version
+			}
 		})
 	}
 }

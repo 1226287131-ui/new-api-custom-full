@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -966,6 +967,10 @@ type OriginTaskRef struct {
 type TaskRelayInfo struct {
 	Action       string
 	OriginTaskID string
+	// SubmissionContext bounds a native video's upstream acceptance/read while
+	// allowing it to finish after the client disconnects. Validation still uses
+	// the client context, and the transport checks it before sending any work.
+	SubmissionContext context.Context `json:"-"`
 	// PublicTaskID 是提交时预生成的 task_xxxx 格式公开 ID，
 	// 供 DoResponse 在返回给客户端时使用（避免暴露上游真实 ID）。
 	PublicTaskID string

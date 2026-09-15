@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -468,9 +469,10 @@ func RelayTask(c *gin.Context) {
 
 // executeTaskSubmission owns the retry, billing, and persistence lifecycle.
 // It deliberately performs no client response writes so JSON and protocol
-// presenters share the same durable task barrier. Its cancellation semantics
-// come from c.Request.Context: native task endpoints use the client context,
-// while the Responses bridge supplies an independently bounded context.
+// presenters share the same durable task barrier. Native video submissions
+// finish an in-flight acceptance after a client disconnect; the Responses
+// bridge supplies its own bounded submission context. Accepted results always
+// receive a separate bounded persistence lifetime.
 func executeTaskSubmission(c *gin.Context, relayInfo *relaycommon.RelayInfo) (*taskSubmissionOutcome, *taskdto.TaskError) {
 	return executeTaskSubmissionWith(c, relayInfo, relay.RelayTaskSubmit)
 }
@@ -560,14 +562,38 @@ func executeTaskSubmissionWith(
 		c.Request.Body = io.NopCloser(bodyStorage)
 
 		stage = "submit"
+		var cancelSubmission context.CancelFunc
+		_, pluginPinned := c.Get(pluginruntime.ContextKeyPinnedPlugin)
+		if constant.IsVideoTaskChannelType(channel.Type) && !pluginPinned {
+			// Bound the entire upstream request, including its response body.
+			// The configured relay timeout still applies; disabling the
+			// HTTP client timeout must not leave disconnected submissions open.
+			timeout := 30 * time.Minute
+			if common.RelayTimeout > 0 {
+				const maxTimeoutSeconds = int64((1<<63 - 1) / time.Second)
+				timeout = time.Duration(min(int64(common.RelayTimeout), maxTimeoutSeconds)) * time.Second
+			}
+			relayInfo.SubmissionContext, cancelSubmission = context.WithTimeout(context.WithoutCancel(c.Request.Context()), timeout)
+			defer cancelSubmission()
+		}
 		result, taskErr = submit(c, relayInfo)
+		var submissionErr error
+		if cancelSubmission != nil {
+			submissionErr = relayInfo.SubmissionContext.Err()
+			cancelSubmission()
+			relayInfo.SubmissionContext = nil
+		}
+		if taskErr == nil {
+			diagnostics.attemptSucceeded(retryParam.GetRetry()+1, result)
+			break
+		}
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
 			diagnostics.cancelled("after_submit", retryParam.GetRetry()+1)
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 			break
 		}
-		if taskErr == nil {
-			diagnostics.attemptSucceeded(retryParam.GetRetry()+1, result)
+		if submissionErr != nil {
+			taskErr = service.TaskErrorWrapperLocal(submissionErr, "task_submission_timeout", http.StatusGatewayTimeout)
 			break
 		}
 
@@ -601,11 +627,16 @@ func executeTaskSubmissionWith(
 		diagnostics.failed("submit", "missing_result", taskErr, false)
 		return nil, taskErr
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil {
-		diagnostics.cancelled("before_reserve", retryParam.GetRetry()+1)
-		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
-	}
-
+	// The provider has accepted work. Neither a disconnected client nor an
+	// expired submission deadline can turn that result into a refund/orphan.
+	// Use a fresh deadline for the database barrier and settlement context.
+	clientRequest := c.Request
+	durableContext, cancelPersistence := context.WithTimeout(context.WithoutCancel(clientRequest.Context()), 30*time.Second)
+	c.Request = clientRequest.Clone(durableContext)
+	defer func() {
+		c.Request = clientRequest
+		cancelPersistence()
+	}()
 	// Reserve any submit-time upward billing adjustment before persistence.
 	// This keeps insertion failures fully refundable while ensuring settlement
 	// after the barrier normally has a zero positive delta.
@@ -620,11 +651,6 @@ func executeTaskSubmissionWith(
 		}
 		diagnostics.reserve("reserve_complete", result.Quota)
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil {
-		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
-		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
-	}
-
 	stage = "insert"
 	task := model.InitTask(result.Platform, relayInfo)
 	if constant.IsVideoTaskChannelType(relayInfo.ChannelType) {
@@ -689,7 +715,7 @@ func executeTaskSubmissionWith(
 		}
 	}
 	diagnostics.insertStart(task)
-	if insertErr := task.InsertWithContext(c.Request.Context()); insertErr != nil {
+	if insertErr := task.InsertWithContext(durableContext); insertErr != nil {
 		common.SysError("insert task error: " + insertErr.Error())
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
 		diagnostics.failed("insert", "database_error", taskErr, false)

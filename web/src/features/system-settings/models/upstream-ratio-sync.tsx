@@ -115,7 +115,7 @@ export function UpstreamRatioSync() {
           const values = prices[name]?.upstreams[source]
           return values ? [[name, { ...values }]] : []
         })
-      ) as Record<string, Record<string, number | string>>,
+      ) as Record<string, PricingSyncValues>,
     [selectedSources, prices]
   )
   const fetchMutation = useMutation({

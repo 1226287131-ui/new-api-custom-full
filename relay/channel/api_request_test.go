@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
@@ -14,11 +15,16 @@ import (
 func TestNewTaskAPIRequestInheritsClientCancellation(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	requestContext, cancel := context.WithCancel(context.Background())
+	deadline := time.Now().Add(time.Minute)
+	requestContext, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(requestContext)
 
 	upstream, err := newTaskAPIRequest(c, "https://provider.example/tasks", nil)
 	require.NoError(t, err)
+	upstreamDeadline, bounded := upstream.Context().Deadline()
+	require.True(t, bounded)
+	require.Equal(t, deadline, upstreamDeadline, "the Responses bridge submission deadline must be preserved")
 	cancel()
 
 	require.ErrorIs(t, upstream.Context().Err(), context.Canceled)
