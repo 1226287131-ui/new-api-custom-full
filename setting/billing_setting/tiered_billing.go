@@ -2,7 +2,9 @@ package billing_setting
 
 import (
 	"fmt"
+	"maps"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -10,7 +12,11 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/lo"
 )
 
@@ -24,6 +30,8 @@ const (
 	TaskBillingPricingField   = "task_billing_pricing"
 	ScheduledDiscountField    = "scheduled_discount"
 	ScheduledDiscountRatioKey = "scheduled_discount"
+	PluginBillingExprOption   = "billing_setting.plugin_billing_expr"
+	maxTaskExprSmokeTests     = 64
 )
 
 const (
@@ -52,20 +60,18 @@ type TaskBillingPriceConfig struct {
 
 // TaskBillingPriceSelection is the immutable price selected for one request.
 // It is kept on RelayInfo and copied into the task billing snapshot.
-type TaskBillingPriceSelection struct {
-	Mode       string
-	Price      float64
-	Resolution string
-}
+type TaskBillingPriceSelection = relaycommon.TaskBillingPriceSelection
 
 // BillingSetting is managed by config.GlobalConfig.Register.
 // DB keys: billing_setting.billing_mode, billing_setting.billing_expr,
-// billing_setting.task_billing_pricing, billing_setting.scheduled_discount
+// billing_setting.task_billing_pricing, billing_setting.scheduled_discount,
+// billing_setting.plugin_billing_expr
 type BillingSetting struct {
 	BillingMode        map[string]string                  `json:"billing_mode"`
 	BillingExpr        map[string]string                  `json:"billing_expr"`
 	TaskBillingPricing map[string]TaskBillingPriceConfig  `json:"task_billing_pricing"`
 	ScheduledDiscount  map[string]ScheduledDiscountConfig `json:"scheduled_discount"`
+	PluginBillingExpr  map[string]string                  `json:"plugin_billing_expr"`
 }
 
 var billingSetting = BillingSetting{
@@ -73,6 +79,7 @@ var billingSetting = BillingSetting{
 	BillingExpr:        make(map[string]string),
 	TaskBillingPricing: make(map[string]TaskBillingPriceConfig),
 	ScheduledDiscount:  make(map[string]ScheduledDiscountConfig),
+	PluginBillingExpr:  make(map[string]string),
 }
 
 func init() {
@@ -86,6 +93,23 @@ func init() {
 func GetBillingMode(model string) string {
 	if mode, ok := billingSetting.BillingMode[model]; ok {
 		return mode
+	}
+	if _, ok := builtinBillingExpr[model]; ok {
+		// Existing administrator-configured legacy prices take precedence over
+		// a newly introduced built-in expression unless a mode was explicit.
+		if ratio_setting.HasConfiguredModelRatio(model) {
+			return BillingModeRatio
+		}
+		if _, configured := ratio_setting.GetModelPrice(model, false); configured {
+			return BillingModeRatio
+		}
+		if _, configured := ratio_setting.GetImageResolutionPrice(model); configured {
+			return BillingModeRatio
+		}
+		if _, configured := billingSetting.TaskBillingPricing[model]; configured {
+			return BillingModeRatio
+		}
+		return BillingModeTieredExpr
 	}
 	return BillingModeRatio
 }
@@ -115,16 +139,107 @@ func resolveTaskBillingMode(configuredMode string, legacyPerRequest bool) string
 }
 
 func GetBillingExpr(model string) (string, bool) {
-	expr, ok := billingSetting.BillingExpr[model]
-	return expr, ok
+	if expr, ok := billingSetting.BillingExpr[model]; ok {
+		return expr, true
+	}
+	if GetBillingMode(model) == BillingModeTieredExpr {
+		expr, ok := builtinBillingExpr[model]
+		return expr, ok
+	}
+	return "", false
+}
+
+func GetBuiltinBillingExpr(model string) (string, bool) {
+	expression, ok := builtinBillingExpr[model]
+	return expression, ok
+}
+
+func PluginBillingExprKey(pluginKey, model string) string {
+	return pluginKey + "::" + model
+}
+
+func SplitPluginBillingExprKey(key string) (plugin, model string, ok bool) {
+	plugin, model, ok = strings.Cut(key, "::")
+	if !ok || !jsplugin.ValidPluginKey(plugin) || strings.TrimSpace(model) == "" {
+		return "", "", false
+	}
+	return plugin, model, true
+}
+
+func GetPluginBillingExprCopy() map[string]string {
+	return maps.Clone(billingSetting.PluginBillingExpr)
+}
+
+func GetPluginBillingExpr(pluginKey, model string) (string, bool) {
+	expression, ok := billingSetting.PluginBillingExpr[PluginBillingExprKey(pluginKey, model)]
+	return expression, ok
+}
+
+// ResolveTaskBillingExpr selects the executing plugin's override before the
+// model expression, retaining the model alias fallback and explicit modes.
+func ResolveTaskBillingExpr(pluginKey, model, mappedModel string) (string, bool) {
+	if pluginKey != "" {
+		if expr, ok := GetPluginBillingExpr(pluginKey, model); ok {
+			return expr, true
+		}
+		if mappedModel != "" && mappedModel != model {
+			if expr, ok := GetPluginBillingExpr(pluginKey, mappedModel); ok {
+				return expr, true
+			}
+		}
+	}
+	if GetBillingMode(model) == BillingModeTieredExpr {
+		return GetBillingExpr(model)
+	}
+	if mappedModel != "" && mappedModel != model && GetBillingMode(mappedModel) == BillingModeTieredExpr {
+		expression, ok := GetBillingExpr(mappedModel)
+		return expression, ok && strings.TrimSpace(expression) != ""
+	}
+	return "", false
+}
+
+// TaskExprCompatible checks the schema contract even for usage references in
+// branches that the current request would not evaluate.
+func TaskExprCompatible(expression string, schema map[string]jsplugin.UsageFieldSchema) bool {
+	if strings.TrimSpace(expression) == "" {
+		return false
+	}
+	if _, err := billingexpr.CompileFromCache(expression); err != nil {
+		return false
+	}
+	for key := range billingexpr.UsedUsageKeys(expression) {
+		if _, exists := schema[key]; !exists {
+			return false
+		}
+	}
+	return !billingexpr.UsesFixedPricing(expression)
+}
+
+func GetBuiltinBillingExprCopy() map[string]string {
+	return lo.Assign(builtinBillingExpr)
 }
 
 func GetBillingModeCopy() map[string]string {
-	return lo.Assign(billingSetting.BillingMode)
+	modes := lo.Assign(billingSetting.BillingMode)
+	for model := range builtinBillingExpr {
+		if _, configured := modes[model]; !configured && GetBillingMode(model) == BillingModeTieredExpr {
+			modes[model] = BillingModeTieredExpr
+		}
+	}
+	return modes
 }
 
 func GetBillingExprCopy() map[string]string {
-	return lo.Assign(billingSetting.BillingExpr)
+	expressions := lo.Assign(billingSetting.BillingExpr)
+	for model := range builtinBillingExpr {
+		if _, configured := expressions[model]; configured {
+			continue
+		}
+		if expression, ok := GetBillingExpr(model); ok {
+			expressions[model] = expression
+		}
+	}
+	return expressions
 }
 
 func GetTaskBillingPricingCopy() map[string]TaskBillingPriceConfig {
@@ -141,6 +256,43 @@ func GetTaskBillingPriceConfig(model string) (TaskBillingPriceConfig, bool) {
 		return TaskBillingPriceConfig{}, false
 	}
 	return cloneTaskBillingPriceConfig(config), true
+}
+
+// ValidateTaskBillingPricingJSONString validates complete task pricing tables
+// before an atomic pricing update can publish them to the relay.
+func ValidateTaskBillingPricingJSONString(value string) error {
+	var configs map[string]*TaskBillingPriceConfig
+	if err := common.UnmarshalJsonStr(value, &configs); err != nil {
+		return err
+	}
+	if configs == nil {
+		return fmt.Errorf("task pricing must be a JSON object")
+	}
+	for model, config := range configs {
+		if strings.TrimSpace(model) == "" || config == nil {
+			return fmt.Errorf("task pricing requires a model and a pricing object")
+		}
+		if config.Mode != BillingModePerRequest && config.Mode != BillingModePerSecond {
+			return fmt.Errorf("model %s has invalid task billing mode %q", model, config.Mode)
+		}
+		if config.DefaultPrice == nil && len(config.ResolutionPrices) == 0 {
+			return fmt.Errorf("model %s requires a default price or resolution prices", model)
+		}
+		if config.DefaultPrice != nil {
+			if err := validateTaskBillingPrice(*config.DefaultPrice); err != nil {
+				return fmt.Errorf("model %s: %w", model, err)
+			}
+		}
+		for resolution, price := range config.ResolutionPrices {
+			if strings.TrimSpace(resolution) == "" {
+				return fmt.Errorf("model %s has an empty resolution", model)
+			}
+			if err := validateTaskBillingPrice(price); err != nil {
+				return fmt.Errorf("model %s resolution %s: %w", model, resolution, err)
+			}
+		}
+	}
+	return nil
 }
 
 func GetScheduledDiscountCopy() map[string]ScheduledDiscountConfig {
@@ -443,13 +595,171 @@ func SmokeTestExpr(exprStr string) error {
 }
 
 func smokeTestExpr(exprStr string) error {
+	if _, err := billingexpr.CompileFromCache(exprStr); err != nil {
+		return err
+	}
+	usageKeys := billingexpr.UsedUsageKeys(exprStr)
+	if len(usageKeys) > 0 {
+		sortedKeys := make([]string, 0, len(usageKeys))
+		for key := range usageKeys {
+			sortedKeys = append(sortedKeys, key)
+		}
+		sort.Strings(sortedKeys)
+		return fmt.Errorf("expression references usage keys %v but the model has no task plugin usage schema", sortedKeys)
+	}
+
 	vectors := []billingexpr.TokenParams{
 		{P: 0, C: 0, Len: 0},
 		{P: 1000, C: 1000, Len: 1000},
 		{P: 100000, C: 100000, Len: 100000},
 		{P: 1000000, C: 1000000, Len: 1000000},
+		{P: 300, C: 100, Len: 1000, CR: 100, Img: 400, ImgCR: 200},
+		{P: 800, C: 50, Len: 1000, AI: 200, AO: 50},
+		{Len: math.MaxInt32, ImgCR: math.MaxInt32},
 	}
-	requests := []billingexpr.RequestInput{
+
+	for _, v := range vectors {
+		for _, request := range billingExprSmokeRequests() {
+			result, _, err := billingexpr.RunExprWithRequest(exprStr, v, request)
+			if err != nil {
+				return fmt.Errorf("vector {p=%g, c=%g}: run failed: %w", v.P, v.C, err)
+			}
+			if math.IsNaN(result) || math.IsInf(result, 0) || result < 0 {
+				return fmt.Errorf("vector {p=%g, c=%g}: result must be finite and non-negative, got %f", v.P, v.C, result)
+			}
+		}
+	}
+	return nil
+}
+
+// SmokeTestTaskExpr validates a task usage expression against the usage facts
+// declared by its plugin. Literal u() keys must be declared; dynamic calls are
+// still exercised by the generated runtime vectors when possible.
+func SmokeTestTaskExpr(exprStr string, schema map[string]jsplugin.UsageFieldSchema) error {
+	if _, err := billingexpr.CompileFromCache(exprStr); err != nil {
+		return err
+	}
+	if billingexpr.UsesFixedPricing(exprStr) {
+		return fmt.Errorf("fixed pricing is not supported for task usage expressions")
+	}
+	for key := range billingexpr.UsedUsageKeys(exprStr) {
+		if _, declared := schema[key]; !declared {
+			return fmt.Errorf("usage key %q is not declared by the task plugin", key)
+		}
+	}
+
+	for _, usage := range taskUsageSmokeVectors(schema) {
+		for _, request := range billingExprSmokeRequests() {
+			request.Usage = usage
+			result, _, err := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{}, request)
+			if err != nil {
+				return fmt.Errorf("usage vector %v: run failed: %w", usage, err)
+			}
+			if math.IsNaN(result) || math.IsInf(result, 0) || result < 0 {
+				return fmt.Errorf("usage vector %v: result must be finite and non-negative, got %f", usage, result)
+			}
+		}
+	}
+	return nil
+}
+
+type usageSmokeDimension struct {
+	name   string
+	values []any
+}
+
+func taskUsageSmokeVectors(schema map[string]jsplugin.UsageFieldSchema) []map[string]any {
+	names := make([]string, 0, len(schema))
+	for name := range schema {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	dimensions := make([]usageSmokeDimension, 0, len(names))
+	for _, name := range names {
+		field := schema[name]
+		if len(field.Enum) > 0 {
+			values := make([]any, len(field.Enum))
+			for index, value := range field.Enum {
+				values[index] = value
+			}
+			dimensions = append(dimensions, usageSmokeDimension{name: name, values: values})
+			continue
+		}
+		if field.Type == "boolean" {
+			dimensions = append(dimensions, usageSmokeDimension{name: name, values: []any{false, true}})
+			continue
+		}
+		limit := relaycommon.MaxTaskDurationSeconds
+		if field.Unit == "count" {
+			limit = dto.MaxImageN
+		}
+		if field.Unit == "token" || field.Unit == "credit" {
+			limit = common.MaxQuota
+		}
+		dimensions = append(dimensions, usageSmokeDimension{
+			name:   name,
+			values: []any{float64(0), float64(1), float64(limit)},
+		})
+	}
+
+	if usageSmokeCombinationCount(dimensions, maxTaskExprSmokeTests) > maxTaskExprSmokeTests {
+		for index := range dimensions {
+			field := schema[dimensions[index].name]
+			if len(field.Enum) <= 2 {
+				continue
+			}
+			dimensions[index].values = []any{field.Enum[0], field.Enum[len(field.Enum)-1]}
+		}
+	}
+
+	vectors := make([]map[string]any, 0, maxTaskExprSmokeTests)
+	var appendVectors func(int, map[string]any)
+	appendVectors = func(index int, current map[string]any) {
+		if len(vectors) >= maxTaskExprSmokeTests {
+			return
+		}
+		if index == len(dimensions) {
+			vector := make(map[string]any, len(current))
+			maps.Copy(vector, current)
+			vectors = append(vectors, vector)
+			return
+		}
+		for _, value := range dimensions[index].values {
+			current[dimensions[index].name] = value
+			appendVectors(index+1, current)
+		}
+		delete(current, dimensions[index].name)
+	}
+	appendVectors(0, make(map[string]any, len(dimensions)))
+
+	combinationCount := usageSmokeCombinationCount(dimensions, maxTaskExprSmokeTests)
+	if combinationCount > maxTaskExprSmokeTests && len(vectors) > 0 {
+		last := make(map[string]any, len(dimensions))
+		for _, dimension := range dimensions {
+			last[dimension.name] = dimension.values[len(dimension.values)-1]
+		}
+		vectors[len(vectors)-1] = last
+	}
+	return vectors
+}
+
+func usageSmokeCombinationCount(dimensions []usageSmokeDimension, stopAfter int) int {
+	count := 1
+	for _, dimension := range dimensions {
+		if len(dimension.values) == 0 {
+			return 0
+		}
+		if count > stopAfter/len(dimension.values) {
+			return stopAfter + 1
+		}
+		count *= len(dimension.values)
+	}
+	return count
+}
+
+func billingExprSmokeRequests() []billingexpr.RequestInput {
+	return []billingexpr.RequestInput{
 		{},
 		{
 			Headers: map[string]string{
@@ -458,17 +768,4 @@ func smokeTestExpr(exprStr string) error {
 			Body: []byte(`{"service_tier":"fast","stream_options":{"include_usage":true},"messages":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21]}`),
 		},
 	}
-
-	for _, v := range vectors {
-		for _, request := range requests {
-			result, _, err := billingexpr.RunExprWithRequest(exprStr, v, request)
-			if err != nil {
-				return fmt.Errorf("vector {p=%g, c=%g}: run failed: %w", v.P, v.C, err)
-			}
-			if result < 0 {
-				return fmt.Errorf("vector {p=%g, c=%g}: result %f < 0", v.P, v.C, result)
-			}
-		}
-	}
-	return nil
 }

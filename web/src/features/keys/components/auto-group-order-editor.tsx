@@ -231,7 +231,9 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
       <ApiKeyGroupCombobox
         options={candidates}
         value={undefined}
-        onValueChange={handleAdd}
+        onValueChange={(groups) => {
+          if (groups[0]) handleAdd(groups[0])
+        }}
         placeholder={
           atLimit
             ? t('Maximum {{max}} groups selected', { max: maxCount })

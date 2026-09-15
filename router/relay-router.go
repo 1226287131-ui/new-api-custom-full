@@ -25,7 +25,7 @@ func SetRelayRouter(router *gin.Engine) {
 			case c.GetHeader("x-api-key") != "" && c.GetHeader("anthropic-version") != "":
 				controller.ListModels(c, constant.ChannelTypeAnthropic)
 			case c.GetHeader("x-goog-api-key") != "" || c.Query("key") != "": // 单独的适配
-				controller.RetrieveModel(c, constant.ChannelTypeGemini)
+				controller.ListModels(c, constant.ChannelTypeGemini)
 			default:
 				controller.ListModels(c, constant.ChannelTypeOpenAI)
 			}
@@ -70,6 +70,11 @@ func SetRelayRouter(router *gin.Engine) {
 	relayV1Router.Use(middleware.RouteTag("relay"))
 	relayV1Router.Use(middleware.SystemPerformanceCheck())
 	relayV1Router.Use(middleware.TokenAuth())
+	{
+		// Responses WebSocket route. Channel selection happens after the first
+		// response.create event; each event runs the ordinary request limiter.
+		relayV1Router.GET("/responses", controller.ResponsesWebSocket)
+	}
 	relayV1Router.Use(middleware.ModelRequestRateLimit())
 	{
 		// WebSocket 路由（统一到 Relay）
@@ -85,6 +90,8 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.Use(middleware.Distribute())
 
 		// claude related routes
+		// TODO: /messages/count_tokens is disabled. The current controller.CountClaudeTokens
+		// httpRouter.POST("/messages/count_tokens", controller.CountClaudeTokens)
 		httpRouter.POST("/messages", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatClaude)
 		})
@@ -98,7 +105,9 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 
 		// response related routes
-		registerResponsesRoutes(httpRouter)
+		httpRouter.POST("/responses/compact", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
+		})
 
 		// alpha search related routes (Codex standalone web search)
 		httpRouter.POST("/alpha/search", func(c *gin.Context) {
@@ -171,11 +180,15 @@ func SetRelayRouter(router *gin.Engine) {
 	responsesCompatibilityRouter := router.Group("")
 	responsesCompatibilityRouter.Use(middleware.RouteTag("relay"))
 	responsesCompatibilityRouter.Use(canonicalizeResponsesCompatibilityPath)
-	responsesCompatibilityRouter.Use(middleware.SystemPerformanceCheck())
-	responsesCompatibilityRouter.Use(middleware.TokenAuth())
-	responsesCompatibilityRouter.Use(middleware.ModelRequestRateLimit())
-	responsesCompatibilityRouter.Use(middleware.Distribute())
-	registerResponsesRoutes(responsesCompatibilityRouter)
+	responsesHandlers, err := taskPluginProtocolHandlers("openai_responses", "create")
+	if err != nil {
+		panic(err)
+	}
+	responsesCompatibilityRouter.POST("/responses", responsesHandlers...)
+	responsesCompatibilityRouter.POST("/responses/compact",
+		middleware.SystemPerformanceCheck(), middleware.TokenAuth(), middleware.ModelRequestRateLimit(), middleware.Distribute(),
+		func(c *gin.Context) { controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction) },
+	)
 
 	relayMjRouter := router.Group("/mj")
 	relayMjRouter.Use(middleware.RouteTag("relay"))
@@ -187,16 +200,6 @@ func SetRelayRouter(router *gin.Engine) {
 	relayMjModeRouter.Use(middleware.SystemPerformanceCheck())
 	registerMjRouterGroup(relayMjModeRouter)
 	//relayMjRouter.Use()
-
-	relaySunoRouter := router.Group("/suno")
-	relaySunoRouter.Use(middleware.RouteTag("relay"))
-	relaySunoRouter.Use(middleware.SystemPerformanceCheck())
-	relaySunoRouter.Use(middleware.TokenAuth(), middleware.Distribute())
-	{
-		relaySunoRouter.POST("/submit/:action", controller.RelayTask)
-		relaySunoRouter.POST("/fetch", controller.RelayTaskFetch)
-		relaySunoRouter.GET("/fetch/:id", controller.RelayTaskFetch)
-	}
 
 	relayGeminiRouter := router.Group("/v1beta")
 	relayGeminiRouter.Use(middleware.RouteTag("relay"))
@@ -218,15 +221,6 @@ func canonicalizeResponsesCompatibilityPath(c *gin.Context) {
 		c.Request.URL.Path = "/v1" + c.Request.URL.Path
 	}
 	c.Next()
-}
-
-func registerResponsesRoutes(router *gin.RouterGroup) {
-	router.POST("/responses", func(c *gin.Context) {
-		controller.Relay(c, types.RelayFormatOpenAIResponses)
-	})
-	router.POST("/responses/compact", func(c *gin.Context) {
-		controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
-	})
 }
 
 func registerMjRouterGroup(relayMjRouter *gin.RouterGroup) {

@@ -1,9 +1,12 @@
 package relay
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/constant"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
+	_ "github.com/QuantumNous/new-api/plugins"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	"github.com/QuantumNous/new-api/relay/channel/ali"
@@ -39,12 +42,12 @@ import (
 	taskgrokvideo "github.com/QuantumNous/new-api/relay/channel/task/grokvideo"
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
+	jspluginadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	taskminimaxvideo "github.com/QuantumNous/new-api/relay/channel/task/minimaxvideo"
 	tasknewapivideo "github.com/QuantumNous/new-api/relay/channel/task/newapivideo"
 	taskopenaivideo "github.com/QuantumNous/new-api/relay/channel/task/openaivideo"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
-	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
@@ -138,6 +141,9 @@ func GetAdaptor(apiType int) channel.Adaptor {
 }
 
 func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
+	if pluginKey := c.GetString("task_plugin_key"); pluginKey != "" {
+		return constant.TaskPlatform(pluginKey)
+	}
 	channelType := c.GetInt("channel_type")
 	if channelType > 0 {
 		return constant.TaskPlatform(strconv.Itoa(channelType))
@@ -145,42 +151,141 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 	return constant.TaskPlatform(c.GetString("platform"))
 }
 
-func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
-	switch platform {
-	//case constant.APITypeAIProxyLibrary:
-	//	return &aiproxy.Adaptor{}
-	case constant.TaskPlatformSuno:
-		return &suno.TaskAdaptor{}
+var taskPluginKeys = map[constant.TaskPlatform]string{
+	constant.TaskPlatformSuno:                                            "sunoapi",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAli)):         "alibaba",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling)):       "kling",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimeng)):      "jimeng",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVidu)):        "vidu",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)): "doubao",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVolcEngine)):  "doubao",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)):      "google",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMax)):     "hailuo",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)):        "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)):      "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)):    "vertex-ai",
+}
+
+func ResolveTaskPluginForPlatform(generation *pluginruntime.RoutingGeneration, platform constant.TaskPlatform) (*pluginruntime.LoadedPlugin, bool) {
+	if generation == nil {
+		return nil, false
 	}
-	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
-		switch channelType {
-		case constant.ChannelTypeAli:
-			return &taskali.TaskAdaptor{}
-		case constant.ChannelTypeKling:
-			return &kling.TaskAdaptor{}
-		case constant.ChannelTypeJimeng:
-			return &taskjimeng.TaskAdaptor{}
-		case constant.ChannelTypeVertexAi:
-			return &taskvertex.TaskAdaptor{}
-		case constant.ChannelTypeVidu:
-			return &taskVidu.TaskAdaptor{}
-		case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
-			return &taskdoubao.TaskAdaptor{}
-		case constant.ChannelTypeNewAPIVideo:
-			return &tasknewapivideo.TaskAdaptor{}
-		case constant.ChannelTypeOpenAIVideo:
-			return &taskopenaivideo.TaskAdaptor{}
-		case constant.ChannelTypeGrokVideo:
-			return &taskgrokvideo.TaskAdaptor{}
-		case constant.ChannelTypeMiniMaxVideo:
-			return &taskminimaxvideo.TaskAdaptor{}
-		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
-			return &tasksora.TaskAdaptor{}
-		case constant.ChannelTypeGemini:
-			return &taskGemini.TaskAdaptor{}
-		case constant.ChannelTypeMiniMax:
-			return &hailuo.TaskAdaptor{}
+	if key, ok := taskPluginKeys[platform]; ok {
+		if plugin, found := generation.Get(key); found {
+			return plugin, true
 		}
 	}
-	return nil
+	return generation.Get(string(platform))
+}
+
+// TaskPlatformUnavailableError explains why no adaptor serves the platform:
+// the task-plugin system is switched off, the resolved plugin is disabled,
+// or the platform simply names nothing. The distinction is user-actionable,
+// so it must survive into the client-facing message.
+func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, string) {
+	if !pluginruntime.DefaultRegistry.Enabled() {
+		return "task_plugin_system_disabled", "the task plugin system is disabled on this gateway"
+	}
+	key := string(platform)
+	if mapped, ok := taskPluginKeys[platform]; ok {
+		key = mapped
+	}
+	for _, meta := range pluginruntime.DefaultRegistry.Snapshot().Factory {
+		if meta.Key == key {
+			return "task_plugin_disabled", fmt.Sprintf("task plugin %q is disabled on this gateway", key)
+		}
+	}
+	return "invalid_api_platform", fmt.Sprintf("invalid api platform: %s", platform)
+}
+
+func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+	if adaptor := getLegacyTaskAdaptor(platform); adaptor != nil {
+		return adaptor
+	}
+	plugin, ok := ResolveTaskPluginForPlatform(pluginruntime.DefaultRegistry.Generation(), platform)
+	if !ok {
+		return nil
+	}
+	return jspluginadaptor.New(plugin)
+}
+
+// getTaskAdaptorForRequest preserves the exact plugin object pinned by the
+// declarative or shared-endpoint router. Legacy task routes are pinned here
+// from one registry generation before the adaptor is returned.
+func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (constant.TaskPlatform, channel.TaskAdaptor) {
+	if c != nil {
+		if value, exists := c.Get(pluginruntime.ContextKeyPinnedPlugin); exists {
+			if pinned, ok := value.(pluginruntime.PinnedPlugin); ok && pinned.Plugin != nil {
+				platform = constant.TaskPlatform(pinned.Plugin.Meta.Key)
+				return platform, jspluginadaptor.New(pinned.Plugin)
+			}
+			return platform, nil
+		}
+		if value, exists := c.Get(pluginruntime.ContextKeyPinnedEndpoint); exists {
+			if pinned, ok := value.(pluginruntime.PinnedEndpoint); ok && pinned.Plugin != nil {
+				platform = constant.TaskPlatform(pinned.Plugin.Meta.Key)
+				return platform, jspluginadaptor.New(pinned.Plugin)
+			}
+			return platform, nil
+		}
+		if value, exists := c.Get(pluginruntime.ContextKeyPinnedRoute); exists {
+			if pinned, ok := value.(pluginruntime.PinnedRoute); ok && pinned.Plugin != nil {
+				platform = constant.TaskPlatform(pinned.Plugin.Meta.Key)
+				return platform, jspluginadaptor.New(pinned.Plugin)
+			}
+			return platform, nil
+		}
+	}
+	if adaptor := getLegacyTaskAdaptor(platform); adaptor != nil {
+		return platform, adaptor
+	}
+	generation := pluginruntime.DefaultRegistry.Generation()
+	plugin, ok := ResolveTaskPluginForPlatform(generation, platform)
+	if !ok {
+		return platform, nil
+	}
+	if c != nil {
+		c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{
+			Generation: generation,
+			Plugin:     plugin,
+		})
+	}
+	return platform, jspluginadaptor.New(plugin)
+}
+
+func getLegacyTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+	var adaptor channel.LegacyTaskAdaptor
+	channelType, _ := strconv.Atoi(string(platform))
+	switch channelType {
+	case constant.ChannelTypeAli:
+		adaptor = &taskali.TaskAdaptor{}
+	case constant.ChannelTypeKling:
+		adaptor = &kling.TaskAdaptor{}
+	case constant.ChannelTypeJimeng:
+		adaptor = &taskjimeng.TaskAdaptor{}
+	case constant.ChannelTypeVertexAi:
+		adaptor = &taskvertex.TaskAdaptor{}
+	case constant.ChannelTypeVidu:
+		adaptor = &taskVidu.TaskAdaptor{}
+	case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
+		adaptor = &taskdoubao.TaskAdaptor{}
+	case constant.ChannelTypeNewAPIVideo:
+		adaptor = &tasknewapivideo.TaskAdaptor{}
+	case constant.ChannelTypeOpenAIVideo:
+		adaptor = &taskopenaivideo.TaskAdaptor{}
+	case constant.ChannelTypeGrokVideo:
+		adaptor = &taskgrokvideo.TaskAdaptor{}
+	case constant.ChannelTypeMiniMaxVideo:
+		adaptor = &taskminimaxvideo.TaskAdaptor{}
+	case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
+		adaptor = &tasksora.TaskAdaptor{}
+	case constant.ChannelTypeGemini:
+		adaptor = &taskGemini.TaskAdaptor{}
+	case constant.ChannelTypeMiniMax:
+		adaptor = &hailuo.TaskAdaptor{}
+	}
+	if adaptor == nil {
+		return nil
+	}
+	return &legacyTaskAdaptor{LegacyTaskAdaptor: adaptor}
 }

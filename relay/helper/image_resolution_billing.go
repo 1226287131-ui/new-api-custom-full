@@ -362,6 +362,14 @@ func resolveImageResolutionBilling(input billingexpr.RequestInput, meta *kittype
 	}
 	resolutionSource := ""
 	countSource := ""
+	if input.ImageCount != nil {
+		if *input.ImageCount < 1 || *input.ImageCount > kitdto.MaxImageN {
+			return imageResolutionBilling{}, fmt.Errorf("image count must be between 1 and %d", kitdto.MaxImageN)
+		}
+		billing.Count = float64(*input.ImageCount)
+		billing.ExplicitCount = true
+		countSource = "validated provider quantity"
+	}
 
 	for _, path := range imageResolutionPaths {
 		value := gjson.GetBytes(input.Body, path)
@@ -401,6 +409,12 @@ func resolveImageResolutionBilling(input billingexpr.RequestInput, meta *kittype
 	}
 
 	for _, path := range imageCountPaths {
+		// ImageRequest has already resolved the provider's n precedence. Ali
+		// parameters.n may override top-level n; other count aliases must still
+		// agree with that validated quantity.
+		if input.ImageCount != nil && (path == "n" || path == "parameters.n") {
+			continue
+		}
 		value := gjson.GetBytes(input.Body, path)
 		if !value.Exists() {
 			continue

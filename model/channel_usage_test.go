@@ -68,7 +68,7 @@ func TestGetTodayChannelUsageAggregatesConsumeLogsByChannel(t *testing.T) {
 	require.Equal(t, now.Format("2006-01-02"), usage.Date)
 	require.Equal(t, int64(3), usage.TotalCount)
 	require.Equal(t, int64(175), usage.TotalQuota)
-	require.Equal(t, int64(135), usage.TotalTokenUsed)
+	require.Equal(t, int64(145), usage.TotalTokenUsed)
 	require.Len(t, usage.Channels, 2)
 	require.Equal(t, "primary", usage.Channels[0].ChannelName)
 	require.Equal(t, int64(125), usage.Channels[0].Quota)

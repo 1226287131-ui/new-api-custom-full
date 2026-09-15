@@ -1,15 +1,81 @@
 # Custom Feature Set
 
-This repository combines three independently tested extensions on top of
-QuantumNous/new-api commit `7c28993f6bd9e92616f3f578212577f8b7c40b45`.
+This repository preserves the custom feature set at commit
+`239a4597ca91ca65f404f454ce7e3631986d5617` while merging the official
+QuantumNous/new-api mainline at
+`5caafd3d84dc74c8b0d081524f57a534b3980cb0` (2026-09-15, Asia/Shanghai).
 The original project metadata, notices, and license files are preserved.
 
 ## Branches
 
-- `main`: complete build containing both feature sets.
-- `feature/image-resolution-billing`: image-resolution billing only.
-- `feature/video-sora-cache`: Sora-compatible video relay and caching only.
-- `upstream`: remote that tracks `https://github.com/QuantumNous/new-api`.
+- `codex/merge-upstream-20260915`: complete local integration branch.
+- `codex/pre-upstream-merge-20260915`: pre-merge recovery point (`239a4597`).
+- `official/main`: official upstream revision used for this integration.
+
+The source integration does not deploy a server or migrate production data.
+Server-only settings, proxy services, backup jobs and Sub2API customizations
+are separate from this NewAPI repository.
+
+## Compatibility decisions for the 2026-09-15 merge
+
+- Existing channel type IDs `59` through `64` keep their custom meanings.
+  Official Task Plugin, vLLM and SGLang use `65`, `66` and `67`, respectively,
+  in both the backend and frontend. Existing custom channel rows are not
+  silently reinterpreted as task plugins.
+- The new plugin engine and legacy video adaptors coexist. For a shared video
+  endpoint/model, an authorized legacy video channel keeps the existing
+  request contract, including 14/30-second requests. An explicitly pinned
+  Task Plugin channel, or a group with only plugin channels, uses the new
+  plugin contract. The legacy channel filter also applies to retries.
+- Legacy video task polling and cache recovery remain independent of the
+  new plugin failure counters. A temporary polling/cache failure does not
+  turn a provider-success video into a failed/refunded task. The reverted
+  embedded-error inference is not reintroduced.
+- Task creation uses the official durable task/settlement flow through a
+  legacy adaptor bridge. A successful submission response is released only
+  after the task has been persisted and its submission accounting completed.
+- The new atomic model-pricing API preserves `ImageResolutionPrice`,
+  `billing_setting.task_billing_pricing` and
+  `billing_setting.scheduled_discount`, including optimistic concurrency,
+  reset and rollback behavior. Ordinary price synchronization does not erase
+  the custom resolution prices or scheduled discounts.
+- New built-in expressions do not silently replace administrator-configured
+  legacy prices. Frozen group/user ratios and scheduled discounts continue
+  through image reservation adjustments and asynchronous task settlement.
+- Frontend pages use the new upstream component structure; the custom
+  channel fields, pricing controls, group/user overrides and usage views are
+  integrated into those pages rather than leaving an obsolete second UI.
+
+## Accounts, logs and routing
+
+- Tokens can select multiple groups and retain an explicit Auto group order.
+  Selection, retries and the effective billed group follow those settings.
+- Administrators can set a user's individual ratio inside a group. The
+  personal ratio overrides that group's ordinary ratio; the selected ratio
+  is frozen for task settlement.
+- Scheduled model discounts use Beijing time and are visible in model
+  pricing. Reservation, final charge and log metadata use the same discount.
+- The real-time channel usage dashboard, error logs, task request-body display
+  and cached image/video recovery remain available. Recorded task request
+  bodies are capped at 1 MiB.
+- Usage APIs hide upstream model metadata; task display uses the original
+  requested model rather than inferring it from upstream task data. Error
+  messages and task result boundaries retain upstream identifier/URL masking.
+- Host-only Responses base URLs (`/responses`) and the normal `/v1/responses`
+  entry remain supported alongside the new plugin router.
+- Channel-level upstream egress and video-download egress are separate
+  switches. `UPSTREAM_EGRESS_PROXY` selects the configured relay egress;
+  turning the switch off preserves the ordinary channel proxy behavior.
+  The new Responses WebSocket, AdvancedCustom balance query, task-plugin
+  OAuth lifecycle and plugin artifact paths also honor this switch.
+- Existing cache download protections, trusted upstream ports, IPv4 video
+  downloads and cache recovery remain in place.
+- Login avoids the old shared CriticalRateLimit false-positive 429 behavior,
+  while API-wide throttling, login failure protections and secure account
+  recovery remain. Optional session limits are described below.
+- Versioned frontend assets retain cache-safe deployment behavior: stale
+  JavaScript requests return 404 instead of the HTML homepage, and HTML is
+  not served with long-lived asset caching.
 
 ## Image-resolution billing
 
@@ -112,8 +178,9 @@ Optional environment variables:
 - Supports `POST /v1/videos`, task polling, and the standard content route.
 - Accepts authenticated reference-image uploads and stores them temporarily in
   `/data/video-input-cache` for JSON-only upstreams.
-- Downloads completed upstream videos into `/data/video-cache` before marking
-  the task successful, preventing upstream result URLs from being exposed.
+- Downloads completed upstream videos into `/data/video-cache`. Provider
+  success remains successful while a failed local download is retried;
+  cache availability is reported separately without exposing the upstream URL.
 - Redacts upstream URLs and provider task IDs at submission, polling, storage,
   and task-response boundaries.
 - Publishes cached results as `/video-cache/{task_id}.mp4` with `HEAD` and HTTP
@@ -136,17 +203,22 @@ Optional environment variables:
 
 - Adds the independent `Openai Video` channel type `60` without changing the
   existing Sora, NewAPI Video, or DoubaoVideo adaptors.
-- Submits JSON requests to the upstream `POST /v1/videos` endpoint and polls
-  tasks through `GET /v1/videos/{task_id}`.
+- Selects the upstream endpoint/contract in channel settings, retaining
+  `/v1/videos`, `/v1/video/generations` and `/v1/videos/generations`.
+  Endpoint-specific submission and polling behavior is covered by the adaptor
+  tests.
+- Ordinary OpenAI Video durations accept integer values from 5 through 30
+  seconds, including 14 seconds; the separate Seedance 2.5 profile keeps its
+  documented 4-through-30-second contract.
 - Preserves ordered `images`, `videos`, and `audios` URL arrays for
   multi-reference Seedance-style generation requests.
 - Accepts native `duration`, `ratio`, and `resolution` fields while translating
   OpenAI/Sora aliases such as `seconds`, `size`, and `input_reference`.
 - Supports channel model mapping, for example from a downstream
   `seedance-2.0` model name to the provider's deployment name.
-- Keeps provider task IDs and result URLs private. Completed videos are exposed
-  through the authenticated local `/v1/videos/{task_id}/content` proxy and are
-  streamed without storing the completed video on the server.
+- Keeps provider task IDs and result URLs private. Completed videos support
+  local caching/recovery and the authenticated
+  `/v1/videos/{task_id}/content` entry.
 - Stores the selected multi-key credential with the private task state so
   polling and same-origin content fetches use the key that created the task.
 - Does not forward the provider Bearer credential to cross-origin CDN result
@@ -185,8 +257,8 @@ Optional environment variables:
   optional provider fields are omitted, so per-second and per-resolution task
   billing remain predictable.
 - Polls `GET /v1/videos/{task_id}` and downloads completed results through the
-  authenticated `GET /v1/videos/{task_id}/content` endpoint before a task is
-  marked successful.
+  authenticated `GET /v1/videos/{task_id}/content` endpoint. A cache failure
+  does not undo the provider's successful task status.
 - Returns only the local shareable `/video-cache/{task_id}.mp4` result URL and
   retains the video under the existing 48-hour cache cleanup policy.
 
@@ -218,15 +290,18 @@ Optional environment variables:
   provider does not return a separate result URL.
 - Exposes completed videos only through the local `/video-cache/{task_id}.mp4`
   URL and removes cached files after 48 hours.
-- Adds a `768P` task-price entry alongside the existing video resolution
-  prices. MiniMax H3's documented `0.2-0.7 MP` dimensions and `768P` aliases
-  use the local `768p` price; its documented `0.98-2.0 MP` dimensions and
-  `2K`/high-quality aliases use the local `1080p` price. Intermediate values
-  are conservatively billed into the higher tier. This mapping is applied in
-  the shared task billing resolver, so H3 requests routed through OpenAI/Sora
-  compatibility channels receive the same pricing. The original provider
-  quality fields are preserved in the upstream request, while the selected
-  local tier is stored only in the billing snapshot.
+- H3's exact dimension table in `constant/minimax_h3.go` takes precedence over
+  generic resolution classification: for example `1376x768` and `1024x1024`
+  belong to `768p`, while `1920x1088` and `1440x1440` belong to `1080p`.
+  The old broad megapixel approximation is not used to reclassify these sizes.
+- Standard 480p/720p/768p/1080p/2K/4K dimensions and portrait forms retain
+  their generic billing classification. Standard `1920x1080` bills as 1080p.
+  The UI displays `2K`; its compatible stored task-price key remains `1440p`.
+- `size: 2k/2K` and `4k/4K` are forwarded as uppercase `2K`/`4K` and use the
+  corresponding price. These enum sizes also require `aspect_ratio`.
+- The channel prompt-enhancement switch overrides client `prompt_enhance`
+  values for JSON and multipart requests. Existing workflow selection,
+  strict H3 payloads, mixed media and first/last-frame behavior remain.
 
 ## Build
 
@@ -245,12 +320,78 @@ go test ./relay/channel/task/newapivideo ./service ./model
 go test ./relay/channel/task/openaivideo ./relay/channel/task/newapivideo ./relay/channel/task/sora
 go test ./relay/channel/task/grokvideo ./service
 
-cd web/default
+cd relaykit
+GOWORK=off go test ./...
+GOWORK=off go build ./...
+
+cd ../web
 bun run typecheck
-bunx oxlint -c .oxlintrc.json \
-  src/features/system-settings/models/image-resolution-pricing-editor.tsx \
-  src/features/usage-logs/components/columns/task-logs-columns.tsx
+bun run test
+bun run lint
+bun run build
 ```
+
+## 2026-09-15 integration verification
+
+Database checks use local scratch instances only: SQLite `3.50.4`, MySQL
+`8.4.6` and PostgreSQL `17.6`. These are tested supported versions, not a
+claim that every older engine version was exercised.
+
+| Check | Coverage |
+| --- | --- |
+| `TestCustomUpgradePreservesStoredConfiguration` | Fresh merged schema, custom `239a4597` schema and official release `v1.0.0-rc.37` schema; merge migration and second migration on all three engines |
+| Stored data preservation | User/token balances, multi-group token setting, channel IDs 59–64 and JSON settings, image/task prices, discounts, in-progress task/private cache fields, log count, personal group ratio and uniqueness constraints |
+| Separate log database | MySQL and PostgreSQL main/log databases are physically separate scratch databases; SQLite uses the shared-file mode |
+| `TestMigrationSchemaStability` | Real three-engine column/index/constraint migrations and idempotency |
+| Token, prefill group and session migration tests | Uniqueness and refresh-hash schema preservation on all three engines |
+| `TestFixedPriceBillingDatabaseMatrix` | Pre-consume, actual-usage settlement, refund/insufficient balance, image-count reservation changes and zero fixed price; separate main/log databases |
+| Atomic pricing API database tests | Image tiers, video tiers and scheduled discounts read/update/reset together; version conflicts and rollback on all three engines |
+| Legacy video submission | A real local HTTP upstream receives one 30-second request; task persistence/settlement precede the success response and upstream IDs stay private |
+| Router composition | All built-in plugins and production API/dashboard/relay/video/task/web routes register together without conflicts |
+| Egress integration | Local HTTP/CONNECT proxies verify WebSocket, balance and plugin OAuth submission/poll/artifact routing, including disabled/unconfigured fallback |
+
+Validation runtime: Go `1.27.0` on Windows, Bun `1.4.2`. Windows builds and a
+CGO-disabled Linux/amd64 build include the newly built frontend. This verifies
+compilation, not a live Linux deployment. The independent `relaykit` module
+is tested and built with `GOWORK=off`.
+
+Final root-module `go test -p 2 ./...` and `go build -p 2 ./...` pass.
+The controller suite initially exposed unclosed SQLite test connections on
+Windows; its fixtures now close every opened connection, including repeated
+startup and separate audit-log connections. Legacy duration/endpoint tests
+and plugin channel-ID fixtures were aligned with their preserved contracts.
+The final suite passes without skipping these failures.
+
+Frontend typecheck, changed-file lint, pricing/channel/token/log regressions
+and the production build pass. Follow-up regression batches contained 27,
+73, 122 and 78 passing tests, with overlap between batches. Seven locales
+have no missing translation keys. Full lint has the same 194 pre-existing
+errors as the pinned official source, with no additional errors from this
+merge; it is not reported as a clean full-lint run. The existing Windows
+cross-drive dependency junction triggers a font URI build error, so the
+identical frontend source was built with source and dependencies on D: and
+the clean output copied into `web/dist`. Authenticated browser end-to-end
+testing and external provider acceptance were not performed.
+
+The upgrade fixture is opt-in. Set `NEWAPI_UPGRADE_FIXTURE=create` with the
+source checkout and `NEWAPI_UPGRADE_SOURCE=custom`, `rc37` or `merged`, then run
+`NEWAPI_UPGRADE_FIXTURE=verify` with this checkout. Use dedicated loopback
+`SQL_DSN`/`LOG_SQL_DSN` databases, or `SQL_DSN=local` with
+`NEWAPI_UPGRADE_SQLITE` pointing to a scratch file. Do not run it on production
+data. The old custom checkout contains unrelated stale video test enum imports;
+its fixture creation was compiled against its unchanged production `model/*.go`
+files plus only this fixture test. The merged package uses its complete suite.
+
+Deployment must preserve the existing database/Redis configuration, mounted
+data directories, encryption/session secrets and proxy environment variables.
+Official startup now rejects MySQL/PostgreSQL wallet columns that are still
+32-bit; do not bypass that safeguard. The tested old custom schema upgraded
+without bypassing it. Official response-header timeout is now configurable as
+`RELAY_RESPONSE_HEADER_TIMEOUT` (default 1800 seconds); `0` restores the former
+unbounded header wait. This is distinct from an already-open response stream.
+
+No production migration, upstream paid request, GitHub push or live deployment
+is part of this source integration verification.
 
 Do not commit deployment `.env` files, API keys, database dumps, logs, cached
 images, or cached videos. Each deployment should keep its own database and

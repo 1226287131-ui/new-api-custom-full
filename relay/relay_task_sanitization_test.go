@@ -130,3 +130,16 @@ func TestTaskModel2DtoForAdminIncludesRequestBody(t *testing.T) {
 	assert.JSONEq(t, string(body), string(result.RequestBody))
 	assert.True(t, result.RequestBodyComplete)
 }
+
+func TestTaskModel2DtoLeavesPluginDataForProtocolProjection(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_plugin_sora", Platform: "sora", Status: model.TaskStatusSuccess,
+		Data: json.RawMessage(`{"id":"provider-id","result":{"content_id":"artifact-private"}}`),
+		PrivateData: model.TaskPrivateData{
+			Execution: &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{Key: "sora"}},
+		},
+	}
+	result := TaskModel2Dto(task)
+	assert.JSONEq(t, string(task.Data), string(result.Data))
+	assert.NotContains(t, result.ResultURL, "/video-cache/")
+}

@@ -21,25 +21,29 @@ type WebAssets struct {
 	IndexPage []byte
 }
 
-func SetWebRouter(router *gin.Engine, assets WebAssets) {
+func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.HandlerFunc) {
 	frontendFS := common.EmbedFolder(assets.BuildFS, "web/dist")
 
-	router.Use(gzip.Gzip(gzip.DefaultCompression))
-	router.Use(middleware.GlobalWebRateLimit())
-	router.Use(middleware.Cache(frontendCacheVersion(assets.IndexPage)))
-	router.Use(static.Serve("/", frontendFS))
-	router.NoRoute(func(c *gin.Context) {
-		c.Set(middleware.RouteTagKey, "web")
-		path := c.Request.URL.Path
-		if strings.HasPrefix(path, "/v1") || strings.HasPrefix(path, "/api") || isFrontendAssetPath(path) {
-			c.Header("Cache-Control", "no-store, no-cache, must-revalidate, private, max-age=0")
-			c.Header("Pragma", "no-cache")
-			c.Header("Expires", "0")
-			controller.RelayNotFound(c)
-			return
-		}
-		c.Data(http.StatusOK, "text/html; charset=utf-8", assets.IndexPage)
-	})
+	router.NoRoute(
+		pluginDispatcher,
+		middleware.RouteTag("web"),
+		gzip.Gzip(gzip.DefaultCompression),
+		middleware.AccessTokenAudit(),
+		middleware.GlobalWebRateLimit(),
+		middleware.Cache(frontendCacheVersion(assets.IndexPage)),
+		static.Serve("/", frontendFS),
+		func(c *gin.Context) {
+			path := c.Request.URL.Path
+			if strings.HasPrefix(path, "/v1") || strings.HasPrefix(path, "/api") || isFrontendAssetPath(path) {
+				c.Header("Cache-Control", "no-store, no-cache, must-revalidate, private, max-age=0")
+				c.Header("Pragma", "no-cache")
+				c.Header("Expires", "0")
+				controller.RelayNotFound(c)
+				return
+			}
+			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.IndexPage)
+		},
+	)
 }
 
 func frontendCacheVersion(indexPage []byte) string {

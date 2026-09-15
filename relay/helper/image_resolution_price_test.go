@@ -5,11 +5,14 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,6 +32,28 @@ func TestHasModelBillingConfigAcceptsImageResolutionPrice(t *testing.T) {
 		}
 	}`))
 	require.True(t, HasModelBillingConfig(modelName))
+}
+
+func TestImageResolutionPriceUsesValidatedAliQuantity(t *testing.T) {
+	saved := ratio_setting.ImageResolutionPrice2JSONString()
+	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateImageResolutionPriceByJSONString(saved)) })
+	require.NoError(t, ratio_setting.UpdateImageResolutionPriceByJSONString(`{"ali-resolution-test":{"1K":0.02,"2K":0.05,"4K":0.1}}`))
+	var request dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{"model":"ali-resolution-test","size":"1K","n":1,"parameters":{"n":3}}`), &request))
+	request.BillingParameters = &dto.ImageBillingParameters{N: common.GetPointer(uint(3))}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeAli)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: request.Model, UserGroup: "default", UsingGroup: "default", Request: &request,
+		BillingRequestInput: &billingexpr.RequestInput{Body: []byte(`{"size":"1K","n":1,"parameters":{"n":3}}`)},
+	}
+	price, err := ModelPriceHelper(ctx, info, 0, request.GetTokenCountMeta())
+	require.NoError(t, err)
+	assert.Equal(t, 3.0, price.ImageGenerationCount)
+	assert.Equal(t, 3.0, price.OtherRatios()["n"])
+	assert.Equal(t, common.QuotaFromFloat(0.02*3*common.QuotaPerUnit*price.GroupRatioInfo.GroupRatio), price.QuotaToPreConsume)
+	assert.NoError(t, ValidateOutboundImageBilling([]byte(`{"size":"1K","n":3,"parameters":{"n":3}}`), price))
+	assert.Error(t, ValidateOutboundImageBilling([]byte(`{"size":"4K","n":3}`), price))
 }
 
 func TestModelPriceHelperUsesImageResolutionPrice(t *testing.T) {

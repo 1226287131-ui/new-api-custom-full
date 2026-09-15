@@ -58,6 +58,8 @@ export function getChannelTypeIcon(type: number): string {
     64: 'Minimax', // MiniMax Video
     61: 'Sub2API', // Sub2API
     62: 'NewAPI', // New API
+    66: 'Vllm', // vLLM
+    67: 'SGLang', // SGLang
     3: 'Azure', // Azure
 
     // Anthropic

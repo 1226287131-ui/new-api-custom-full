@@ -6,7 +6,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func Cache(version string) func(c *gin.Context) {
+func Cache(versions ...string) func(c *gin.Context) {
+	version := ""
+	if len(versions) > 0 {
+		version = versions[0]
+	}
 	return func(c *gin.Context) {
 		if isImmutableFrontendAsset(c.Request.URL.Path) {
 			c.Header("Cache-Control", "public, max-age=31536000, immutable")

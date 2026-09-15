@@ -41,6 +41,7 @@ const getModelDefaults = (settings: BillingSettings) => ({
   BillingExpr: settings['billing_setting.billing_expr'],
   TaskBillingPricing: settings['billing_setting.task_billing_pricing'],
   ScheduledDiscount: settings['billing_setting.scheduled_discount'],
+  PluginBillingExpr: settings['billing_setting.plugin_billing_expr'],
 })
 
 const getGroupDefaults = (settings: BillingSettings) => ({

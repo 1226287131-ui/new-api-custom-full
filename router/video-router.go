@@ -21,49 +21,30 @@ func SetVideoRouter(router *gin.Engine) {
 		publicVideoRouter.HEAD("/video-input-cache/:file_name", controller.PublicVideoInput)
 	}
 
-	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
-	videoProxyRouter := router.Group("/v1")
-	videoProxyRouter.Use(middleware.RouteTag("relay"))
-	videoProxyRouter.Use(middleware.TokenOrUserAuth())
-	{
-		videoProxyRouter.GET("/videos/:task_id/content", controller.VideoProxy)
-	}
+	videoSharedRouter := router.Group("/v1")
+	videoSharedRouter.Use(middleware.RouteTag("relay"))
+	videoSharedRouter.Use(middleware.TokenAuth())
+	videoSharedRouter.Use(middleware.SystemPerformanceCheck())
+	videoSharedRouter.POST(
+		"/video/generations",
+		middleware.PinTaskPluginEndpoint(),
+		middleware.TaskPluginEndpointOnly(middleware.ModelRequestRateLimit()),
+		middleware.PrepareTaskPluginEndpoint(),
+		middleware.Distribute(),
+		func(c *gin.Context) {
+			controller.RelayTaskPluginEndpoint(c, controller.RelayTask)
+		},
+	)
 
 	videoV1Router := router.Group("/v1")
 	videoV1Router.Use(middleware.RouteTag("relay"))
 	videoV1Router.Use(middleware.TokenAuth(), middleware.Distribute())
 	{
-		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
 	}
-	// openai compatible API video routes
-	// docs: https://platform.openai.com/docs/api-reference/videos/create
-	{
-		// MetaJing's OpenAI Video documentation uses the generations suffix.
-		// Keep it as an alias of the canonical OpenAI /v1/videos endpoint.
-		videoV1Router.POST("/videos/generations", controller.RelayTask)
-		videoV1Router.GET("/videos/generations/:task_id", controller.RelayTaskFetch)
-		videoV1Router.POST("/videos", controller.RelayTask)
-		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
-	}
-
-	klingV1Router := router.Group("/kling/v1")
-	klingV1Router.Use(middleware.RouteTag("relay"))
-	klingV1Router.Use(middleware.KlingRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
-	{
-		klingV1Router.POST("/videos/text2video", controller.RelayTask)
-		klingV1Router.POST("/videos/image2video", controller.RelayTask)
-		klingV1Router.GET("/videos/text2video/:task_id", controller.RelayTaskFetch)
-		klingV1Router.GET("/videos/image2video/:task_id", controller.RelayTaskFetch)
-	}
-
-	// Jimeng official API routes - direct mapping to official API format
-	jimengOfficialGroup := router.Group("jimeng")
-	jimengOfficialGroup.Use(middleware.RouteTag("relay"))
-	jimengOfficialGroup.Use(middleware.JimengRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
-	{
-		// Maps to: /?Action=CVSync2AsyncSubmitTask&Version=2022-08-31 and /?Action=CVSync2AsyncGetResult&Version=2022-08-31
-		jimengOfficialGroup.POST("/", controller.RelayTask)
-	}
+	// Keep the deployed generations alias; canonical /v1/videos is registered
+	// once by SetTaskPluginProtocolRouter.
+	videoV1Router.POST("/videos/generations", controller.RelayTask)
+	videoV1Router.GET("/videos/generations/:task_id", controller.RelayTaskFetch)
 }

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strconv"
@@ -101,6 +102,68 @@ func insertTask(t *testing.T, task *Task) {
 	require.NoError(t, DB.Create(task).Error)
 }
 
+func TestGetTaskForProtocolObservationScopesOwnerAndPlatform(t *testing.T) {
+	truncateTables(t)
+	task := &Task{
+		TaskID:   "task_protocol_scope",
+		UserId:   7,
+		Platform: "plugin-a",
+		Status:   TaskStatusInProgress,
+	}
+	insertTask(t, task)
+
+	got, exists, err := GetTaskForProtocolObservation(context.Background(), 7, "plugin-a", task.TaskID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, task.ID, got.ID)
+
+	for _, query := range []struct {
+		userID   int
+		platform string
+	}{
+		{userID: 8, platform: "plugin-a"},
+		{userID: 7, platform: "plugin-b"},
+	} {
+		got, exists, err = GetTaskForProtocolObservation(context.Background(), query.userID, constant.TaskPlatform(query.platform), task.TaskID)
+		require.NoError(t, err)
+		assert.False(t, exists)
+		assert.Nil(t, got)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = GetTaskForProtocolObservation(cancelled, 7, "plugin-a", task.TaskID)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestTaskPrivateDataPersistsCacheRecoveryWithoutOtherFields(t *testing.T) {
+	truncateTables(t)
+	for _, tc := range []struct {
+		name string
+		data TaskPrivateData
+	}{
+		{"upstream result", TaskPrivateData{UpstreamResultURL: "https://provider.example/video.mp4"}},
+		{"cache completion", TaskPrivateData{VideoCachedAt: 12345}},
+		{"retry count", TaskPrivateData{VideoCacheAttempts: 2}},
+		{"retry schedule", TaskPrivateData{VideoCacheNextRetryAt: 12346}},
+		{"retry error", TaskPrivateData{VideoCacheLastError: "temporary download failure"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := &Task{TaskID: "task_private_" + tc.name, PrivateData: tc.data}
+			insertTask(t, task)
+			var saved Task
+			require.NoError(t, DB.First(&saved, task.ID).Error)
+			assert.Equal(t, tc.data, saved.PrivateData)
+			value, err := tc.data.Value()
+			require.NoError(t, err)
+			require.IsType(t, "", value, "PostgreSQL JSON values must be sent as text")
+			var fromBytes TaskPrivateData
+			require.NoError(t, fromBytes.Scan([]byte(value.(string))))
+			assert.Equal(t, tc.data, fromBytes)
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot / Equal — pure logic tests (no DB)
 // ---------------------------------------------------------------------------
@@ -143,6 +206,29 @@ func TestSnapshotEqual_NilVsEmpty(t *testing.T) {
 	assert.True(t, a.Equal(b))
 }
 
+func TestSnapshotEqual_PluginStateAndPollFailures(t *testing.T) {
+	base := taskSnapshot{
+		Status:       TaskStatusInProgress,
+		PluginState:  json.RawMessage(`{"req_key":"a"}`),
+		PollFailures: 2,
+	}
+	assert.True(t, base.Equal(taskSnapshot{
+		Status:       TaskStatusInProgress,
+		PluginState:  json.RawMessage(`{"req_key":"a"}`),
+		PollFailures: 2,
+	}))
+	assert.False(t, base.Equal(taskSnapshot{
+		Status:       TaskStatusInProgress,
+		PluginState:  json.RawMessage(`{"req_key":"b"}`),
+		PollFailures: 2,
+	}))
+	assert.False(t, base.Equal(taskSnapshot{
+		Status:       TaskStatusInProgress,
+		PluginState:  json.RawMessage(`{"req_key":"a"}`),
+		PollFailures: 3,
+	}))
+}
+
 func TestSnapshot_Roundtrip(t *testing.T) {
 	task := &Task{
 		Status:     TaskStatusInProgress,
@@ -152,6 +238,8 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 		FailReason: "timeout",
 		PrivateData: TaskPrivateData{
 			ResultURL:     "https://example.com/result.mp4",
+			PluginState:   json.RawMessage(`{"req_key":"keep"}`),
+			PollFailures:  3,
 			VideoCachedAt: 123456,
 		},
 		Data: json.RawMessage(`{"model":"test-model"}`),
@@ -165,6 +253,8 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 	assert.Equal(t, task.PrivateData.ResultURL, snap.ResultURL)
 	assert.Equal(t, task.PrivateData.VideoCachedAt, snap.VideoCachedAt)
 	assert.JSONEq(t, string(task.Data), string(snap.Data))
+	assert.Equal(t, task.PrivateData.PluginState, snap.PluginState)
+	assert.Equal(t, task.PrivateData.PollFailures, snap.PollFailures)
 }
 
 func TestGetRecentSuccessfulVideoTasksForCacheFiltersBeforeLimit(t *testing.T) {
@@ -173,10 +263,10 @@ func TestGetRecentSuccessfulVideoTasksForCacheFiltersBeforeLimit(t *testing.T) {
 	now := time.Now().Unix()
 	for i := 0; i < 110; i++ {
 		insertTask(t, &Task{
-			TaskID:     "task_cached_" + strconv.Itoa(i),
-			Platform:   constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMaxVideo)),
-			Status:     TaskStatusSuccess,
-			FinishTime: now - int64(i),
+			TaskID:      "task_cached_" + strconv.Itoa(i),
+			Platform:    constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMaxVideo)),
+			Status:      TaskStatusSuccess,
+			FinishTime:  now - int64(i),
 			PrivateData: TaskPrivateData{VideoCachedAt: now},
 		})
 	}
@@ -261,7 +351,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
 			t := &Task{}
@@ -290,4 +380,31 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, winCount, "exactly one goroutine should win the CAS")
+}
+
+func TestUpdateWithStatus_PersistsPluginStateAndPollFailures(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID: "task_cas_plugin_state",
+		Status: TaskStatusInProgress,
+		Data:   json.RawMessage(`{}`),
+		PrivateData: TaskPrivateData{
+			PluginState:  json.RawMessage(`{"req_key":"old"}`),
+			PollFailures: 1,
+		},
+	}
+	insertTask(t, task)
+
+	task.PrivateData.PluginState = json.RawMessage(`{"req_key":"new"}`)
+	task.PrivateData.PollFailures = 4
+	won, err := task.UpdateWithStatus(TaskStatusInProgress)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, TaskStatusInProgress, reloaded.Status)
+	assert.JSONEq(t, `{"req_key":"new"}`, string(reloaded.PrivateData.PluginState))
+	assert.Equal(t, 4, reloaded.PrivateData.PollFailures)
 }

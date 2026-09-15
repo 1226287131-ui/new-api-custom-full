@@ -55,13 +55,13 @@ type ImageCacheSource struct {
 // ImageCacheInfo is stored in the consume log's Other JSON field. URLs are
 // local capability URLs and never contain the upstream image address.
 type ImageCacheInfo struct {
-	URLs        []string
-	TotalCount  int
-	CachedCount int
-	FailedCount int
-	CachedAt    int64
-	ExpiresAt   int64
-	Status      string
+	URLs          []string
+	TotalCount    int
+	CachedCount   int
+	FailedCount   int
+	CachedAt      int64
+	ExpiresAt     int64
+	Status        string
 	FailedReasons []string
 }
 
@@ -196,7 +196,7 @@ func SetImageCacheInfo(c *gin.Context, info ImageCacheInfo) {
 
 // AddImageCacheInfoToOther merges request-local cache metadata into a usage
 // log without changing the persisted schema.
-func AddImageCacheInfoToOther(c *gin.Context, other map[string]interface{}) {
+func AddImageCacheInfoToOther(c *gin.Context, other *model.LogOther) {
 	if c == nil || other == nil {
 		return
 	}
@@ -204,9 +204,7 @@ func AddImageCacheInfoToOther(c *gin.Context, other map[string]interface{}) {
 	if !ok || info.TotalCount <= 0 {
 		return
 	}
-	for key, value := range imageCacheInfoToOther(info) {
-		other[key] = value
-	}
+	other.MergePublic(imageCacheInfoToOther(info))
 }
 
 func imageCacheInfoToOther(info ImageCacheInfo) map[string]interface{} {

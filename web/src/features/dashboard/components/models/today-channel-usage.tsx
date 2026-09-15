@@ -107,7 +107,7 @@ export function TodayChannelUsage() {
   })
 
   const usage = usageQuery.data?.data
-  const channels = usage?.channels ?? []
+  const channels = usage?.channels
   const totalQuota = Number(usage?.total_quota ?? 0)
   const totalCount = Number(usage?.total_count ?? 0)
   const totalTokens = Number(usage?.total_token_used ?? 0)
@@ -120,7 +120,7 @@ export function TodayChannelUsage() {
 
   const rows = useMemo(() => {
     const shareBase = totalQuota > 0 ? totalQuota : totalCount
-    return channels.map((channel) => {
+    return (channels ?? []).map((channel) => {
       const quota = Number(channel.quota) || 0
       const count = Number(channel.count) || 0
       const value = totalQuota > 0 ? quota : count

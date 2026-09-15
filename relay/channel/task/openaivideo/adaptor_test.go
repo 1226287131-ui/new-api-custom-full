@@ -83,8 +83,8 @@ func TestBuildRequestURLSupportsConfiguredOpenAIVideoEndpoints(t *testing.T) {
 	} {
 		t.Run(endpoint, func(t *testing.T) {
 			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
-				ApiKey:          "sk-test",
-				ChannelBaseUrl:  "https://upstream.example/",
+				ApiKey:         "sk-test",
+				ChannelBaseUrl: "https://upstream.example/",
 				ChannelSetting: dto.ChannelSettings{OpenAIVideoEndpoint: endpoint},
 			}}
 			adaptor := &TaskAdaptor{}
@@ -115,6 +115,7 @@ func TestBuildRequestBodyUsesAspectRatioForGenerationsEndpoints(t *testing.T) {
 			require.NoError(t, err)
 			encoded, err := io.ReadAll(body)
 			require.NoError(t, err)
+			upstreamPayload = nil
 			require.NoError(t, common.Unmarshal(encoded, &upstreamPayload))
 			assert.Equal(t, "9:16", upstreamPayload["aspect_ratio"])
 			assert.NotContains(t, upstreamPayload, "ratio")
@@ -593,8 +594,8 @@ func TestFast720pRejectsUnsupportedInputs(t *testing.T) {
 	}
 }
 
-func TestValidateRequestAcceptsOnlySupportedDurations(t *testing.T) {
-	for _, duration := range []int{5, 10, 15} {
+func TestValidateRequestAcceptsWholeSecondsFromFiveThroughThirty(t *testing.T) {
+	for _, duration := range []int{5, 8, 10, 14, 15, 16, 29, 30} {
 		requestBody, err := common.Marshal(map[string]any{
 			"model": "seedance-2.0", "prompt": "animate this", "duration": duration,
 		})
@@ -603,14 +604,16 @@ func TestValidateRequestAcceptsOnlySupportedDurations(t *testing.T) {
 		require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 	}
 
-	requestBody, err := common.Marshal(map[string]any{
-		"model": "seedance-2.0", "prompt": "animate this", "duration": 8,
-	})
-	require.NoError(t, err)
-	c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
-	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
-	require.NotNil(t, taskErr)
-	assert.Equal(t, "invalid_duration", taskErr.Code)
+	for _, duration := range []any{0, 4, 31, 6.5, "5.5"} {
+		requestBody, err := common.Marshal(map[string]any{
+			"model": "seedance-2.0", "prompt": "animate this", "duration": duration,
+		})
+		require.NoError(t, err)
+		c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
+		taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, "duration %v", duration)
+		assert.Equal(t, "invalid_duration", taskErr.Code)
+	}
 }
 
 func TestValidateRequestUsesGenerateActionForAnyReferenceMedia(t *testing.T) {
@@ -875,8 +878,8 @@ func TestFetchTaskUsesConfiguredOpenAIVideoStatusEndpoint(t *testing.T) {
 	defer server.Close()
 
 	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
-		ApiKey:          "sk-test",
-		ChannelBaseUrl:  server.URL,
+		ApiKey:         "sk-test",
+		ChannelBaseUrl: server.URL,
 		ChannelSetting: dto.ChannelSettings{OpenAIVideoEndpoint: "/v1/video/generations"},
 	}}
 	adaptor := &TaskAdaptor{}

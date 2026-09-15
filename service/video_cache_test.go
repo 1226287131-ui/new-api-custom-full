@@ -179,7 +179,7 @@ func TestVideoCacheFilePathStaysInsideCacheDirectory(t *testing.T) {
 	t.Setenv("VIDEO_CACHE_DIR", cacheDir)
 
 	path := videoCacheFilePath(`../nested\task`)
-	assert.Equal(t, cacheDir, filepath.Dir(path))
+	assert.Equal(t, filepath.Clean(cacheDir), filepath.Dir(path))
 	assert.False(t, strings.Contains(filepath.Base(path), ".."))
 }
 
