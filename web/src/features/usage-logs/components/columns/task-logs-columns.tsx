@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { ViewIcon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import type { ColumnDef } from '@tanstack/react-table'
-import { FileJson, Video } from 'lucide-react'
+import { FileJson } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -30,12 +30,10 @@ import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { TASK_STATUS } from '../../constants'
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
 import type { TaskLog } from '../../types'
 import { RequestBodyDialog } from '../dialogs/request-body-dialog'
 import { TaskDetailsDialog } from '../dialogs/task-details-dialog'
-import { VideoPreviewDialog } from '../dialogs/video-preview-dialog'
 import { PluginAuthorLink } from '../plugin-author-link'
 import { TaskArtifactsCell } from '../task-artifacts'
 import { useUsageLogsContext } from '../usage-logs-provider'
@@ -74,11 +72,6 @@ function TaskDetailsCell(props: {
             {props.log.fail_reason}
           </span>
         ) : null}
-        {props.log.status === TASK_STATUS.SUCCESS &&
-          props.log.platform !== 'suno' &&
-          Boolean(props.log.result_url || props.log.legacy_video_available) && (
-            <VideoPreviewCell log={props.log} />
-          )}
       </div>
       <TaskDetailsDialog
         log={props.log}
@@ -86,35 +79,6 @@ function TaskDetailsCell(props: {
         isRoot={props.isRoot}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-      />
-    </>
-  )
-}
-
-function VideoPreviewCell({ log }: { log: TaskLog }) {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const encodedTaskId = encodeURIComponent(log.task_id)
-  const videoUrl = `/video-cache/${encodedTaskId}.mp4`
-
-  return (
-    <>
-      <button
-        type='button'
-        className='group flex items-center gap-1 text-left text-xs'
-        onClick={() => setOpen(true)}
-        title={t('View video')}
-      >
-        <Video className='text-muted-foreground size-3' />
-        <span className='text-foreground leading-snug group-hover:underline'>
-          {t('View video')}
-        </span>
-      </button>
-      <VideoPreviewDialog
-        videoUrl={videoUrl}
-        taskId={log.task_id}
-        open={open}
-        onOpenChange={setOpen}
       />
     </>
   )
@@ -326,16 +290,12 @@ export function useTaskLogsColumns(
       },
     },
     createProgressColumn<TaskLog>({ headerLabel: t('Progress') }),
-    ...(isAdmin
-      ? [
-          {
-            accessorKey: 'request_body',
-            header: t('Request Body'),
-            cell: ({ row }) => <RequestBodyCell log={row.original} />,
-            size: 140,
-          } satisfies ColumnDef<TaskLog>,
-        ]
-      : []),
+    {
+      accessorKey: 'request_body',
+      header: t('Request Body'),
+      cell: ({ row }) => <RequestBodyCell log={row.original} />,
+      size: 140,
+    },
     {
       id: 'artifacts',
       header: t('Artifacts'),

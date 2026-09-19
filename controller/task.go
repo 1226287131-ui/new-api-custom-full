@@ -416,9 +416,9 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 			}
 		}
 		item := relay.TaskModel2Dto(task)
-		if viewerRole >= common.RoleAdminUser {
-			item = relay.TaskModel2DtoForAdmin(task)
-		}
+		// Non-admin log queries are owner-scoped; protocol task responses stay unchanged.
+		item.RequestBody = task.RequestBody
+		item.RequestBodyComplete = task.RequestBodyComplete
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
 		if task.Status == model.TaskStatusSuccess && (taskHasPluginExecution(task) || !constant.IsVideoTaskPlatform(task.Platform)) {
 			item.ResultURL = ""
