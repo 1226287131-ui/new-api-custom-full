@@ -190,35 +190,6 @@ export function useTaskLogsColumns(
             </button>
           )
         },
-      },
-      {
-        id: 'plugin',
-        header: t('Plugin'),
-        accessorFn: (row) => row.admin_info?.task_plugin?.key ?? '',
-        cell: ({ row }) => {
-          const plugin = row.original.admin_info?.task_plugin
-          if (!plugin) {
-            return <span className='text-muted-foreground/60 text-xs'>-</span>
-          }
-          return (
-            <div className='flex max-w-[170px] flex-col gap-0.5'>
-              <span className='truncate text-xs font-medium'>
-                {plugin.name || plugin.key}
-              </span>
-              <span className='text-muted-foreground truncate font-mono text-[11px]'>
-                {plugin.key}
-                {plugin.version ? ` @ ${plugin.version}` : ''}
-              </span>
-              {plugin.author ? (
-                <PluginAuthorLink
-                  author={plugin.author}
-                  showUrl
-                  className='text-muted-foreground text-[11px]'
-                />
-              ) : null}
-            </div>
-          )
-        },
       }
     )
   }
@@ -320,6 +291,38 @@ export function useTaskLogsColumns(
       maxSize: 240,
     }
   )
+
+  if (isAdmin) {
+    columns.push({
+      id: 'plugin',
+      header: t('Plugin'),
+      accessorFn: (row) => row.admin_info?.task_plugin?.key ?? '',
+      cell: ({ row }) => {
+        const plugin = row.original.admin_info?.task_plugin
+        if (!plugin) {
+          return <span className='text-muted-foreground/60 text-xs'>-</span>
+        }
+        return (
+          <div className='flex max-w-[170px] flex-col gap-0.5'>
+            <span className='truncate text-xs font-medium'>
+              {plugin.name || plugin.key}
+            </span>
+            <span className='text-muted-foreground truncate font-mono text-[11px]'>
+              {plugin.key}
+              {plugin.version ? ` @ ${plugin.version}` : ''}
+            </span>
+            {plugin.author ? (
+              <PluginAuthorLink
+                author={plugin.author}
+                showUrl
+                className='text-muted-foreground text-[11px]'
+              />
+            ) : null}
+          </div>
+        )
+      },
+    })
+  }
 
   return columns
 }

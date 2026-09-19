@@ -61,6 +61,17 @@ function TaskActionsTable(props: { log: TaskLog; isAdmin?: boolean }) {
   })
   return (
     <table>
+      <thead>
+        {table.getHeaderGroups().map((group) => (
+          <tr key={group.id}>
+            {group.headers.map((header) => (
+              <th key={header.id}>
+                {flexRender(header.column.columnDef.header, header.getContext())}
+              </th>
+            ))}
+          </tr>
+        ))}
+      </thead>
       <tbody>
         {table.getRowModel().rows.map((row) => (
           <tr key={row.id}>
@@ -116,6 +127,23 @@ function renderTask(log: TaskLog = task, isAdmin = false) {
 }
 
 describe('task log actions', () => {
+  it('places the admin plugin column last, immediately after details', () => {
+    renderTask(task, true)
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers.at(-2)).toHaveTextContent(/^Details$/)
+    expect(headers.at(-1)).toHaveTextContent(/^Plugin$/)
+  })
+
+  it('keeps plugin information hidden from ordinary users', () => {
+    renderTask()
+    expect(
+      screen.queryByRole('columnheader', { name: 'Plugin' })
+    ).not.toBeInTheDocument()
+    expect(screen.getAllByRole('columnheader').at(-1)).toHaveTextContent(
+      /^Details$/
+    )
+  })
+
   it.each([false, true])(
     'opens the stored request body for an authorized task (admin=%s)',
     async (isAdmin) => {
