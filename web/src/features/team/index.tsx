@@ -37,6 +37,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { getTeamSelf } from './api'
 import { CommissionTable } from './components/commission-table'
 import { PayoutForm } from './components/payout-form'
+import { RewardPreferenceForm } from './components/reward-preference-form'
 import { TeamError, TeamLoading } from './components/shared'
 import { WithdrawalForm } from './components/withdrawal-form'
 import { WithdrawalTable } from './components/withdrawal-table'
@@ -87,16 +88,20 @@ export function Team() {
                     {data.policy.enabled ? t('Enabled') : t('Disabled')}
                   </Badge>
                   <span className='text-muted-foreground text-sm'>
-                    {data.policy.mode === 'cash'
+                    {data.effective_reward_mode === 'cash'
                       ? t('Cash rewards')
                       : t('Site credits')}{' '}
                     ·{' '}
-                    {(data.policy.mode === 'cash'
+                    {(data.effective_reward_mode === 'cash'
                       ? data.policy.cash_rate_bps
                       : data.policy.credit_rate_bps) / 100}
                     %
                   </span>
                 </div>
+                <RewardPreferenceForm
+                  key={`${data.reward_preference.mode}-${data.effective_reward_mode}`}
+                  data={data}
+                />
                 <div className='flex max-w-2xl items-center gap-2'>
                   <Input
                     aria-label={t('Referral link')}
@@ -197,7 +202,10 @@ export function Team() {
                 ))}
               </dl>
               <Tabs defaultValue='rewards' className='min-w-0'>
-                <TabsList variant='line' className='max-w-full overflow-x-auto'>
+                <TabsList
+                  variant='line'
+                  className='max-w-full justify-start overflow-x-auto'
+                >
                   <TabsTrigger value='rewards'>
                     {t('Reward records')}
                   </TabsTrigger>

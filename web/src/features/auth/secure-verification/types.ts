@@ -25,6 +25,7 @@ export type VerificationMethod =
   | 'oauth'
   | 'session'
 export type SecurityProofScope =
+  | 'team.referral.write'
   | 'team.payout.write'
   | 'team.withdrawal.write'
   | 'team.withdrawal.review'
@@ -44,6 +45,15 @@ export type SecurityProofScope =
   | 'account.delete'
 
 export type VerificationOperation =
+  | {
+      scope: 'team.referral.write'
+      context: {
+        user_id: number
+        expected_inviter_id: number
+        inviter_id: number
+        reason: string
+      }
+    }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'account.binding.bind'
@@ -53,7 +63,10 @@ export type VerificationOperation =
   | {
       scope: Exclude<
         SecurityProofScope,
-        'channel.key.read' | 'account.binding.bind' | 'account.binding.unbind'
+        | 'channel.key.read'
+        | 'account.binding.bind'
+        | 'account.binding.unbind'
+        | 'team.referral.write'
       >
       context?: Record<string, never>
     }

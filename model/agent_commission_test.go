@@ -3,6 +3,9 @@ package model
 import (
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,17 +14,20 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	mysqlgorm "gorm.io/driver/mysql"
+	postgresgorm "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func setupAgentCommissionDB(t *testing.T) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	dsn := filepath.Join(t.TempDir(), "team.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&User{}, &TopUp{}, &AgentPolicy{}, &AgentCommission{}, &AgentWallet{}, &Log{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &TopUp{}, &AgentPolicy{}, &AgentCommission{}, &AgentWallet{}, &AgentRewardPreference{}, &AgentReferralGuard{}, &AgentReferralChange{}, &Log{}))
 	oldDB, oldLogDB, oldQuota, oldRedis, oldBatch := DB, LOG_DB, common.QuotaPerUnit, common.RedisEnabled, common.BatchUpdateEnabled
 	DB, LOG_DB, common.QuotaPerUnit, common.RedisEnabled, common.BatchUpdateEnabled = db, db, 500000, false, false
 	t.Cleanup(func() {
@@ -38,6 +44,306 @@ func createAgentTestOrder(t *testing.T, tradeNo string, price float64, amount in
 	require.NoError(t, SnapshotEpayAgentPolicy(order, price, common.QuotaPerUnit))
 	require.NoError(t, order.Insert())
 	return order
+}
+
+func TestAgentRewardPreferenceOnlyChangesFutureReferrerSnapshots(t *testing.T) {
+	setupAgentCommissionDB(t)
+	require.NoError(t, SaveAgentPolicy(&AgentPolicy{Enabled: true, Mode: AgentModeCredit, CreditRateBPS: 500, CashRateBPS: 800, MinimumWithdrawalCents: 1000}))
+	preference, err := GetAgentRewardPreference(1)
+	require.NoError(t, err)
+	assert.Empty(t, preference.Mode)
+	oldOrder := createAgentTestOrder(t, "preference-before", 0.1, 1000)
+	err = SaveAgentRewardPreference(1, AgentModeCash)
+	require.NoError(t, err)
+	// The paying customer's choice must never select the referrer's reward mode.
+	err = SaveAgentRewardPreference(2, AgentModeCredit)
+	require.NoError(t, err)
+	newOrder := createAgentTestOrder(t, "preference-after", 0.1, 1000)
+	var oldSnapshot, newSnapshot agentOrderSnapshot
+	require.NoError(t, common.UnmarshalJsonStr(oldOrder.AgentSnapshot, &oldSnapshot))
+	require.NoError(t, common.UnmarshalJsonStr(newOrder.AgentSnapshot, &newSnapshot))
+	assert.Equal(t, AgentModeCredit, oldSnapshot.Mode)
+	assert.Equal(t, 500, oldSnapshot.RateBPS)
+	assert.Equal(t, AgentModeCash, newSnapshot.Mode)
+	assert.Equal(t, 800, newSnapshot.RateBPS)
+	err = SaveAgentRewardPreference(1, AgentModeCredit)
+	require.NoError(t, err)
+	var stored TopUp
+	require.NoError(t, DB.First(&stored, newOrder.Id).Error)
+	assert.Equal(t, newOrder.AgentSnapshot, stored.AgentSnapshot)
+	err = SaveAgentRewardPreference(1, "arbitrary")
+	assert.ErrorIs(t, err, ErrInvalidAgentRewardPreference)
+	err = SaveAgentRewardPreference(9999, AgentModeCash)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}
+
+func TestAgentReferralChangeIsAuditedAndDoesNotRewriteOrdersOrBalances(t *testing.T) {
+	setupAgentCommissionDB(t)
+	require.NoError(t, DB.Create(&User{Id: 3, Username: "root", AffCode: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, DB.Create(&User{Id: 4, Username: "new-referrer", AffCode: "new-referrer", Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, SaveAgentPolicy(&AgentPolicy{Enabled: true, Mode: AgentModeCredit, CreditRateBPS: 500, MinimumWithdrawalCents: 1000}))
+	oldOrder := createAgentTestOrder(t, "referral-before", 1, 100)
+	change, err := ChangeAgentReferrer(3, 2, 1, 4, "customer requested correction")
+	require.NoError(t, err)
+	assert.Equal(t, 1, change.OldInviterID)
+	assert.Equal(t, 4, change.NewInviterID)
+	assert.Equal(t, "root", change.OperatorUsername)
+	referral, err := GetAgentReferral(2)
+	require.NoError(t, err)
+	assert.Equal(t, "new-referrer", referral.InviterUsername)
+	newOrder := createAgentTestOrder(t, "referral-after", 1, 100)
+	var stored TopUp
+	require.NoError(t, DB.First(&stored, oldOrder.Id).Error)
+	assert.Equal(t, oldOrder.AgentSnapshot, stored.AgentSnapshot)
+	var snapshot agentOrderSnapshot
+	require.NoError(t, common.UnmarshalJsonStr(newOrder.AgentSnapshot, &snapshot))
+	assert.Equal(t, 4, snapshot.ReferrerID)
+	_, err = ChangeAgentReferrer(3, 2, 1, 0, "stale form")
+	assert.ErrorIs(t, err, ErrAgentReferralConflict)
+	_, err = ChangeAgentReferrer(3, 2, 4, 0, "unlink")
+	require.NoError(t, err)
+	var count int64
+	require.NoError(t, DB.Model(&AgentReferralChange{}).Count(&count).Error)
+	assert.EqualValues(t, 2, count)
+	var user User
+	require.NoError(t, DB.First(&user, 2).Error)
+	assert.Zero(t, user.InviterId)
+	assert.Zero(t, user.Quota)
+	assert.Zero(t, user.AffCount)
+	assert.Zero(t, user.QuotaCreditTotal)
+}
+
+func TestAgentReferralRejectsUnauthorizedAndCyclicChanges(t *testing.T) {
+	setupAgentCommissionDB(t)
+	require.NoError(t, DB.Create(&User{Id: 3, Username: "root", AffCode: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, DB.Create(&User{Id: 4, Username: "admin", AffCode: "admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled}).Error)
+	for _, tc := range []struct {
+		name                                   string
+		operator, user, oldInviter, newInviter int
+		want                                   error
+	}{
+		{"ordinary-user", 1, 2, 1, 0, ErrAgentReferralForbidden},
+		{"protected-admin", 4, 3, 0, 1, ErrAgentReferralForbidden},
+		{"self-invitation", 3, 2, 1, 2, ErrAgentReferralInvalid},
+		{"ancestor-cycle", 3, 1, 0, 2, ErrAgentReferralCycle},
+		{"missing-inviter", 3, 2, 1, 9999, gorm.ErrRecordNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ChangeAgentReferrer(tc.operator, tc.user, tc.oldInviter, tc.newInviter, "test correction")
+			assert.ErrorIs(t, err, tc.want)
+		})
+	}
+	var count int64
+	require.NoError(t, DB.Model(&AgentReferralChange{}).Count(&count).Error)
+	assert.Zero(t, count)
+	// Generic profile changes cannot bypass the audited hierarchy operation.
+	user := &User{Id: 2, DisplayName: "renamed", InviterId: 4}
+	require.NoError(t, user.Update(false))
+	assert.Equal(t, 1, user.InviterId)
+}
+
+func TestAgentReferralAuditFailureRollsBackBinding(t *testing.T) {
+	setupAgentCommissionDB(t)
+	require.NoError(t, DB.Create(&User{Id: 3, Username: "root", AffCode: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}).Error)
+	const callback = "test:reject-referral-audit"
+	failure := errors.New("audit write unavailable")
+	require.NoError(t, DB.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Table == "agent_referral_changes" {
+			tx.AddError(failure)
+		}
+	}))
+	t.Cleanup(func() { assert.NoError(t, DB.Callback().Create().Remove(callback)) })
+	_, err := ChangeAgentReferrer(3, 2, 1, 0, "unlink")
+	assert.ErrorIs(t, err, failure)
+	referral, err := GetAgentReferral(2)
+	require.NoError(t, err)
+	assert.Equal(t, 1, referral.InviterID)
+}
+
+func TestAgentReferralConcurrentChangesCannotCreateCycle(t *testing.T) {
+	setupAgentCommissionDB(t)
+	sqlDB, err := DB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", 2).UpdateColumn("inviter_id", 0).Error)
+	require.NoError(t, DB.Create(&User{Id: 3, Username: "root", AffCode: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, DB.Create(&User{Id: 4, Username: "other-root", AffCode: "other-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}).Error)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, pair := range [][3]int{{1, 2, 3}, {2, 1, 4}} {
+		go func() {
+			<-start
+			_, err := ChangeAgentReferrer(pair[2], pair[0], 0, pair[1], "concurrent correction")
+			results <- err
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if first == nil {
+		assert.ErrorIs(t, second, ErrAgentReferralCycle)
+	} else {
+		assert.ErrorIs(t, first, ErrAgentReferralCycle)
+		assert.NoError(t, second)
+	}
+	var count int64
+	require.NoError(t, DB.Model(&AgentReferralChange{}).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+}
+
+// External DSNs must point at disposable, empty scratch databases. No tables
+// or databases are dropped, so failed migrations remain available to inspect.
+func TestAgentRewardReferralDatabaseCompatibility(t *testing.T) {
+	for _, dialect := range []common.DatabaseType{common.DatabaseTypeSQLite, common.DatabaseTypeMySQL, common.DatabaseTypePostgreSQL} {
+		for _, scenario := range []string{"fresh", "upgrade"} {
+			t.Run(string(dialect)+"-"+scenario, func(t *testing.T) {
+				var driver gorm.Dialector
+				if dialect == common.DatabaseTypeSQLite {
+					driver = sqlite.Open(filepath.Join(t.TempDir(), "matrix.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate")
+				} else {
+					dsn := os.Getenv("NEWAPI_TEAM_TEST_" + strings.ToUpper(string(dialect)) + "_" + strings.ToUpper(scenario) + "_DSN")
+					if dsn == "" {
+						t.Skip("set the isolated scratch database DSN to run this engine")
+					}
+					if dialect == common.DatabaseTypeMySQL {
+						driver = mysqlgorm.Open(dsn)
+					} else {
+						driver = postgresgorm.Open(dsn)
+					}
+				}
+				db, err := gorm.Open(driver, &gorm.Config{})
+				require.NoError(t, err)
+				sqlDB, err := db.DB()
+				require.NoError(t, err)
+				sqlDB.SetMaxOpenConns(4)
+				t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
+				tables, err := db.Migrator().GetTables()
+				require.NoError(t, err)
+				require.Empty(t, tables, "refusing to use a nonempty scratch database")
+				var version string
+				versionSQL := "SELECT VERSION()"
+				if dialect == common.DatabaseTypeSQLite {
+					versionSQL = "SELECT sqlite_version()"
+				}
+				require.NoError(t, db.Raw(versionSQL).Scan(&version).Error)
+				t.Logf("database version: %s", version)
+				previousDB, previousLogDB, previousType := DB, LOG_DB, common.MainDatabaseType()
+				previousRedis, previousBatch := common.RedisEnabled, common.BatchUpdateEnabled
+				DB, LOG_DB = db, db
+				common.SetMainDatabaseType(dialect)
+				common.RedisEnabled, common.BatchUpdateEnabled = false, false
+				t.Cleanup(func() {
+					DB, LOG_DB = previousDB, previousLogDB
+					common.SetMainDatabaseType(previousType)
+					common.RedisEnabled, common.BatchUpdateEnabled = previousRedis, previousBatch
+				})
+				legacyModels := []any{&User{}, &TopUp{}, &AgentPolicy{}, &AgentCommission{}, &AgentWallet{}, &AgentPayoutAccount{}, &AgentWithdrawal{}}
+				allModels := append(append([]any{}, legacyModels...), &AgentRewardPreference{}, &AgentReferralGuard{}, &AgentReferralChange{})
+				if scenario == "upgrade" {
+					require.NoError(t, db.AutoMigrate(legacyModels...))
+				} else {
+					require.NoError(t, db.AutoMigrate(allModels...))
+				}
+				users := []User{
+					{Id: 1, Username: "referrer", AffCode: "matrix-parent", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Quota: 700000, QuotaCreditTotal: 100000},
+					{Id: 2, Username: "customer", AffCode: "matrix-child", InviterId: 1, Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Quota: 900000},
+					{Id: 3, Username: "replacement", AffCode: "matrix-replacement", Role: common.RoleCommonUser, Status: common.UserStatusEnabled},
+					{Id: 5, Username: "left", AffCode: "matrix-left", Role: common.RoleCommonUser, Status: common.UserStatusEnabled},
+					{Id: 6, Username: "right", AffCode: "matrix-right", Role: common.RoleCommonUser, Status: common.UserStatusEnabled},
+					{Id: 10, Username: "root-a", AffCode: "matrix-root-a", Role: common.RoleRootUser, Status: common.UserStatusEnabled},
+					{Id: 11, Username: "root-b", AffCode: "matrix-root-b", Role: common.RoleRootUser, Status: common.UserStatusEnabled},
+				}
+				require.NoError(t, db.Create(&users).Error)
+				require.NoError(t, SaveAgentPolicy(&AgentPolicy{Enabled: true, Mode: AgentModeCredit, CreditRateBPS: 500, CashRateBPS: 800, MinimumWithdrawalCents: 100}))
+				encoded, err := common.Marshal(agentOrderSnapshot{Version: 1, UserID: 2, ReferrerID: 1, Mode: AgentModeCash, RateBPS: 1000, Price: "1", QuotaPerUnit: "500000"})
+				require.NoError(t, err)
+				order := TopUp{UserId: 2, TradeNo: "matrix-old-order", Amount: 100, Money: 100, PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusSuccess, AgentSnapshot: string(encoded), ExpectedPaidCents: 10000, EpayQuotaPerUnit: "500000"}
+				require.NoError(t, db.Create(&order).Error)
+				commission := AgentCommission{TopUpID: order.Id, TradeNo: order.TradeNo, UserID: 2, ReferrerID: 1, Mode: AgentModeCash, RateBPS: 1000, PaidCents: 10000, CashCents: 1000, Status: AgentCommissionSettled, Price: "1", QuotaPerUnit: "500000"}
+				wallet := AgentWallet{UserID: 1, AvailableCents: 900, FrozenCents: 100}
+				withdrawal := AgentWithdrawal{UserID: 1, RequestID: "matrix-old-withdrawal", AmountCents: 100, Status: AgentWithdrawalPending, AccountCiphertext: "existing-encrypted-account", NameCiphertext: "existing-encrypted-name"}
+				require.NoError(t, db.Create(&commission).Error)
+				require.NoError(t, db.Create(&wallet).Error)
+				require.NoError(t, db.Create(&withdrawal).Error)
+				var beforeUsers []User
+				require.NoError(t, db.Order("id").Find(&beforeUsers).Error)
+				// Repeated startup migrations must preserve all previously stored funds
+				// and frozen order, commission and withdrawal records.
+				for range 2 {
+					require.NoError(t, db.AutoMigrate(allModels...))
+				}
+				var afterUsers []User
+				require.NoError(t, db.Order("id").Find(&afterUsers).Error)
+				assert.Equal(t, beforeUsers, afterUsers)
+				preference, err := GetAgentRewardPreference(1)
+				require.NoError(t, err)
+				assert.Empty(t, preference.Mode)
+				require.NoError(t, SaveAgentRewardPreference(1, AgentModeCash))
+				require.NoError(t, SaveAgentRewardPreference(1, AgentModeCredit))
+				require.NoError(t, SaveAgentRewardPreference(1, AgentModeCash))
+				var preferenceCount int64
+				require.NoError(t, db.Model(&AgentRewardPreference{}).Where("user_id = ?", 1).Count(&preferenceCount).Error)
+				assert.EqualValues(t, 1, preferenceCount)
+				newOrder := &TopUp{UserId: 2, Amount: 100, Money: 100, PaymentProvider: PaymentProviderEpay}
+				require.NoError(t, SnapshotEpayAgentPolicy(newOrder, 1, 500000))
+				var snapshot agentOrderSnapshot
+				require.NoError(t, common.UnmarshalJsonStr(newOrder.AgentSnapshot, &snapshot))
+				assert.Equal(t, AgentModeCash, snapshot.Mode)
+				assert.Equal(t, 800, snapshot.RateBPS)
+				_, err = ChangeAgentReferrer(10, 2, 1, 3, strings.Repeat("改", 201))
+				assert.ErrorIs(t, err, ErrAgentReferralInvalid)
+				_, err = ChangeAgentReferrer(10, 2, 1, 3, strings.Repeat("改", 200))
+				require.NoError(t, err)
+				_, err = ChangeAgentReferrer(11, 2, 1, 0, "stale form")
+				assert.ErrorIs(t, err, ErrAgentReferralConflict)
+				require.NoError(t, SnapshotEpayAgentPolicy(newOrder, 1, 500000))
+				require.NoError(t, common.UnmarshalJsonStr(newOrder.AgentSnapshot, &snapshot))
+				assert.Equal(t, 3, snapshot.ReferrerID)
+				assert.Equal(t, AgentModeCredit, snapshot.Mode)
+				assert.Equal(t, 500, snapshot.RateBPS)
+				start, results := make(chan struct{}), make(chan error, 2)
+				for _, change := range [][3]int{{10, 5, 6}, {11, 6, 5}} {
+					go func() {
+						<-start
+						_, err := ChangeAgentReferrer(change[0], change[1], 0, change[2], "concurrent rebind")
+						results <- err
+					}()
+				}
+				close(start)
+				first, second := <-results, <-results
+				if first == nil {
+					assert.ErrorIs(t, second, ErrAgentReferralCycle)
+				} else {
+					assert.ErrorIs(t, first, ErrAgentReferralCycle)
+					assert.NoError(t, second)
+				}
+				const callback = "test:matrix-reject-audit"
+				failure := errors.New("audit write unavailable")
+				require.NoError(t, db.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+					if tx.Statement.Table == "agent_referral_changes" {
+						tx.AddError(failure)
+					}
+				}))
+				_, err = ChangeAgentReferrer(10, 2, 3, 0, "unlink")
+				assert.ErrorIs(t, err, failure)
+				require.NoError(t, db.Callback().Create().Remove(callback))
+				referral, err := GetAgentReferral(2)
+				require.NoError(t, err)
+				assert.Equal(t, 3, referral.InviterID)
+				var storedOrder TopUp
+				var storedCommission AgentCommission
+				var storedWallet AgentWallet
+				var storedWithdrawal AgentWithdrawal
+				require.NoError(t, db.First(&storedOrder, order.Id).Error)
+				require.NoError(t, db.First(&storedCommission, commission.ID).Error)
+				require.NoError(t, db.First(&storedWallet, "user_id = ?", 1).Error)
+				require.NoError(t, db.First(&storedWithdrawal, withdrawal.ID).Error)
+				assert.Equal(t, order, storedOrder)
+				assert.Equal(t, commission, storedCommission)
+				assert.Equal(t, wallet, storedWallet)
+				assert.Equal(t, withdrawal, storedWithdrawal)
+			})
+		}
+	}
 }
 
 func TestAgentCommissionCreditAndCashExamples(t *testing.T) {

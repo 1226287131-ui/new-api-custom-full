@@ -17,6 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from '@tanstack/react-router'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -75,6 +83,31 @@ function pendingResponse<T>() {
     resolve = finish
   })
   return { promise, resolve }
+}
+
+async function renderTeamVerification(
+  operation: RequestVerificationOptions,
+  onResult: (proof: SecurityProof | null) => void
+) {
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
+  const rootRoute = createRootRoute({ component: Outlet })
+  const indexRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/',
+    component: () => <Harness operation={operation} onResult={onResult} />,
+  })
+  const securityRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/security',
+    component: () => <h1>Personal security settings</h1>,
+  })
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([indexRoute, securityRoute]),
+    history: createMemoryHistory({ initialEntries: ['/'] }),
+  })
+  await router.load()
+  render(<RouterProvider router={router} />)
+  return router
 }
 
 afterEach(() => {
@@ -427,4 +460,105 @@ it('keeps an enrolled Passkey unavailable when this browser cannot use it', asyn
   ).toBeVisible()
   expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
   expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
+})
+
+it('takes an unenrolled team payout user to personal security settings without completing the action', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...passwordRequirements,
+        scope: 'team.payout.write',
+        methods: [],
+      },
+    },
+  })
+  const post = vi.spyOn(api, 'post')
+  const result = vi.fn()
+  const user = userEvent.setup()
+  const router = await renderTeamVerification(
+    { scope: 'team.payout.write' },
+    result
+  )
+  await user.click(screen.getByText('Protected action'))
+  expect(
+    await screen.findByText(
+      'Enable Two-factor Authentication or Passkey in Security & Access to continue.'
+    )
+  ).toBeVisible()
+  const settings = screen.getByRole('button', {
+    name: 'Open Security & Access',
+  })
+  expect(settings).toHaveAttribute('href', '/security')
+  expect(
+    screen.queryByRole('button', { name: 'Verify' })
+  ).not.toBeInTheDocument()
+  expect(result).not.toHaveBeenCalled()
+  settings.focus()
+  await user.keyboard('{Enter}')
+  await screen.findByRole('heading', { name: 'Personal security settings' })
+  expect(router.state.location.pathname).toBe('/security')
+  expect(result).toHaveBeenCalledExactlyOnceWith(null)
+  expect(post).not.toHaveBeenCalled()
+})
+
+it.each([
+  { method: '2fa', reason: 'Two-factor authentication is temporarily locked.' },
+  { method: 'passkey', reason: 'Passkey authentication is disabled.' },
+  {
+    method: 'passkey',
+    reason: 'This device does not support Passkey verification.',
+  },
+] as const)(
+  'preserves the unavailable $method reason instead of treating enrollment as missing: $reason',
+  async (option) => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          ...passwordRequirements,
+          scope: 'team.withdrawal.write',
+          methods: [{ ...option, available: false }],
+        },
+      },
+    })
+    const post = vi.spyOn(api, 'post')
+    const result = vi.fn()
+    const user = userEvent.setup()
+    await renderTeamVerification({ scope: 'team.withdrawal.write' }, result)
+    await user.click(screen.getByText('Protected action'))
+    expect(await screen.findByText(option.reason)).toBeVisible()
+    expect(
+      screen.queryByText(
+        'Enable Two-factor Authentication or Passkey in Security & Access to continue.'
+      )
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Open Security & Access' })
+    ).toHaveAttribute('href', '/security')
+    expect(result).not.toHaveBeenCalled()
+    expect(post).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(result).toHaveBeenCalledExactlyOnceWith(null)
+  }
+)
+
+it('retains the existing unavailable-method state for non-team actions', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: { ...passwordRequirements, methods: [] } },
+  })
+  const result = vi.fn()
+  const user = userEvent.setup()
+  render(<Harness onResult={result} />)
+  await user.click(screen.getByText('Protected action'))
+  expect(
+    await screen.findByText(
+      'No verification method is available for this action.'
+    )
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
+  expect(
+    screen.queryByRole('button', { name: 'Open Security & Access' })
+  ).not.toBeInTheDocument()
+  expect(result).not.toHaveBeenCalled()
 })

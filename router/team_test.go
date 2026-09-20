@@ -53,7 +53,8 @@ func setupTeamRouteTest(t *testing.T) teamRouteFixture {
 	})
 	t.Setenv("AGENT_PAYOUT_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("r", 32))))
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.Log{},
-		&model.AgentPolicy{}, &model.AgentCommission{}, &model.AgentWallet{}, &model.AgentPayoutAccount{}, &model.AgentWithdrawal{}))
+		&model.AgentPolicy{}, &model.AgentCommission{}, &model.AgentWallet{}, &model.AgentPayoutAccount{}, &model.AgentWithdrawal{},
+		&model.AgentRewardPreference{}, &model.AgentReferralGuard{}, &model.AgentReferralChange{}))
 	require.NoError(t, model.SaveAgentPolicy(&model.AgentPolicy{Enabled: true, Mode: model.AgentModeCash, MinimumWithdrawalCents: 100}))
 	fixture := teamRouteFixture{engine: gin.New(), tokens: map[int]string{}, identity: map[int]service.AuthIdentity{}}
 	for _, account := range []struct{ id, role int }{{42, common.RoleCommonUser}, {43, common.RoleCommonUser}, {44, common.RoleAdminUser}} {
@@ -106,6 +107,9 @@ func TestTeamRoutesEnforceDashboardRoles(t *testing.T) {
 		{http.MethodPost, "/api/team/admin/withdrawals/1/payout"},
 		{http.MethodPost, "/api/team/admin/withdrawals/1/review"},
 		{http.MethodPut, "/api/team/admin/policy"},
+		{http.MethodGet, "/api/team/admin/referrals/42"},
+		{http.MethodGet, "/api/team/admin/referrals/42/audits"},
+		{http.MethodPut, "/api/team/admin/referrals/42"},
 	} {
 		t.Run(route.method+route.path, func(t *testing.T) {
 			response := fixture.request(route.method, route.path, `{}`, 42, "")
@@ -215,4 +219,101 @@ func TestTeamWritesIgnoreForgedUserID(t *testing.T) {
 	otherAccount, err := model.GetAgentPayoutAccount(43)
 	require.NoError(t, err)
 	assert.NotEqual(t, result.Data.AccountMasked, otherAccount.AccountMasked)
+}
+
+func TestTeamRewardPreferenceUsesAuthenticatedUserAndAdministratorRates(t *testing.T) {
+	fixture := setupTeamRouteTest(t)
+	policy, err := model.GetAgentPolicy()
+	require.NoError(t, err)
+	response := fixture.request(http.MethodPut, "/api/team/reward-preference", `{"mode":"credit"}`, 0, "")
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
+	response = fixture.request(http.MethodPut, "/api/team/reward-preference?user_id=43",
+		`{"mode":"credit","user_id":43,"credit_rate_bps":10000}`, 42, "")
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"success":true`)
+	preference, err := model.GetAgentRewardPreference(42)
+	require.NoError(t, err)
+	assert.Equal(t, model.AgentModeCredit, preference.Mode)
+	other, err := model.GetAgentRewardPreference(43)
+	require.NoError(t, err)
+	assert.Empty(t, other.Mode)
+	afterPolicy, err := model.GetAgentPolicy()
+	require.NoError(t, err)
+	assert.Equal(t, policy, afterPolicy)
+	response = fixture.request(http.MethodGet, "/api/team/self", "", 42, "")
+	var self struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Preference    model.AgentRewardPreference `json:"reward_preference"`
+			EffectiveMode string                      `json:"effective_reward_mode"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &self))
+	require.True(t, self.Success)
+	assert.Equal(t, 42, self.Data.Preference.UserID)
+	assert.Equal(t, model.AgentModeCredit, self.Data.EffectiveMode)
+	for _, body := range []string{`{}`, `{"mode":"invalid"}`, `{"mode":null}`} {
+		response = fixture.request(http.MethodPut, "/api/team/reward-preference", body, 42, "")
+		assert.Contains(t, response.Body.String(), `"success":false`)
+		assert.Contains(t, response.Body.String(), "Invalid reward preference")
+	}
+	t.Setenv("AGENT_PAYOUT_ENCRYPTION_KEY", "")
+	response = fixture.request(http.MethodPut, "/api/team/reward-preference", `{"mode":"cash"}`, 42, "")
+	assert.Contains(t, response.Body.String(), "Payout account encryption is not configured")
+	preference, err = model.GetAgentRewardPreference(42)
+	require.NoError(t, err)
+	assert.Equal(t, model.AgentModeCredit, preference.Mode)
+}
+
+func TestTeamReferralRouteBindsProofToChangeAndRejectsReplay(t *testing.T) {
+	fixture := setupTeamRouteTest(t)
+	body := `{"expected_inviter_id":0,"inviter_id":43,"reason":"Correct invitation"}`
+	operation := service.VerificationOperation{Scope: service.VerificationScopeTeamReferralWrite,
+		Context: []byte(`{"user_id":42,"expected_inviter_id":0,"inviter_id":43,"reason":"Correct invitation"}`)}
+	binding, err := service.BindVerificationOperation(operation)
+	require.NoError(t, err)
+	proof, _, err := service.IssueSecurityProof(fixture.identity[44], "2fa", binding)
+	require.NoError(t, err)
+	response := fixture.request(http.MethodPut, "/api/team/admin/referrals/42", body, 44, "")
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	for _, changed := range []struct{ path, body string }{
+		{"/api/team/admin/referrals/44", body},
+		{"/api/team/admin/referrals/42", `{"expected_inviter_id":43,"inviter_id":43,"reason":"Correct invitation"}`},
+		{"/api/team/admin/referrals/42", `{"expected_inviter_id":0,"inviter_id":44,"reason":"Correct invitation"}`},
+		{"/api/team/admin/referrals/42", `{"expected_inviter_id":0,"inviter_id":43,"reason":"Different reason"}`},
+	} {
+		response = fixture.request(http.MethodPut, changed.path, changed.body, 44, proof)
+		assert.Equal(t, http.StatusForbidden, response.Code)
+		assert.Contains(t, response.Body.String(), "SECURITY_PROOF_CONTEXT_MISMATCH")
+	}
+	relation, err := model.GetAgentReferral(42)
+	require.NoError(t, err)
+	assert.Zero(t, relation.InviterID)
+	response = fixture.request(http.MethodPut, "/api/team/admin/referrals/42", body, 44, proof)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"success":true`)
+	response = fixture.request(http.MethodPut, "/api/team/admin/referrals/42", body, 44, proof)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	assert.Contains(t, response.Body.String(), "SECURITY_PROOF_CONSUMED")
+	staleProof, _, err := service.IssueSecurityProof(fixture.identity[44], "2fa", binding)
+	require.NoError(t, err)
+	response = fixture.request(http.MethodPut, "/api/team/admin/referrals/42", body, 44, staleProof)
+	assert.Contains(t, response.Body.String(), `"success":false`)
+	assert.Contains(t, response.Body.String(), "The referral relationship changed. Refresh and try again.")
+	response = fixture.request(http.MethodGet, "/api/team/admin/referrals/42", "", 44, "")
+	assert.Contains(t, response.Body.String(), `"inviter_id":43`)
+	response = fixture.request(http.MethodGet, "/api/team/admin/referrals/42/audits", "", 44, "")
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Total int                         `json:"total"`
+			Items []model.AgentReferralChange `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	require.True(t, result.Success)
+	assert.Equal(t, 1, result.Data.Total)
+	require.Len(t, result.Data.Items, 1)
+	assert.Equal(t, 44, result.Data.Items[0].OperatorID)
+	assert.Equal(t, "Correct invitation", result.Data.Items[0].Reason)
 }

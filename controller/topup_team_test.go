@@ -49,7 +49,7 @@ func setupTeamEpayCallbackTest(t *testing.T) *model.TopUp {
 		operation_setting.PayMethods = previousMethods
 		assert.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.AgentPolicy{}, &model.AgentCommission{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.AgentPolicy{}, &model.AgentRewardPreference{}, &model.AgentCommission{}, &model.Log{}))
 	require.NoError(t, db.Create(&model.User{Id: 41, Username: "epay-referrer", AffCode: "epay-ref", Quota: 17, Status: common.UserStatusEnabled}).Error)
 	require.NoError(t, db.Create(&model.User{Id: 42, Username: "epay-customer", AffCode: "epay-own", Quota: 7, InviterId: 41, Status: common.UserStatusEnabled}).Error)
 	require.NoError(t, model.SaveAgentPolicy(&model.AgentPolicy{Enabled: true, Mode: model.AgentModeCredit,

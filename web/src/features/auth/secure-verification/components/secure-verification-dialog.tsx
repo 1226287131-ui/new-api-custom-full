@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { KeyRound, Loader2, ShieldCheck } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { KeyRound, Loader2, Settings, ShieldCheck } from 'lucide-react'
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -75,6 +76,31 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
   }
   const error = 'error' in state ? state.error : undefined
   const formId = `${inputId}-form`
+  const teamVerificationUnavailable =
+    state.phase === 'ready' && !input && state.request.scope.startsWith('team.')
+  const needsEnrollment =
+    teamVerificationUnavailable && ready?.requirements.methods.length === 0
+
+  let footerAction = (
+    <Button type='submit' form={formId} disabled={!canVerify}>
+      {verifying && <Loader2 className='size-4 animate-spin' />}
+      {t('Verify')}
+    </Button>
+  )
+  if (state.phase === 'error') {
+    footerAction = (
+      <Button type='button' onClick={props.onRetry}>
+        {t('Retry')}
+      </Button>
+    )
+  } else if (teamVerificationUnavailable) {
+    footerAction = (
+      <Button render={<Link to='/security' />} onClick={props.onCancel}>
+        <Settings className='size-4' />
+        {t('Open Security & Access')}
+      </Button>
+    )
+  }
 
   const selectMethod = (method: string) => {
     switch (method) {
@@ -123,16 +149,7 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
           <Button type='button' variant='outline' onClick={props.onCancel}>
             {t('Cancel')}
           </Button>
-          {state.phase === 'error' ? (
-            <Button type='button' onClick={props.onRetry}>
-              {t('Retry')}
-            </Button>
-          ) : (
-            <Button type='submit' form={formId} disabled={!canVerify}>
-              {verifying && <Loader2 className='size-4 animate-spin' />}
-              {t('Verify')}
-            </Button>
-          )}
+          {footerAction}
         </>
       }
     >
@@ -158,7 +175,13 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
         >
           {!input ? (
             <div className='space-y-2 text-sm'>
-              <p>{t('No verification method is available for this action.')}</p>
+              <p>
+                {needsEnrollment
+                  ? t(
+                      'Enable Two-factor Authentication or Passkey in Security & Access to continue.'
+                    )
+                  : t('No verification method is available for this action.')}
+              </p>
               {ready.requirements.methods.map(
                 (option) =>
                   option.reason && (

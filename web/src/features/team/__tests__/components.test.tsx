@@ -39,6 +39,8 @@ const policy: TeamPolicy = {
 }
 const self: TeamSelf = {
   policy,
+  reward_preference: { user_id: 7, mode: '', updated_at: 0 },
+  effective_reward_mode: 'credit',
   wallet: { available_cents: 2000, frozen_cents: 0, paid_cents: 0 },
   payout: {
     bound: true,

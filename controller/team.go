@@ -42,12 +42,111 @@ func GetTeamSelf(c *gin.Context) {
 		teamAPIError(c, err)
 		return
 	}
+	preference, err := model.GetAgentRewardPreference(userID)
+	if err != nil {
+		teamAPIError(c, err)
+		return
+	}
+	mode := preference.Mode
+	if mode == "" {
+		mode = policy.Mode
+	}
 	payoutView := gin.H{"bound": false, "account_masked": "", "name_masked": "", "updated_at": 0}
 	if payout != nil {
 		payoutView = gin.H{"bound": true, "account_masked": payout.AccountMasked, "name_masked": payout.NameMasked, "updated_at": payout.UpdatedAt}
 	}
 	common.ApiSuccess(c, gin.H{"policy": policy, "wallet": wallet, "payout": payoutView,
-		"payout_ready": common.AgentPayoutEncryptionReady(), "summary": summary})
+		"payout_ready": common.AgentPayoutEncryptionReady(), "summary": summary,
+		"reward_preference": preference, "effective_reward_mode": mode})
+}
+
+func SaveTeamRewardPreference(c *gin.Context) {
+	var request struct {
+		Mode string `json:"mode"`
+	}
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &request); err != nil ||
+		(request.Mode != model.AgentModeCredit && request.Mode != model.AgentModeCash) {
+		common.ApiErrorMsg(c, "Invalid reward preference")
+		return
+	}
+	if request.Mode == model.AgentModeCash && !common.AgentPayoutEncryptionReady() {
+		teamAPIError(c, common.ErrAgentPayoutEncryptionUnavailable)
+		return
+	}
+	if err := model.SaveAgentRewardPreference(c.GetInt("id"), request.Mode); err != nil {
+		teamAPIError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"mode": request.Mode})
+}
+
+func AdminGetTeamReferral(c *gin.Context) {
+	userID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || userID <= 0 {
+		common.ApiErrorMsg(c, "Invalid referral relationship")
+		return
+	}
+	relation, err := model.GetAgentReferral(userID)
+	if err != nil {
+		teamAPIError(c, err)
+		return
+	}
+	common.ApiSuccess(c, relation)
+}
+
+func AdminChangeTeamReferral(c *gin.Context) {
+	userID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || userID <= 0 {
+		common.ApiErrorMsg(c, "Invalid referral relationship")
+		return
+	}
+	var request struct {
+		ExpectedInviterID *int   `json:"expected_inviter_id"`
+		InviterID         *int   `json:"inviter_id"`
+		Reason            string `json:"reason"`
+	}
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &request); err != nil ||
+		request.ExpectedInviterID == nil || request.InviterID == nil {
+		common.ApiErrorMsg(c, "Invalid referral relationship")
+		return
+	}
+	context, err := common.Marshal(service.TeamReferralWriteContext{UserID: userID,
+		ExpectedInviterID: *request.ExpectedInviterID, InviterID: *request.InviterID, Reason: request.Reason})
+	if err != nil {
+		teamAPIError(c, err)
+		return
+	}
+	operation := service.VerificationOperation{Scope: service.VerificationScopeTeamReferralWrite, Context: context}
+	if _, err := service.BindVerificationOperation(operation); err != nil {
+		common.ApiErrorMsg(c, "Invalid referral relationship")
+		return
+	}
+	if middleware.RequireSecurityProof(c, operation) == nil {
+		return
+	}
+	audit, err := model.ChangeAgentReferrer(c.GetInt("id"), userID, *request.ExpectedInviterID, *request.InviterID, request.Reason)
+	if err != nil {
+		teamAPIError(c, err)
+		return
+	}
+	common.ApiSuccess(c, audit)
+}
+
+func AdminGetTeamReferralAudits(c *gin.Context) {
+	userID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || userID <= 0 {
+		common.ApiErrorMsg(c, "Invalid referral relationship")
+		return
+	}
+	page := teamPageQuery(c)
+	items, total, err := model.GetAgentReferralAudits(userID, page)
+	if err != nil {
+		teamAPIError(c, err)
+		return
+	}
+	page.SetItems(items)
+	page.SetTotal(int(total))
+	common.ApiSuccess(c, page)
 }
 
 func GetTeamCommissions(c *gin.Context) {
@@ -235,6 +334,14 @@ func teamPageQuery(c *gin.Context) *common.PageInfo {
 func teamAPIError(c *gin.Context, err error) {
 	message := "Unable to complete this team request"
 	switch {
+	case errors.Is(err, model.ErrAgentReferralConflict):
+		message = "The referral relationship changed. Refresh and try again."
+	case errors.Is(err, model.ErrAgentReferralForbidden):
+		message = "You cannot change this user's referral relationship"
+	case errors.Is(err, model.ErrAgentReferralCycle):
+		message = "This referral relationship would create a cycle"
+	case errors.Is(err, model.ErrAgentReferralInvalid):
+		message = "Invalid referral relationship"
 	case errors.Is(err, common.ErrAgentPayoutEncryptionUnavailable):
 		message = "Payout account encryption is not configured"
 	case errors.Is(err, model.ErrAgentInsufficientCash):

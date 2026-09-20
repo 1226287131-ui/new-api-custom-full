@@ -23,6 +23,9 @@ import { api } from '@/lib/api'
 import type {
   Commission,
   PayoutAccount,
+  ReferralChange,
+  ReferralRelation,
+  ReferralUpdate,
   TeamPage,
   TeamPolicy,
   TeamSelf,
@@ -37,6 +40,11 @@ interface Response<T> {
 }
 
 const teamErrorKeys = new Set([
+  'Invalid reward preference',
+  'The referral relationship changed. Refresh and try again.',
+  "You cannot change this user's referral relationship",
+  'This referral relationship would create a cycle',
+  'Invalid referral relationship',
   'Invalid payout account',
   'Invalid withdrawal request',
   'Invalid withdrawal status',
@@ -69,6 +77,72 @@ export async function getTeamSelf(): Promise<TeamSelf> {
       await api.get<Response<TeamSelf>>('/api/team/self', {
         skipBusinessError: true,
       })
+    ).data
+  )
+}
+
+export async function saveRewardPreference(
+  mode: 'credit' | 'cash'
+): Promise<{ mode: 'credit' | 'cash' }> {
+  return unwrap(
+    (
+      await api.put<Response<{ mode: 'credit' | 'cash' }>>(
+        '/api/team/reward-preference',
+        { mode },
+        {
+          skipBusinessError: true,
+        }
+      )
+    ).data
+  )
+}
+
+export async function getReferral(userID: number): Promise<ReferralRelation> {
+  return unwrap(
+    (
+      await api.get<Response<ReferralRelation>>(
+        `/api/team/admin/referrals/${userID}`,
+        {
+          skipBusinessError: true,
+        }
+      )
+    ).data
+  )
+}
+
+export async function getReferralHistory(
+  userID: number,
+  page: number
+): Promise<TeamPage<ReferralChange>> {
+  return unwrap(
+    (
+      await api.get<Response<TeamPage<ReferralChange>>>(
+        `/api/team/admin/referrals/${userID}/audits`,
+        {
+          params: { p: page, page_size: 20 },
+          skipBusinessError: true,
+        }
+      )
+    ).data
+  )
+}
+
+export async function saveReferral(
+  userID: number,
+  body: ReferralUpdate,
+  proof: string
+): Promise<void> {
+  unwrap(
+    (
+      await api.put<Response<void>>(
+        `/api/team/admin/referrals/${userID}`,
+        body,
+        {
+          skipBusinessError: true,
+          singleUseAuthorization: true,
+          headers: { 'X-Security-Proof': proof },
+        }
+      )
     ).data
   )
 }

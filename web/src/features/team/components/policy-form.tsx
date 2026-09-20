@@ -100,7 +100,9 @@ export function PolicyForm(props: { policy: TeamPolicy; writable: boolean }) {
           />
         </Field>
         <Field>
-          <FieldLabel id='team-mode-label'>{t('Reward type')}</FieldLabel>
+          <FieldLabel id='team-mode-label'>
+            {t('Default reward type')}
+          </FieldLabel>
           <Controller
             control={form.control}
             name='mode'
@@ -125,6 +127,9 @@ export function PolicyForm(props: { policy: TeamPolicy; writable: boolean }) {
               </ToggleGroup>
             )}
           />
+          <FieldDescription>
+            {t('Applies until a user selects their own reward type.')}
+          </FieldDescription>
         </Field>
         <div className='grid gap-5 sm:grid-cols-2'>
           {(

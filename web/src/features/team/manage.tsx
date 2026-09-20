@@ -29,6 +29,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { getTeamPolicy } from './api'
 import { CommissionTable } from './components/commission-table'
 import { PolicyForm } from './components/policy-form'
+import { ReferralManagement } from './components/referral-management'
 import { TeamError, TeamLoading } from './components/shared'
 import { WithdrawalTable } from './components/withdrawal-table'
 
@@ -47,11 +48,17 @@ export function TeamManagement() {
       </SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <Tabs defaultValue='withdrawals' className='min-w-0'>
-          <TabsList variant='line' className='max-w-full overflow-x-auto'>
+          <TabsList
+            variant='line'
+            className='max-w-full justify-start overflow-x-auto'
+          >
             <TabsTrigger value='withdrawals'>
               {t('Withdrawal review')}
             </TabsTrigger>
             <TabsTrigger value='rewards'>{t('Reward records')}</TabsTrigger>
+            <TabsTrigger value='referrals'>
+              {t('Invitation relationships')}
+            </TabsTrigger>
             <TabsTrigger value='settings'>{t('Reward settings')}</TabsTrigger>
           </TabsList>
           <TabsContent value='withdrawals' className='space-y-4 pt-4'>
@@ -91,6 +98,9 @@ export function TeamManagement() {
                 writable={role >= ROLE.SUPER_ADMIN}
               />
             )}
+          </TabsContent>
+          <TabsContent value='referrals' className='pt-4'>
+            <ReferralManagement />
           </TabsContent>
         </Tabs>
       </SectionPageLayout.Content>

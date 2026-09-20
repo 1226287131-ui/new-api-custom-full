@@ -20,8 +20,13 @@ Existing registration-time invitation rewards are unchanged.
 ## Amounts and Policy
 
 Only the root administrator can change the global reward policy. It includes
-the enable switch, reward type, separate credit/cash percentages, holding period,
+the enable switch, default reward type, separate credit/cash percentages, holding period,
 and minimum cash withdrawal. Percentages have two-decimal precision.
+
+Users can choose credit or cash rewards on `/team`; they cannot set the rates.
+Users without a saved choice follow the administrator's default. The preference
+belongs to the inviter earning the reward, not to the person recharging.
+Cash selection requires the payout encryption key to be configured.
 
 Each online order snapshots its inviter, policy and conversion when created:
 
@@ -37,6 +42,15 @@ actual paid amount after recharge discounts, not the undiscounted order amount.
 Internal quota truncates fractional quota units; cash rounds to the nearest
 cent. Policy changes affect new orders only. Already-snapshotted orders retain
 their terms, including their holding period, even when the policy is disabled.
+Changing a personal reward type likewise affects newly created orders only.
+
+Administrators can search users and change or remove their direct inviter on
+`/team/manage`. The server requires an enrolled strong factor, verifies the
+administrator's current role, rejects self-invitations and cycles, and binds a
+single-use proof to the user, previous inviter, new inviter and change reason.
+Concurrent edits use an expected-inviter check and a database guard. The change
+and its audit record commit together. Existing recharge snapshots, rewards,
+balances and registration-time invitation counters are not recalculated.
 
 Credit rewards go into spendable account quota. Cash rewards use a separate
 wallet and cannot be spent as API quota. Site credits cannot be withdrawn.
@@ -83,6 +97,11 @@ Normal APIs return masked Alipay account/name values only. Full details require
 an administrator's security proof; the read is audited without recording the
 plaintext account. Binding, withdrawal requests, payout disclosure, and review
 require existing 2FA or passkey verification bound to the current session.
+If neither is enrolled, open `/security`, enable two-factor authentication or
+register a passkey, and return to bind the payout account. The verification
+dialog provides this setup entry; it does not fall back to password-only
+authorization. A locked factor or unsupported passkey device retains its
+specific error rather than being treated as missing enrollment.
 
 The withdrawal workflow is:
 
@@ -104,7 +123,7 @@ changes the bound account.
 
 ## Rollout and Known Limits
 
-This change adds five feature tables, order snapshot columns and the user credit
+This change adds eight feature tables, order snapshot columns and the user credit
 watermark. Back up the database and review migrations on a staging copy before
 production rollout. MySQL/PostgreSQL use row locks; SQLite uses the shared
 locking helper's dialect-safe behavior. Execute dialect-specific acceptance
@@ -154,3 +173,28 @@ migration, and repeat migration to verify restart safety. Do not test payment
 callbacks or create artificial reward transactions against production users.
 Real-money payment and withdrawal acceptance remains an explicit operator step
 before enabling rewards.
+
+The sensitive-action design follows the OWASP Authentication, Session
+Management and Transaction Authorization Cheat Sheets: server-side role
+enforcement, strong-factor reauthentication, session/action-bound proofs,
+single use, and secret-free audit records. Focused tests exercise changed-action
+proof rejection, replay rejection, stale edits and unchanged historical orders.
+These checks are not a certification of full ASVS compliance.
+
+The 2026-09-20 preference/referral extension was verified with real SQLite
+3.50.4, MySQL 8.4.6 and PostgreSQL 17.6. Each engine passed fresh-install and
+upgrade scenarios with repeated migrations, unchanged historical financial
+records, preference upserts, concurrent cycle prevention and audit rollback:
+
+```sh
+go test ./model -run '^TestAgentRewardReferralDatabaseCompatibility$' -count=1 -v
+go test ./model ./controller ./router ./service -run 'Test(Agent|Team)' -count=1
+```
+
+External-engine scenarios require empty scratch databases configured through
+`NEWAPI_TEAM_TEST_MYSQL_FRESH_DSN`, `NEWAPI_TEAM_TEST_MYSQL_UPGRADE_DSN`,
+`NEWAPI_TEAM_TEST_POSTGRES_FRESH_DSN` and `NEWAPI_TEAM_TEST_POSTGRES_UPGRADE_DSN`.
+They skip when the corresponding DSN is absent and refuse nonempty databases.
+The minimum supported MySQL/PostgreSQL releases were not separately exercised;
+no version-specific SQL was introduced. This matrix does not replace live
+payment acceptance or multi-instance financial settlement stress testing.

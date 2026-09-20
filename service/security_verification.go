@@ -38,6 +38,7 @@ const (
 	VerificationScopeTeamWithdrawalWrite  = "team.withdrawal.write"
 	VerificationScopeTeamWithdrawalReview = "team.withdrawal.review"
 	VerificationScopeTeamWithdrawalRead   = "team.withdrawal.read"
+	VerificationScopeTeamReferralWrite    = "team.referral.write"
 )
 
 var (
@@ -70,6 +71,13 @@ type AccountUnbindingContext struct {
 	ProviderID int `json:"provider_id"`
 }
 
+type TeamReferralWriteContext struct {
+	UserID            int    `json:"user_id"`
+	ExpectedInviterID int    `json:"expected_inviter_id"`
+	InviterID         int    `json:"inviter_id"`
+	Reason            string `json:"reason"`
+}
+
 // VerificationBinding contains no original operation parameters. It can safely
 // travel through a signed proof or a server-owned interactive verification flow.
 type VerificationBinding struct {
@@ -86,6 +94,24 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case VerificationScopeTeamReferralWrite:
+		var supplied struct {
+			UserID            *int    `json:"user_id"`
+			ExpectedInviterID *int    `json:"expected_inviter_id"`
+			InviterID         *int    `json:"inviter_id"`
+			Reason            *string `json:"reason"`
+		}
+		if len(fields) != 4 || common.Unmarshal(operation.Context, &supplied) != nil ||
+			supplied.UserID == nil || supplied.ExpectedInviterID == nil || supplied.InviterID == nil || supplied.Reason == nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		context := TeamReferralWriteContext{UserID: *supplied.UserID, ExpectedInviterID: *supplied.ExpectedInviterID,
+			InviterID: *supplied.InviterID, Reason: strings.TrimSpace(*supplied.Reason)}
+		if context.UserID <= 0 || context.ExpectedInviterID < 0 || context.InviterID < 0 ||
+			context.UserID == context.InviterID || context.Reason == "" || len([]rune(context.Reason)) > 200 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
 	case VerificationScopeChannelKeyRead:
 		var context ChannelKeyReadContext
 		if len(fields) != 1 || common.Unmarshal(fields["channel_id"], &context.ChannelID) != nil || context.ChannelID <= 0 {
@@ -186,7 +212,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 	switch scope {
 	case VerificationScopeChannelKeyRead, VerificationScopePasskeyDelete, VerificationScopeLogin,
 		VerificationScopeTeamPayoutWrite, VerificationScopeTeamWithdrawalWrite,
-		VerificationScopeTeamWithdrawalReview, VerificationScopeTeamWithdrawalRead:
+		VerificationScopeTeamWithdrawalReview, VerificationScopeTeamWithdrawalRead, VerificationScopeTeamReferralWrite:
 	case VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes:
 		if !state.HasTwoFA {
 			return nil, model.ErrTwoFANotEnabled
@@ -242,7 +268,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	if scope == VerificationScopeChannelKeyRead && state.Role != common.RoleRootUser {
 		return nil, ErrVerificationForbidden
 	}
-	if (scope == VerificationScopeTeamWithdrawalReview || scope == VerificationScopeTeamWithdrawalRead) && state.Role < common.RoleAdminUser {
+	if (scope == VerificationScopeTeamWithdrawalReview || scope == VerificationScopeTeamWithdrawalRead || scope == VerificationScopeTeamReferralWrite) && state.Role < common.RoleAdminUser {
 		return nil, ErrVerificationForbidden
 	}
 	methods, err := securityVerificationPolicy(scope, *state)

@@ -30,6 +30,8 @@ import { WithdrawalReviewDialog } from '../components/withdrawal-review-dialog'
 import type { TeamSelf, Withdrawal } from '../types'
 
 const self: TeamSelf = {
+  reward_preference: { user_id: 7, mode: '', updated_at: 0 },
+  effective_reward_mode: 'cash',
   policy: {
     enabled: true,
     mode: 'cash',

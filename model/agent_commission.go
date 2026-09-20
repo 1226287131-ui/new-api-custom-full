@@ -156,12 +156,20 @@ func SnapshotEpayAgentPolicy(topUp *TopUp, price, quotaPerUnit float64) error {
 		}
 		return err
 	}
+	preference, err := GetAgentRewardPreference(user.InviterId)
+	if err != nil {
+		return err
+	}
+	mode := policy.Mode
+	if preference.Mode != "" {
+		mode = preference.Mode
+	}
 	rate := policy.CreditRateBPS
-	if policy.Mode == AgentModeCash {
+	if mode == AgentModeCash {
 		rate = policy.CashRateBPS
 	}
 	snapshot := agentOrderSnapshot{
-		Version: 1, UserID: user.Id, ReferrerID: user.InviterId, Mode: policy.Mode,
+		Version: 1, UserID: user.Id, ReferrerID: user.InviterId, Mode: mode,
 		RateBPS: rate, Price: decimal.NewFromFloat(price).String(),
 		QuotaPerUnit: topUp.EpayQuotaPerUnit, FreezeHours: policy.FreezeHours,
 	}

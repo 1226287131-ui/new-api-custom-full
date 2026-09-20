@@ -27,6 +27,8 @@ export interface TeamPolicy {
 
 export interface TeamSelf {
   policy: TeamPolicy
+  reward_preference: RewardPreference
+  effective_reward_mode: 'credit' | 'cash'
   wallet: { available_cents: number; frozen_cents: number; paid_cents: number }
   payout: {
     bound: boolean
@@ -43,6 +45,35 @@ export interface TeamSelf {
     pending_cash_cents: number
     settled_cash_cents: number
   }
+}
+
+export interface RewardPreference {
+  user_id: number
+  mode: 'credit' | 'cash' | ''
+  updated_at: number
+}
+
+export interface ReferralRelation {
+  user_id: number
+  username: string
+  inviter_id: number
+  inviter_username: string
+}
+
+export interface ReferralChange {
+  id: number
+  user_id: number
+  actor_id: number
+  previous_inviter_id: number
+  inviter_id: number
+  reason: string
+  created_at: number
+}
+
+export interface ReferralUpdate {
+  expected_inviter_id: number
+  inviter_id: number
+  reason: string
 }
 
 export interface Commission {

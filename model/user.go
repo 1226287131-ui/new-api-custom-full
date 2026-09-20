@@ -852,6 +852,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		"aff_count",
 		"aff_quota",
 		"aff_history",
+		"inviter_id",
 		"auth_version",
 	).Updates(newUser).Error; err != nil {
 		return err
