@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -312,6 +313,92 @@ func TestCacheRemoteVideoWithHeaders(t *testing.T) {
 	contents, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("remote-video"), contents)
+}
+
+func TestCacheVideoSourceSupportsAuthenticatedPost(t *testing.T) {
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	fetchSetting := system_setting.GetFetchSetting()
+	originalFetchSetting := *fetchSetting
+	t.Cleanup(func() { *fetchSetting = originalFetchSetting })
+	fetchSetting.EnableSSRFProtection = false
+	InitHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "provider-key", r.Header.Get("X-Provider-Key"))
+		assert.JSONEq(t, `{"asset":"video"}`, string(body))
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("post-video"))
+	}))
+	defer server.Close()
+
+	headers := make(http.Header)
+	headers.Set("X-Provider-Key", "provider-key")
+	path, err := CacheVideoSource(context.Background(), "task_post", VideoCacheSource{
+		URL: server.URL, Method: http.MethodPost, Body: []byte(`{"asset":"video"}`), Headers: headers,
+	})
+	require.NoError(t, err)
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("post-video"), contents)
+}
+
+func TestCacheVideoSourceRejectsCredentialedCrossOriginRedirect(t *testing.T) {
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	fetchSetting := system_setting.GetFetchSetting()
+	originalFetchSetting := *fetchSetting
+	t.Cleanup(func() { *fetchSetting = originalFetchSetting })
+	fetchSetting.EnableSSRFProtection = false
+	InitHttpClient()
+
+	destinationCalled := false
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		destinationCalled = true
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("secret-video"))
+	}))
+	defer destination.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusFound)
+	}))
+	defer source.Close()
+
+	headers := make(http.Header)
+	headers.Set("Authorization", "Bearer provider-secret")
+	_, err := CacheVideoSource(context.Background(), "task_redirect", VideoCacheSource{
+		URL: source.URL, Headers: headers,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot redirect across origins")
+	assert.False(t, destinationCalled)
+}
+
+func TestCacheVideoSourceAllowsCredentiallessCrossOriginRedirect(t *testing.T) {
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	fetchSetting := system_setting.GetFetchSetting()
+	originalFetchSetting := *fetchSetting
+	t.Cleanup(func() { *fetchSetting = originalFetchSetting })
+	fetchSetting.EnableSSRFProtection = false
+	InitHttpClient()
+
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Empty(t, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("redirected-video"))
+	}))
+	defer destination.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusFound)
+	}))
+	defer source.Close()
+
+	path, err := CacheVideoSource(context.Background(), "task_public_redirect", VideoCacheSource{URL: source.URL})
+	require.NoError(t, err)
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("redirected-video"), contents)
 }
 
 func TestCacheVideoSourceAllowsTrustedProviderPort(t *testing.T) {

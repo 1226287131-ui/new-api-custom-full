@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -57,7 +58,10 @@ func CachedVideoPath(taskID string) (string, bool) {
 type VideoCacheSource struct {
 	URL               string
 	DataURL           string
+	Method            string
+	Body              []byte
 	Headers           http.Header
+	Credentialless    bool
 	Proxy             string
 	UseDedicatedProxy bool
 	TrustedOrigin     string // configured channel origin; never taken from user input
@@ -97,7 +101,21 @@ func CacheVideoSource(ctx context.Context, taskID string, source VideoCacheSourc
 	downloadCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, remoteURL, nil)
+	method := strings.ToUpper(strings.TrimSpace(source.Method))
+	if method == "" {
+		method = http.MethodGet
+	}
+	if method != http.MethodGet && method != http.MethodPost {
+		return "", fmt.Errorf("video cache request method %s is not supported", method)
+	}
+	if len(source.Body) > 1<<20 {
+		return "", fmt.Errorf("video cache request body exceeds 1 MiB")
+	}
+	if source.Credentialless && (method != http.MethodGet || len(source.Body) != 0 || len(source.Headers) != 0) {
+		return "", fmt.Errorf("credentialless video cache request contains credentials or a body")
+	}
+
+	req, err := http.NewRequestWithContext(downloadCtx, method, remoteURL, bytes.NewReader(source.Body))
 	if err != nil {
 		return "", fmt.Errorf("create video cache request: %w", err)
 	}

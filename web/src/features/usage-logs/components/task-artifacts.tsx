@@ -68,6 +68,7 @@ import {
   AudioPreviewDialog,
   type AudioClip,
 } from './dialogs/audio-preview-dialog'
+import { VideoPreviewDialog } from './dialogs/video-preview-dialog'
 
 function artifactIcon(type: TaskArtifactType) {
   switch (type) {
@@ -414,10 +415,11 @@ export function TaskArtifactsCell(props: { log: TaskLog }) {
   if (previewMode === 'legacy-suno') {
     return <LegacyAudioPreview data={props.log.data} />
   }
+  if (previewMode === 'legacy-video' || props.log.video_available) {
+    const videoUrl = `/video-cache/${encodeURIComponent(props.log.task_id)}.mp4`
 
-  return (
-    <>
-      {previewMode === 'legacy-video' ? (
+    return (
+      <>
         <button
           type='button'
           className='text-foreground text-xs hover:underline'
@@ -425,42 +427,46 @@ export function TaskArtifactsCell(props: { log: TaskLog }) {
         >
           {t('Click to preview video')}
         </button>
-      ) : (
-        <Button
-          type='button'
-          variant='outline'
-          size='xs'
-          onClick={() => setOpen(true)}
-        >
-          <HugeiconsIcon
-            icon={File01Icon}
-            strokeWidth={2}
-            data-icon='inline-start'
-          />
-          {t('Artifacts')}
-        </Button>
-      )}
+        <VideoPreviewDialog
+          videoUrl={videoUrl}
+          taskId={props.log.task_id}
+          open={open}
+          onOpenChange={setOpen}
+        />
+      </>
+    )
+  }
+
+  return (
+    <>
+      <Button
+        type='button'
+        variant='outline'
+        size='xs'
+        onClick={() => setOpen(true)}
+      >
+        <HugeiconsIcon
+          icon={File01Icon}
+          strokeWidth={2}
+          data-icon='inline-start'
+        />
+        {t('Artifacts')}
+      </Button>
       <Dialog
         open={open}
         onOpenChange={setOpen}
         title={
-          previewMode === 'legacy-video' ? (
-            t('Preview')
-          ) : (
-            <span className='flex items-center gap-2'>
-              <HugeiconsIcon
-                icon={File01Icon}
-                className='text-muted-foreground size-4'
-                strokeWidth={2}
-                aria-hidden='true'
-              />
-              {t('Artifacts')}
-            </span>
-          )
+          <span className='flex items-center gap-2'>
+            <HugeiconsIcon
+              icon={File01Icon}
+              className='text-muted-foreground size-4'
+              strokeWidth={2}
+              aria-hidden='true'
+            />
+            {t('Artifacts')}
+          </span>
         }
-        contentClassName={
-          previewMode === 'legacy-video' ? 'sm:max-w-xl' : 'sm:max-w-4xl'
-        }
+        contentClassName='sm:max-w-4xl'
         contentHeight='auto'
         bodyClassName='pr-2 sm:pr-4'
       >

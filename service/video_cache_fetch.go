@@ -21,41 +21,90 @@ func newVideoCacheHTTPClient(source VideoCacheSource) (*http.Client, error) {
 		return currentVideoCacheProtection(source)
 	}
 	proxyURL := videoCacheProxy(source)
+	var client *http.Client
+	var err error
 	if strings.TrimSpace(source.TrustedOrigin) == "" {
 		if proxyURL == "" {
-			return newProtectedFetchHTTPClientWithProxyAndValidatorIPv4(
+			client = newProtectedFetchHTTPClientWithProxyAndValidatorIPv4(
 				nil,
 				nil,
 				getProtection,
 				http.ProxyFromEnvironment,
 				ValidateSSRFProtectedFetchURL,
-			), nil
+			)
+		} else {
+			var parsedProxyURL *url.URL
+			parsedProxyURL, _, err = common.ParseProxyURLRuntime(proxyURL)
+			if err != nil {
+				return nil, fmt.Errorf("parse video cache proxy: %w", err)
+			}
+			client, err = newProtectedFetchProxyHTTPClientIPv4(parsedProxyURL, getProtection, ValidateSSRFProtectedFetchURL)
 		}
-		parsedProxyURL, _, err := common.ParseProxyURLRuntime(proxyURL)
-		if err != nil {
-			return nil, fmt.Errorf("parse video cache proxy: %w", err)
+	} else {
+		validateURL := func(rawURL string) error {
+			return validateVideoCacheFetchURL(source, rawURL)
 		}
-		return newProtectedFetchProxyHTTPClientIPv4(parsedProxyURL, getProtection, ValidateSSRFProtectedFetchURL)
+		if proxyURL == "" {
+			client = newProtectedFetchHTTPClientWithProxyAndValidatorIPv4(
+				nil,
+				nil,
+				getProtection,
+				http.ProxyFromEnvironment,
+				validateURL,
+			)
+		} else {
+			var parsedProxyURL *url.URL
+			parsedProxyURL, _, err = common.ParseProxyURLRuntime(proxyURL)
+			if err != nil {
+				return nil, fmt.Errorf("parse video cache proxy: %w", err)
+			}
+			client, err = newProtectedFetchProxyHTTPClientIPv4(parsedProxyURL, getProtection, validateURL)
+		}
 	}
-
-	validateURL := func(rawURL string) error {
-		return validateVideoCacheFetchURL(source, rawURL)
-	}
-	if proxyURL == "" {
-		return newProtectedFetchHTTPClientWithProxyAndValidatorIPv4(
-			nil,
-			nil,
-			getProtection,
-			http.ProxyFromEnvironment,
-			validateURL,
-		), nil
-	}
-
-	parsedProxyURL, _, err := common.ParseProxyURLRuntime(proxyURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse video cache proxy: %w", err)
+		return nil, err
 	}
-	return newProtectedFetchProxyHTTPClientIPv4(parsedProxyURL, getProtection, validateURL)
+
+	baseRedirect := client.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if baseRedirect != nil {
+			if err := baseRedirect(req, via); err != nil {
+				return err
+			}
+		}
+		if len(via) == 0 || sameVideoCacheOrigin(via[len(via)-1].URL, req.URL) {
+			return nil
+		}
+		if !videoCacheRequestIsCredentialless(source) {
+			return fmt.Errorf("credentialed video cache request cannot redirect across origins")
+		}
+		for name := range req.Header {
+			req.Header.Del(name)
+		}
+		req.Header.Set("Accept", "video/*,application/octet-stream;q=0.9,*/*;q=0.1")
+		req.Body = http.NoBody
+		req.GetBody = nil
+		req.ContentLength = 0
+		return nil
+	}
+	return client, nil
+}
+
+func videoCacheRequestIsCredentialless(source VideoCacheSource) bool {
+	if source.Credentialless {
+		return true
+	}
+	method := strings.ToUpper(strings.TrimSpace(source.Method))
+	return (method == "" || method == http.MethodGet) && len(source.Body) == 0 && len(source.Headers) == 0
+}
+
+func sameVideoCacheOrigin(left, right *url.URL) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(strings.TrimSuffix(left.Hostname(), "."), strings.TrimSuffix(right.Hostname(), ".")) &&
+		videoCacheParsedURLPort(left) == videoCacheParsedURLPort(right)
 }
 
 // videoCacheProxy resolves a download-only proxy. A channel must explicitly

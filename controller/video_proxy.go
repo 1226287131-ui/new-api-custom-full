@@ -667,14 +667,6 @@ func videoProxy(c *gin.Context, public bool) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
 	}
-	if taskHasPluginExecution(task) {
-		if public {
-			videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Video not found")
-			return
-		}
-		pluginVideoProxy(c)
-		return
-	}
 	if task.Status != model.TaskStatusSuccess {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error",
 			fmt.Sprintf("Task is not completed yet, current status: %s", task.Status))
@@ -695,7 +687,8 @@ func videoProxy(c *gin.Context, public bool) {
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to retrieve channel information")
 		return
 	}
-	if !constant.IsVideoTaskChannelType(channel.Type) {
+	pluginVideo := taskHasPluginExecution(task) && videoAvailable(task)
+	if !pluginVideo && !constant.IsVideoTaskChannelType(channel.Type) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Video is not available for this task")
 		return
 	}
@@ -705,6 +698,33 @@ func videoProxy(c *gin.Context, public bool) {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to serve cached video for task %s: %s", taskID, err.Error()))
 			videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to read cached video")
 		}
+		return
+	}
+	if pluginVideo {
+		if _, cacheErr := cachePluginTaskVideo(c, task, channel); cacheErr != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to cache plugin video task %s on demand: %s", taskID, cacheErr.Error()))
+			service.MarkVideoCacheFailure(task, cacheErr)
+			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
+			status := http.StatusServiceUnavailable
+			if public {
+				status = http.StatusNotFound
+			}
+			videoProxyError(c, status, "server_error", "Video cache is not available")
+			return
+		}
+		service.MarkVideoTaskCached(task)
+		task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+		if updateErr := task.Update(); updateErr != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to persist plugin video cache metadata for task %s: %s", taskID, updateErr.Error()))
+		}
+		if cachedPath, ok := service.CachedVideoPath(task.TaskID); ok {
+			if err := serveCachedVideo(c, cachedPath); err != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to serve cached plugin video for task %s: %s", taskID, err.Error()))
+				videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to read cached video")
+			}
+			return
+		}
+		videoProxyError(c, http.StatusServiceUnavailable, "server_error", "Video cache is not available")
 		return
 	}
 
@@ -785,6 +805,85 @@ func videoProxy(c *gin.Context, public bool) {
 		status = http.StatusNotFound
 	}
 	videoProxyError(c, status, "server_error", "Video cache is not available")
+}
+
+func cachePluginTaskVideo(c *gin.Context, task *model.Task, channel *model.Channel) (string, error) {
+	artifacts, err := projectTaskArtifacts(task)
+	if err != nil {
+		return "", err
+	}
+	artifactKey := ""
+	for _, artifact := range artifacts {
+		if artifact.Type == "video" {
+			artifactKey = artifact.Key
+			break
+		}
+	}
+	if artifactKey == "" {
+		return "", fmt.Errorf("plugin task has no video artifact")
+	}
+
+	adaptor, err := initTaskArtifactAdaptor(task)
+	if err != nil {
+		return "", err
+	}
+	provider, ok := adaptor.(relaychannel.TaskContentRequestProvider)
+	if !ok {
+		return "", fmt.Errorf("plugin does not provide video content requests")
+	}
+	descriptor, err := provider.BuildContentRequest(task, artifactKey, relaychannel.TaskArtifactClientRequest{
+		Method: http.MethodGet,
+	})
+	if err != nil || descriptor == nil {
+		if err == nil {
+			err = fmt.Errorf("plugin returned no video content request")
+		}
+		return "", err
+	}
+
+	rawURL := strings.TrimSpace(descriptor.URL)
+	if rawURL == "" || len(rawURL) > 64<<10 {
+		return "", errTaskMediaRequestRejected
+	}
+	if strings.HasPrefix(strings.ToLower(rawURL), "data:") {
+		if len(rawURL) > taskMediaDataURLMaxEncodedBytes {
+			return "", errTaskMediaRequestRejected
+		}
+		return service.CacheVideoDataURL(c.Request.Context(), task.TaskID, rawURL)
+	}
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL == nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") ||
+		parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" ||
+		isTaskMediaFallbackLoop(rawURL, task.TaskID) || isSelfTaskMediaURL(c, parsedURL) {
+		return "", errTaskMediaRequestRejected
+	}
+
+	method := strings.ToUpper(strings.TrimSpace(descriptor.Method))
+	if method == "" {
+		method = http.MethodGet
+	}
+	if method != http.MethodGet && method != http.MethodPost {
+		return "", errTaskMediaRequestRejected
+	}
+	headers := make(http.Header)
+	if err := applyTaskMediaRequestHeaders(headers, descriptor.Headers); err != nil {
+		return "", err
+	}
+	if descriptor.Credentialless && (method != http.MethodGet || len(descriptor.Body) != 0 || len(headers) != 0) {
+		return "", errTaskMediaRequestRejected
+	}
+
+	settings := channel.GetSetting()
+	return service.CacheVideoSource(c.Request.Context(), task.TaskID, service.VideoCacheSource{
+		URL:               rawURL,
+		Method:            method,
+		Body:              descriptor.Body,
+		Headers:           headers,
+		Credentialless:    descriptor.Credentialless,
+		Proxy:             settings.Proxy,
+		UseDedicatedProxy: settings.VideoCacheProxyEnabled,
+		TrustedOrigin:     channel.GetBaseURL(),
+	})
 }
 
 func serveCachedVideo(c *gin.Context, cachedPath string) error {

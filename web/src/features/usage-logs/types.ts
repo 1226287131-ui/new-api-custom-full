@@ -327,6 +327,7 @@ export interface TaskLog {
     origin_model_name?: string
   }
   legacy_video_available?: boolean
+  video_available?: boolean
   fail_reason?: string
   result_url?: string
   status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, QUEUED, UNKNOWN

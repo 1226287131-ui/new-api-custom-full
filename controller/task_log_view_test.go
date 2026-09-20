@@ -193,6 +193,7 @@ func TestTaskLogDTOReplacesLegacyVideoURLWithLocalCacheAndAvailabilityFlag(t *te
 
 	view := tasksToDto([]*model.Task{task}, false, common.RoleCommonUser)[0]
 	assert.True(t, view.LegacyVideoAvailable)
+	assert.True(t, view.VideoAvailable)
 	assert.Contains(t, view.ResultURL, "/video-cache/task_legacy_video.mp4")
 	assert.Empty(t, view.FailReason)
 	encoded, err := common.Marshal(view)
@@ -229,6 +230,18 @@ func TestTaskLogDTOKeepsFailureReasonAndDoesNotMarkPluginTaskLegacy(t *testing.T
 	}
 	pluginView := tasksToDto([]*model.Task{pluginTask}, false, common.RoleCommonUser)[0]
 	assert.False(t, pluginView.LegacyVideoAvailable)
+	assert.True(t, pluginView.VideoAvailable)
 	assert.Empty(t, pluginView.ResultURL)
 	assert.Empty(t, pluginView.FailReason)
+
+	nonVideoPlugin := &model.Task{
+		TaskID:   "task_plugin_image",
+		Platform: "community-image",
+		Action:   "text_to_image",
+		Status:   model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{Execution: &model.TaskExecutionSnapshot{
+			TaskPlugin: &model.TaskPluginSnapshot{Key: "community-image"},
+		}},
+	}
+	assert.False(t, tasksToDto([]*model.Task{nonVideoPlugin}, false, common.RoleCommonUser)[0].VideoAvailable)
 }

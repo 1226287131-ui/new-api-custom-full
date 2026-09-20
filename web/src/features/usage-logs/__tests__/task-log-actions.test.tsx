@@ -43,6 +43,7 @@ const task: TaskLog = {
   submit_time: 1,
   status: 'SUCCESS',
   legacy_video_available: true,
+  video_available: true,
   result_url: '/video-cache/task_owned_video.mp4',
   request_body: {
     model: 'video-model',
@@ -66,7 +67,10 @@ function TaskActionsTable(props: { log: TaskLog; isAdmin?: boolean }) {
           <tr key={group.id}>
             {group.headers.map((header) => (
               <th key={header.id}>
-                {flexRender(header.column.columnDef.header, header.getContext())}
+                {flexRender(
+                  header.column.columnDef.header,
+                  header.getContext()
+                )}
               </th>
             ))}
           </tr>
@@ -158,15 +162,44 @@ describe('task log actions', () => {
     }
   )
 
-  it('keeps one video preview entry in artifacts and removes the duplicate in details', () => {
+  it('opens the local cached mp4 from the single video preview entry', async () => {
     renderTask()
-    expect(
-      screen.getAllByRole('button', { name: 'Click to preview video' })
-    ).toHaveLength(1)
+    const previewButtons = screen.getAllByRole('button', {
+      name: 'Click to preview video',
+    })
+    expect(previewButtons).toHaveLength(1)
     expect(
       screen.queryByRole('button', { name: 'View video' })
     ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'View details' })).toBeEnabled()
+
+    await userEvent.click(previewButtons[0])
+    expect(await screen.findByLabelText('Generated video')).toHaveAttribute(
+      'src',
+      '/video-cache/task_owned_video.mp4'
+    )
+  })
+
+  it('uses the local cached mp4 for plugin-backed video tasks', async () => {
+    renderTask({
+      ...task,
+      legacy_video_available: false,
+      video_available: true,
+      admin_info: {
+        task_plugin: {
+          key: 'video-plugin',
+          name: 'Video plugin',
+        },
+      },
+    })
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Click to preview video' })
+    )
+    expect(await screen.findByLabelText('Generated video')).toHaveAttribute(
+      'src',
+      '/video-cache/task_owned_video.mp4'
+    )
   })
 
   it('does not offer an empty request body for historical tasks', () => {

@@ -337,6 +337,61 @@ func TestDisabledArtifactStorePreservesPluginUpstreamContent(t *testing.T) {
 	assert.Equal(t, "bytes 0-13/14", recorder.Header().Get("Content-Range"))
 }
 
+func TestPublicVideoProxyCachesPluginVideoAsMP4(t *testing.T) {
+	task := setupGenericTaskTest(t)
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		assert.Equal(t, "provider-key", r.Header.Get("x-goog-api-key"))
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("cached-plugin-video"))
+	}))
+	defer upstream.Close()
+	allowPrivateTaskMediaTest(t)
+	previousMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousMemoryCache })
+
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", task.ChannelId).Updates(map[string]any{
+		"type":     constant.ChannelTypeGemini,
+		"key":      "provider-key",
+		"base_url": upstream.URL,
+	}).Error)
+	task.Platform = constant.TaskPlatform("google")
+	task.Action = constant.TaskActionTextToVideo
+	task.FinishTime = time.Now().Unix()
+	task.PrivateData.Execution = &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{
+		Key: "google", Name: "Google Veo (Gemini API)", Version: "1.0.0", APIVersion: 1,
+	}}
+	task.SetData(map[string]any{"response": map[string]any{
+		"generateVideoResponse": map[string]any{
+			"generatedVideos": []any{map[string]any{"video": map[string]any{"uri": upstream.URL}}},
+		},
+	}})
+	require.NoError(t, model.DB.Save(task).Error)
+
+	requestVideo := func() *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Params = gin.Params{{Key: "file_name", Value: task.TaskID + ".mp4"}}
+		c.Request = httptest.NewRequest(http.MethodGet, "/video-cache/"+task.TaskID+".mp4", nil)
+		PublicVideoProxy(c)
+		return recorder
+	}
+
+	first := requestVideo()
+	assert.Equal(t, http.StatusOK, first.Code)
+	assert.Equal(t, "cached-plugin-video", first.Body.String())
+	_, cached := service.CachedVideoPath(task.TaskID)
+	assert.True(t, cached)
+
+	second := requestVideo()
+	assert.Equal(t, http.StatusOK, second.Code)
+	assert.Equal(t, "cached-plugin-video", second.Body.String())
+	assert.Equal(t, 1, upstreamCalls)
+}
+
 func TestProjectedTaskArtifactValidationRejectsAmbiguousIdentity(t *testing.T) {
 	validated, err := validateProjectedTaskArtifacts([]relaychannel.TaskArtifact{
 		{Key: "video-main", Type: "video", MimeType: "video/mp4"},

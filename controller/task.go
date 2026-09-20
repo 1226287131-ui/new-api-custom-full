@@ -230,6 +230,22 @@ func legacyVideoAvailable(task *model.Task) bool {
 	}
 }
 
+func videoAvailable(task *model.Task) bool {
+	if task == nil || task.Status != model.TaskStatusSuccess || task.Platform == constant.TaskPlatformSuno {
+		return false
+	}
+	switch constant.NormalizeTaskAction(task.Action) {
+	case constant.TaskActionImageToVideo,
+		constant.TaskActionTextToVideo,
+		constant.TaskActionFirstTailToVideo,
+		constant.TaskActionReferenceToVideo,
+		constant.TaskActionRemix:
+		return taskHasPluginExecution(task) || legacyVideoAvailable(task)
+	default:
+		return false
+	}
+}
+
 func getTaskForArtifactRequest(c *gin.Context, taskID string) (*model.Task, bool, error) {
 	if middleware.IsTaskArtifactAccess(c) {
 		task, exists, err := model.GetUniqueByOnlyTaskId(taskID)
@@ -420,6 +436,7 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 		item.RequestBody = task.RequestBody
 		item.RequestBodyComplete = task.RequestBodyComplete
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
+		item.VideoAvailable = videoAvailable(task)
 		if task.Status == model.TaskStatusSuccess && (taskHasPluginExecution(task) || !constant.IsVideoTaskPlatform(task.Platform)) {
 			item.ResultURL = ""
 		}

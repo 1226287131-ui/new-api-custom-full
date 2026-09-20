@@ -46,6 +46,7 @@ type TaskDto struct {
 	FailReason           string          `json:"fail_reason"`
 	ResultURL            string          `json:"result_url,omitempty"` // 任务结果 URL（视频地址等）
 	LegacyVideoAvailable bool            `json:"legacy_video_available,omitempty"`
+	VideoAvailable       bool            `json:"video_available,omitempty"`
 	SubmitTime           int64           `json:"submit_time"`
 	StartTime            int64           `json:"start_time"`
 	FinishTime           int64           `json:"finish_time"`
