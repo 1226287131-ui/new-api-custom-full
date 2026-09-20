@@ -122,6 +122,11 @@ export function useSidebarData(): SidebarData {
             icon: Wallet,
           },
           {
+            title: t('My team'),
+            url: '/team',
+            icon: Users,
+          },
+          {
             title: t('Profile'),
             url: '/profile',
             icon: User,
@@ -151,6 +156,11 @@ export function useSidebarData(): SidebarData {
             title: t('Users'),
             url: '/users',
             icon: Users,
+          },
+          {
+            title: t('Invitation rewards'),
+            url: '/team/manage',
+            icon: CreditCard,
           },
           {
             title: t('Redemption Codes'),

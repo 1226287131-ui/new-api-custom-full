@@ -15,25 +15,29 @@ import (
 )
 
 const (
-	VerificationMethodTwoFA              = "2fa"
-	VerificationMethodPasskey            = "passkey"
-	VerificationMethodPassword           = "password"
-	VerificationMethodOAuth              = "oauth"
-	VerificationMethodSession            = "session"
-	VerificationScopeChannelKeyRead      = "channel.key.read"
-	VerificationScopePasskeyRegister     = "passkey.register"
-	VerificationScopePasskeyDelete       = "passkey.delete"
-	VerificationScopeTwoFASetup          = "2fa.setup"
-	VerificationScopeTwoFADisable        = "2fa.disable"
-	VerificationScopeTwoFABackupCodes    = "2fa.backup_codes.regenerate"
-	VerificationScopeLogin               = "auth.login"
-	VerificationScopeAccessTokenGenerate = "access_token.generate"
-	VerificationScopeAccessTokenRevoke   = "access_token.revoke"
-	VerificationScopeAccountBind         = "account.binding.bind"
-	VerificationScopeAccountUnbind       = "account.binding.unbind"
-	VerificationScopePasswordSet         = "account.password.set"
-	VerificationScopePasswordChange      = "account.password.change"
-	VerificationScopeAccountDelete       = "account.delete"
+	VerificationMethodTwoFA               = "2fa"
+	VerificationMethodPasskey             = "passkey"
+	VerificationMethodPassword            = "password"
+	VerificationMethodOAuth               = "oauth"
+	VerificationMethodSession             = "session"
+	VerificationScopeChannelKeyRead       = "channel.key.read"
+	VerificationScopePasskeyRegister      = "passkey.register"
+	VerificationScopePasskeyDelete        = "passkey.delete"
+	VerificationScopeTwoFASetup           = "2fa.setup"
+	VerificationScopeTwoFADisable         = "2fa.disable"
+	VerificationScopeTwoFABackupCodes     = "2fa.backup_codes.regenerate"
+	VerificationScopeLogin                = "auth.login"
+	VerificationScopeAccessTokenGenerate  = "access_token.generate"
+	VerificationScopeAccessTokenRevoke    = "access_token.revoke"
+	VerificationScopeAccountBind          = "account.binding.bind"
+	VerificationScopeAccountUnbind        = "account.binding.unbind"
+	VerificationScopePasswordSet          = "account.password.set"
+	VerificationScopePasswordChange       = "account.password.change"
+	VerificationScopeAccountDelete        = "account.delete"
+	VerificationScopeTeamPayoutWrite      = "team.payout.write"
+	VerificationScopeTeamWithdrawalWrite  = "team.withdrawal.write"
+	VerificationScopeTeamWithdrawalReview = "team.withdrawal.review"
+	VerificationScopeTeamWithdrawalRead   = "team.withdrawal.read"
 )
 
 var (
@@ -120,6 +124,8 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenRevoke,
+		VerificationScopeTeamPayoutWrite, VerificationScopeTeamWithdrawalWrite,
+		VerificationScopeTeamWithdrawalReview, VerificationScopeTeamWithdrawalRead,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete:
 		if len(fields) != 0 {
 			return VerificationBinding{}, ErrVerificationContextInvalid
@@ -178,7 +184,9 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		methods = append(methods, VerificationMethodPasskey)
 	}
 	switch scope {
-	case VerificationScopeChannelKeyRead, VerificationScopePasskeyDelete, VerificationScopeLogin:
+	case VerificationScopeChannelKeyRead, VerificationScopePasskeyDelete, VerificationScopeLogin,
+		VerificationScopeTeamPayoutWrite, VerificationScopeTeamWithdrawalWrite,
+		VerificationScopeTeamWithdrawalReview, VerificationScopeTeamWithdrawalRead:
 	case VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes:
 		if !state.HasTwoFA {
 			return nil, model.ErrTwoFANotEnabled
@@ -232,6 +240,9 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 		return nil, ErrAuthTokenInvalid
 	}
 	if scope == VerificationScopeChannelKeyRead && state.Role != common.RoleRootUser {
+		return nil, ErrVerificationForbidden
+	}
+	if (scope == VerificationScopeTeamWithdrawalReview || scope == VerificationScopeTeamWithdrawalRead) && state.Role < common.RoleAdminUser {
 		return nil, ErrVerificationForbidden
 	}
 	methods, err := securityVerificationPolicy(scope, *state)

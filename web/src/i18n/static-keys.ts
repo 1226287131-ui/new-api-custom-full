@@ -177,6 +177,20 @@ export const STATIC_I18N_KEYS = [
   'Custom endpoints',
   'Catalog visibility',
 
+  // Team account API errors
+  'Invalid payout account',
+  'Invalid withdrawal request',
+  'Invalid withdrawal status',
+  'Invalid withdrawal review',
+  'Invalid invitation reward settings',
+  'Unable to complete this team request',
+  'Payout account encryption is not configured',
+  'Insufficient available rewards',
+  'Withdrawals are currently disabled',
+  'This withdrawal status does not allow this action',
+  'This withdrawal request has already been submitted with a different amount',
+  'Bind an Alipay account first',
+  'Invalid withdrawal amount or below the minimum',
   // Header navigation
   'Home',
   'Console',

@@ -25,6 +25,10 @@ export type VerificationMethod =
   | 'oauth'
   | 'session'
 export type SecurityProofScope =
+  | 'team.payout.write'
+  | 'team.withdrawal.write'
+  | 'team.withdrawal.review'
+  | 'team.withdrawal.read'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'

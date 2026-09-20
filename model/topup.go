@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
+	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -13,16 +15,19 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
-	Money           float64 `json:"money"`
-	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
+	Id                int     `json:"id"`
+	UserId            int     `json:"user_id" gorm:"index"`
+	Amount            int64   `json:"amount"`
+	Money             float64 `json:"money"`
+	TradeNo           string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod     string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider   string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime        int64   `json:"create_time"`
+	CompleteTime      int64   `json:"complete_time"`
+	Status            string  `json:"status"`
+	ExpectedPaidCents int64   `json:"-"`
+	EpayQuotaPerUnit  string  `json:"-" gorm:"type:varchar(64)"`
+	AgentSnapshot     string  `json:"-" gorm:"type:text"`
 }
 
 const (
@@ -120,6 +125,110 @@ func (topUp *TopUp) Update() error {
 	var err error
 	err = DB.Save(topUp).Error
 	return err
+}
+
+// CompleteVerifiedEpayTopUp must only be called after cryptographic callback
+// verification. Payment, user balance and the durable commission event commit
+// together; repeated callbacks and manual completions cannot create new grants.
+func CompleteVerifiedEpayTopUp(tradeNo string, paidCents int64, paymentMethod string) (*TopUp, int, bool, error) {
+	if tradeNo == "" || paidCents <= 0 || paidCents > maxAgentPaymentCents || len(paymentMethod) > 50 {
+		return nil, 0, false, errors.New("invalid Epay settlement")
+	}
+	var topUp TopUp
+	quota := 0
+	var creditTotal int64
+	completed := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).Where("trade_no = ?", tradeNo).First(&topUp).Error; err != nil {
+			return err
+		}
+		if topUp.PaymentProvider != PaymentProviderEpay {
+			return ErrPaymentMethodMismatch
+		}
+		expectedCents := topUp.ExpectedPaidCents
+		if expectedCents == 0 {
+			var err error
+			expectedCents, err = ParseEpayPaidCents(strconv.FormatFloat(topUp.Money, 'f', 2, 64))
+			if err != nil {
+				return err
+			}
+		}
+		if expectedCents != paidCents {
+			return errors.New("Epay paid amount does not match the order")
+		}
+		if topUp.Status == common.TopUpStatusSuccess {
+			var user User
+			if err := tx.Select("quota_credit_total").First(&user, topUp.UserId).Error; err != nil {
+				return err
+			}
+			creditTotal = user.QuotaCreditTotal
+			return nil
+		}
+		if topUp.Status != common.TopUpStatusPending {
+			return ErrTopUpStatusInvalid
+		}
+		if math.IsNaN(common.QuotaPerUnit) || math.IsInf(common.QuotaPerUnit, 0) || common.QuotaPerUnit <= 0 {
+			return errors.New("invalid quota conversion")
+		}
+		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+		if topUp.EpayQuotaPerUnit != "" {
+			var err error
+			quotaPerUnit, err = decimal.NewFromString(topUp.EpayQuotaPerUnit)
+			if err != nil {
+				return err
+			}
+		}
+		var err error
+		quota, err = epayTopUpQuota(topUp.Amount, quotaPerUnit)
+		if err != nil {
+			return err
+		}
+		creditTotal, err = creditAgentQuota(tx, topUp.UserId, quota)
+		if err != nil {
+			return err
+		}
+		topUp.CompleteTime = common.GetTimestamp()
+		topUp.Status = common.TopUpStatusSuccess
+		if paymentMethod != "" {
+			topUp.PaymentMethod = paymentMethod
+		}
+		if err := tx.Save(&topUp).Error; err != nil {
+			return err
+		}
+		if topUp.AgentSnapshot != "" {
+			var snapshot agentOrderSnapshot
+			if err := common.UnmarshalJsonStr(topUp.AgentSnapshot, &snapshot); err != nil {
+				return err
+			}
+			if snapshot.UserID != topUp.UserId {
+				return errors.New("agent commission order owner mismatch")
+			}
+			creditQuota, cashCents, err := calculateAgentCommission(snapshot, paidCents)
+			if err != nil {
+				return err
+			}
+			event := AgentCommission{
+				TopUpID: topUp.Id, TradeNo: topUp.TradeNo, UserID: topUp.UserId,
+				ReferrerID: snapshot.ReferrerID, Mode: snapshot.Mode, RateBPS: snapshot.RateBPS,
+				PaidCents: paidCents, CreditQuota: creditQuota, CashCents: cashCents,
+				Price: snapshot.Price, QuotaPerUnit: snapshot.QuotaPerUnit,
+				Status: AgentCommissionPending, CreatedAt: topUp.CompleteTime,
+				ReadyAt: topUp.CompleteTime + int64(snapshot.FreezeHours)*3600,
+			}
+			if err := tx.Create(&event).Error; err != nil {
+				return err
+			}
+		}
+		completed = true
+		return nil
+	})
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if err := syncCommittedUserQuotaCredit(topUp.UserId, creditTotal); err != nil {
+		common.SysError(fmt.Sprintf("Epay %s cache credit synchronization failed: %s", tradeNo, err))
+	}
+	return &topUp, quota, completed, nil
 }
 
 func GetTopUpById(id int) *TopUp {

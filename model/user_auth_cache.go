@@ -63,6 +63,12 @@ local current = tonumber(redis.call('HGET', KEYS[1], 'AuthVersion') or '0')
 if pending > incoming or committed > incoming or current > incoming then
   return 0
 end
+if ARGV[10] == '1' and redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
+  local creditFloor = tonumber(redis.call('GET', KEYS[4]) or '0')
+  if creditFloor > tonumber(ARGV[13]) then
+    return -1
+  end
+end
 if committed < incoming then
   redis.call('SET', KEYS[3], ARGV[1])
 end
@@ -76,21 +82,37 @@ redis.call('HSET', KEYS[1],
   'Id', ARGV[2], 'Group', ARGV[3], 'Email', ARGV[4],
   'Status', ARGV[5], 'Role', ARGV[6], 'Username', ARGV[7],
   'Setting', ARGV[8], 'AuthVersion', ARGV[1], 'CacheSchema', ARGV[9])
-if ARGV[10] == '1' and redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
-  redis.call('HSET', KEYS[1], 'Quota', ARGV[11])
+if ARGV[10] == '1' then
+  local creditTotal = tonumber(ARGV[13])
+  local creditFloor = tonumber(redis.call('GET', KEYS[4]) or '0')
+  if creditTotal > creditFloor then
+    redis.call('SET', KEYS[4], ARGV[13])
+  end
+  if redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
+    redis.call('HSET', KEYS[1], 'Quota', ARGV[11], 'QuotaCreditTotal', ARGV[13])
+  else
+    local applied = tonumber(redis.call('HGET', KEYS[1], 'QuotaCreditTotal') or '0')
+    if creditTotal > applied then
+      redis.call('HINCRBY', KEYS[1], 'Quota', string.format('%.0f', creditTotal - applied))
+      redis.call('HSET', KEYS[1], 'QuotaCreditTotal', ARGV[13])
+    end
+  end
 end
 redis.call('EXPIRE', KEYS[1], ARGV[12])
 return 1`
 	result, err := common.RDB.Eval(context.Background(), script,
-		[]string{getUserCacheKey(user.Id), getUserAuthFenceKey(user.Id), getUserAuthVersionKey(user.Id)},
+		[]string{getUserCacheKey(user.Id), getUserAuthFenceKey(user.Id), getUserAuthVersionKey(user.Id), getUserQuotaCreditKey(user.Id)},
 		user.AuthVersion, user.Id, user.Group, user.Email, user.Status, user.Role,
-		user.Username, user.Setting, user.CacheSchema, includeQuotaArg, user.Quota, ttl,
+		user.Username, user.Setting, user.CacheSchema, includeQuotaArg, user.Quota, ttl, user.QuotaCreditTotal,
 	).Int()
 	if err != nil {
 		return err
 	}
 	if result == 0 {
 		return ErrUserAuthCachePending
+	}
+	if result == -1 {
+		return errUserQuotaCacheSnapshotStale
 	}
 	return nil
 }
