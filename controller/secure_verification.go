@@ -82,6 +82,9 @@ func isAllowedSecurityProofScope(scope string) bool {
 	switch scope {
 	case securityProofScopeChannelKeyRead, securityProofScopePasskeyRegister, securityProofScopePasskeyDelete:
 		return true
+	case securityProofScopeTeamPayoutWrite, securityProofScopeTeamWithdrawalWrite,
+		securityProofScopeTeamWithdrawalReview, securityProofScopeTeamWithdrawalRead:
+		return true
 	default:
 		return false
 	}

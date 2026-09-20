@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -14,16 +15,17 @@ import (
 const userCacheSchemaVersion = 2
 
 type UserBase struct {
-	Id          int    `json:"id"`
-	Group       string `json:"group"`
-	Email       string `json:"email"`
-	Quota       int    `json:"quota"`
-	Status      int    `json:"status"`
-	Role        int    `json:"role"`
-	Username    string `json:"username"`
-	Setting     string `json:"setting"`
-	AuthVersion int64  `json:"-"`
-	CacheSchema int    `json:"-"`
+	Id               int    `json:"id"`
+	Group            string `json:"group"`
+	Email            string `json:"email"`
+	Quota            int    `json:"quota"`
+	QuotaCreditTotal int64  `json:"-"`
+	Status           int    `json:"status"`
+	Role             int    `json:"role"`
+	Username         string `json:"username"`
+	Setting          string `json:"setting"`
+	AuthVersion      int64  `json:"-"`
+	CacheSchema      int    `json:"-"`
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -101,23 +103,31 @@ func GetUserCache(userId int) (*UserBase, error) {
 	// Redis misses and read failures both fall back to the shared database. A
 	// version fence newer than the database is the one exception: allowing that
 	// snapshot would re-authorize a user while a restrictive update is pending.
-	user, err := GetUserById(userId, false)
-	if err != nil {
-		return nil, err
-	}
-	if common.RedisEnabled {
-		floor, floorErr := getUserAuthVersionFloor(userId)
-		if floorErr == nil && floor > user.AuthVersion {
-			return nil, ErrUserAuthCachePending
+	for range 3 {
+		user, err := GetUserById(userId, false)
+		if err != nil {
+			return nil, err
 		}
-		if err := populateUserCache(*user); err != nil {
-			if errors.Is(err, ErrUserAuthCachePending) {
-				return nil, err
+		if common.RedisEnabled {
+			floor, floorErr := getUserAuthVersionFloor(userId)
+			if floorErr == nil && floor > user.AuthVersion {
+				return nil, ErrUserAuthCachePending
 			}
-			common.SysLog("failed to synchronously populate user cache: " + err.Error())
+			if err := populateUserCache(*user); err != nil {
+				if errors.Is(err, ErrUserAuthCachePending) {
+					return nil, err
+				}
+				if errors.Is(err, errUserQuotaCacheSnapshotStale) {
+					continue
+				}
+				common.SysLog("failed to synchronously populate user cache: " + err.Error())
+			} else if cached, err := cacheGetUserBase(userId); err == nil {
+				return cached, nil
+			}
 		}
+		return user.ToBaseUser(), nil
 	}
-	return user.ToBaseUser(), nil
+	return nil, errUserQuotaCacheSnapshotStale
 }
 
 func cacheGetUserBase(userId int) (*UserBase, error) {
@@ -153,6 +163,43 @@ func cacheIncrUserQuota(userId int, delta int64) error {
 
 func cacheDecrUserQuota(userId int, delta int64) error {
 	return cacheIncrUserQuota(userId, -delta)
+}
+
+var errUserQuotaCacheSnapshotStale = errors.New("user quota cache snapshot is stale")
+
+func getUserQuotaCreditKey(userID int) string {
+	return fmt.Sprintf("quota:user:credit:%d", userID)
+}
+
+// Committed credits carry a cumulative database watermark, so cache rebuilds
+// and out-of-order retries cannot apply the same credit twice. Existing quota
+// remains authoritative for debits that batch processing has not flushed yet.
+func syncCommittedUserQuotaCredit(userID int, total int64) error {
+	if !common.RedisEnabled || total <= 0 {
+		return nil
+	}
+	const script = `
+local incoming = tonumber(ARGV[1])
+local totalText = ARGV[1]
+local floorText = redis.call('GET', KEYS[2]) or '0'
+local floor = tonumber(floorText)
+if incoming > floor then
+  redis.call('SET', KEYS[2], ARGV[1])
+else
+  incoming = floor
+  totalText = floorText
+end
+if redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
+  return 1
+end
+local applied = tonumber(redis.call('HGET', KEYS[1], 'QuotaCreditTotal') or '0')
+if incoming > applied then
+  redis.call('HINCRBY', KEYS[1], 'Quota', string.format('%.0f', incoming - applied))
+  redis.call('HSET', KEYS[1], 'QuotaCreditTotal', totalText)
+end
+return 1`
+	return common.RDB.Eval(context.Background(), script,
+		[]string{getUserCacheKey(userID), getUserQuotaCreditKey(userID)}, total).Err()
 }
 
 // Helper functions to get individual fields if needed
@@ -203,13 +250,6 @@ func updateUserStatusCache(userId int, status bool) error {
 		statusInt = common.UserStatusDisabled
 	}
 	return updateUserCacheField(userId, "Status", statusInt)
-}
-
-func updateUserQuotaCache(userId int, quota int) error {
-	if !common.RedisEnabled {
-		return nil
-	}
-	return common.RedisHSetField(getUserCacheKey(userId), "Quota", fmt.Sprintf("%d", quota))
 }
 
 // RefreshUserGroupCache writes the database-authoritative group into an

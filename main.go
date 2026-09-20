@@ -127,6 +127,7 @@ func main() {
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
+	service.StartTeamRewardsTask()
 
 	// Keep completed NewAPI video results on the server and remove them after 48 hours.
 	service.StartVideoCacheCleanup()

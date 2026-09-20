@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Link } from '@tanstack/react-router'
 import { Share2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -73,6 +74,12 @@ export function AffiliateRewardsCard({
             <h3 className='truncate text-sm font-semibold'>
               {t('Referral Program')}
             </h3>
+            <Link
+              to='/team'
+              className='text-primary text-xs underline-offset-4 hover:underline'
+            >
+              {t('My team')}
+            </Link>
             <p className='text-muted-foreground line-clamp-1 text-xs'>
               {t(
                 'Earn rewards when users join through your referral link. Transfer accumulated rewards to your balance anytime.'

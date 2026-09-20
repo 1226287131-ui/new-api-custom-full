@@ -19,6 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 export type VerificationMethod = '2fa' | 'passkey'
 
 export type SecurityProofScope =
+  | 'team.payout.write'
+  | 'team.withdrawal.write'
+  | 'team.withdrawal.review'
+  | 'team.withdrawal.read'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'

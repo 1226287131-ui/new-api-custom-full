@@ -93,6 +93,7 @@ type User struct {
 	VerificationCode string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
 	AccessToken      *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
 	Quota            int                        `json:"quota" gorm:"type:int;default:0"`
+	QuotaCreditTotal int64                      `json:"-" gorm:"type:bigint;not null;default:0;<-:create"`
 	UsedQuota        int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
 	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`               // request number
 	Group            string                     `json:"group" gorm:"type:varchar(64);default:'default'"`
@@ -114,16 +115,17 @@ type User struct {
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:          user.Id,
-		Group:       user.Group,
-		Quota:       user.Quota,
-		Status:      user.Status,
-		Role:        user.Role,
-		Username:    user.Username,
-		Setting:     user.Setting,
-		Email:       user.Email,
-		AuthVersion: user.AuthVersion,
-		CacheSchema: userCacheSchemaVersion,
+		Id:               user.Id,
+		Group:            user.Group,
+		Quota:            user.Quota,
+		QuotaCreditTotal: user.QuotaCreditTotal,
+		Status:           user.Status,
+		Role:             user.Role,
+		Username:         user.Username,
+		Setting:          user.Setting,
+		Email:            user.Email,
+		AuthVersion:      user.AuthVersion,
+		CacheSchema:      userCacheSchemaVersion,
 	}
 	return cache
 }
@@ -1127,16 +1129,6 @@ func ValidateAccessToken(token string) (*User, error) {
 
 // GetUserQuota gets quota from Redis first, falls back to DB if needed
 func GetUserQuota(id int, fromDB bool) (quota int, err error) {
-	defer func() {
-		// Update Redis cache asynchronously on successful DB read
-		if shouldUpdateRedis(fromDB, err) {
-			gopool.Go(func() {
-				if err := updateUserQuotaCache(id, quota); err != nil {
-					common.SysLog("failed to update user quota cache: " + err.Error())
-				}
-			})
-		}
-	}()
 	if !fromDB && common.RedisEnabled {
 		quota, err := getUserQuotaCache(id)
 		if err == nil {
@@ -1144,13 +1136,17 @@ func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 		}
 		// Don't return error - fall through to DB
 	}
-	fromDB = true
-	err = DB.Model(&User{}).Where("id = ?", id).Select("quota").Find(&quota).Error
+	var user User
+	err = DB.Model(&User{}).Where("id = ?", id).Select("quota", "quota_credit_total").Find(&user).Error
 	if err != nil {
 		return 0, err
 	}
-
-	return quota, nil
+	// Never publish an absolute DB balance: cached quota can include unflushed
+	// debits. Repair only committed credits using the same snapshot's watermark.
+	if err := syncCommittedUserQuotaCredit(id, user.QuotaCreditTotal); err != nil {
+		common.SysLog("failed to synchronize user quota credits: " + err.Error())
+	}
+	return user.Quota, nil
 }
 
 func GetUserUsedQuota(id int) (quota int, err error) {
