@@ -17,7 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -135,6 +142,24 @@ it('keeps a rejected reward choice unsaved and exposes the server error', async 
     'Invalid reward preference'
   )
   expect(invalidate).not.toHaveBeenCalled()
+})
+
+it('ignores repeated reward preference submits while the first save is pending', async () => {
+  const user = userEvent.setup()
+  const put = vi
+    .spyOn(api, 'put')
+    .mockImplementation(() => new Promise(() => {}))
+  renderTeam(<RewardPreferenceForm data={self} />)
+  await user.click(screen.getByRole('button', { name: /Site credits/ }))
+  const button = screen.getByRole('button', { name: 'Save reward type' })
+  const form = button.closest('form')
+  expect(form).not.toBeNull()
+  if (!form) throw new Error('Expected the reward preference form')
+  await act(async () => {
+    fireEvent.submit(form)
+    fireEvent.submit(form)
+  })
+  expect(put).toHaveBeenCalledOnce()
 })
 
 it('reads the current referral and audit page through the administrator endpoints', async () => {

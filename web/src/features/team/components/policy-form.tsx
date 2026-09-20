@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Save } from 'lucide-react'
+import { useRef } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -42,6 +43,7 @@ import type { TeamPolicy } from '../types'
 export function PolicyForm(props: { policy: TeamPolicy; writable: boolean }) {
   const { t } = useTranslation()
   const client = useQueryClient()
+  const submitLocked = useRef(false)
   const form = useForm<z.infer<typeof policySchema>>({
     resolver: zodResolver(policySchema),
     mode: 'onBlur',
@@ -67,18 +69,27 @@ export function PolicyForm(props: { policy: TeamPolicy; writable: boolean }) {
     <form
       className='max-w-3xl space-y-5'
       onSubmit={form.handleSubmit((values) => {
+        if (submitLocked.current) return
         const credit = parseHundredths(values.credit_rate)
         const cash = parseHundredths(values.cash_rate)
         const minimum = parseHundredths(values.minimum)
         if (credit === null || cash === null || minimum === null) return
-        mutation.mutate({
-          enabled: values.enabled,
-          mode: values.mode,
-          credit_rate_bps: credit,
-          cash_rate_bps: cash,
-          freeze_hours: Number(values.freeze_hours),
-          minimum_withdrawal_cents: minimum,
-        })
+        submitLocked.current = true
+        mutation.mutate(
+          {
+            enabled: values.enabled,
+            mode: values.mode,
+            credit_rate_bps: credit,
+            cash_rate_bps: cash,
+            freeze_hours: Number(values.freeze_hours),
+            minimum_withdrawal_cents: minimum,
+          },
+          {
+            onSettled: () => {
+              submitLocked.current = false
+            },
+          }
+        )
       })}
     >
       <FieldGroup>

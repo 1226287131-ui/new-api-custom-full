@@ -17,10 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+
+import { api } from '@/lib/api'
 
 import { CommissionTable } from '../components/commission-table'
 import { PayoutForm } from '../components/payout-form'
@@ -169,6 +171,22 @@ describe('Team account controls', () => {
       screen.queryByRole('button', { name: 'Save reward settings' })
     ).not.toBeInTheDocument()
     expect(screen.getByText(/Only the root administrator/)).toBeInTheDocument()
+  })
+
+  test('reward policy ignores repeated submits while the first save is pending', async () => {
+    const put = vi
+      .spyOn(api, 'put')
+      .mockImplementation(() => new Promise(() => {}))
+    renderTeam(<PolicyForm policy={policy} writable />)
+    const button = screen.getByRole('button', { name: 'Save reward settings' })
+    const form = button.closest('form')
+    expect(form).not.toBeNull()
+    if (!form) throw new Error('Expected the reward policy form')
+    await act(async () => {
+      fireEvent.submit(form)
+      fireEvent.submit(form)
+    })
+    expect(put).toHaveBeenCalledOnce()
   })
 
   test('payout binding displays masked data without pre-filling sensitive credentials', async () => {

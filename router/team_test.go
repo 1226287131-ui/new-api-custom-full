@@ -28,12 +28,16 @@ type teamRouteFixture struct {
 }
 
 func setupTeamRouteTest(t *testing.T) teamRouteFixture {
+	return setupTeamRouteTestWithRateLimit(t, false, 0)
+}
+
+func setupTeamRouteTestWithRateLimit(t *testing.T, enabled bool, maxRequestNum int) teamRouteFixture {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	previousRedis, previousSecret := common.RedisEnabled, common.SessionSecret
-	previousRateLimit := common.CriticalRateLimitEnable
+	previousRateLimit, previousRateLimitNum, previousRateLimitDuration := common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "team-routes.db")), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -44,13 +48,17 @@ func setupTeamRouteTest(t *testing.T) teamRouteFixture {
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 	common.RedisEnabled = false
 	common.SessionSecret = "team-route-security-test-secret"
-	common.CriticalRateLimitEnable = false
+	common.CriticalRateLimitEnable = enabled
+	if enabled {
+		common.CriticalRateLimitNum = maxRequestNum
+		common.CriticalRateLimitDuration = 60
+	}
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.SetMainDatabaseType(previousType)
 		common.SetLogDatabaseType(previousLogType)
 		common.RedisEnabled, common.SessionSecret = previousRedis, previousSecret
-		common.CriticalRateLimitEnable = previousRateLimit
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = previousRateLimit, previousRateLimitNum, previousRateLimitDuration
 		assert.NoError(t, sqlDB.Close())
 	})
 	t.Setenv("AGENT_PAYOUT_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("r", 32))))
@@ -59,7 +67,7 @@ func setupTeamRouteTest(t *testing.T) teamRouteFixture {
 		&model.AgentRewardPreference{}, &model.AgentReferralGuard{}, &model.AgentReferralChange{}))
 	require.NoError(t, model.SaveAgentPolicy(&model.AgentPolicy{Enabled: true, Mode: model.AgentModeCash, MinimumWithdrawalCents: 100}))
 	fixture := teamRouteFixture{engine: gin.New(), tokens: map[int]string{}, identity: map[int]service.AuthIdentity{}}
-	for _, account := range []struct{ id, role int }{{42, common.RoleCommonUser}, {43, common.RoleCommonUser}, {44, common.RoleAdminUser}} {
+	for _, account := range []struct{ id, role int }{{42, common.RoleCommonUser}, {43, common.RoleCommonUser}, {44, common.RoleAdminUser}, {45, common.RoleRootUser}} {
 		user := &model.User{Id: account.id, Username: fmt.Sprintf("team-user-%d", account.id), Password: "placeholder",
 			Role: account.role, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: fmt.Sprintf("team%d", account.id)}
 		require.NoError(t, db.Create(user).Error)
@@ -127,6 +135,28 @@ func TestTeamRoutesEnforceDashboardRoles(t *testing.T) {
 	policy, err := model.GetAgentPolicy()
 	require.NoError(t, err)
 	assert.True(t, policy.Enabled)
+}
+
+func TestTeamWritesUseIndependentPerUserRateLimits(t *testing.T) {
+	fixture := setupTeamRouteTestWithRateLimit(t, true, 1)
+	fixture.engine.GET("/api/shared-critical", middleware.CriticalRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	response := fixture.request(http.MethodGet, "/api/shared-critical", "", 0, "")
+	require.Equal(t, http.StatusOK, response.Code)
+	response = fixture.request(http.MethodGet, "/api/shared-critical", "", 0, "")
+	require.Equal(t, http.StatusTooManyRequests, response.Code)
+
+	response = fixture.request(http.MethodPut, "/api/team/admin/policy",
+		`{"enabled":true,"mode":"credit","credit_rate_bps":500,"cash_rate_bps":300,"freeze_hours":0,"minimum_withdrawal_cents":1000}`, 45, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	response = fixture.request(http.MethodPut, "/api/team/reward-preference", `{"mode":"credit"}`, 42, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	response = fixture.request(http.MethodPut, "/api/team/reward-preference", `{"mode":"cash"}`, 42, "")
+	assert.Equal(t, http.StatusTooManyRequests, response.Code)
+	response = fixture.request(http.MethodPut, "/api/team/reward-preference", `{"mode":"credit"}`, 43, "")
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 }
 
 func TestTeamEmailEndpointsRejectCookieOnlyRequests(t *testing.T) {

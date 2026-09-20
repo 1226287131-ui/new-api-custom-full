@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Save } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -37,6 +37,7 @@ import type { TeamSelf } from '../types'
 export function RewardPreferenceForm(props: { data: TeamSelf }) {
   const { t } = useTranslation()
   const client = useQueryClient()
+  const submitLocked = useRef(false)
   const [mode, setMode] = useState(props.data.effective_reward_mode)
   const mutation = useMutation({
     mutationFn: saveRewardPreference,
@@ -51,9 +52,19 @@ export function RewardPreferenceForm(props: { data: TeamSelf }) {
     <form
       onSubmit={(event) => {
         event.preventDefault()
-        if (!disabled && mode !== props.data.reward_preference.mode) {
-          mutation.mutate(mode)
+        if (
+          submitLocked.current ||
+          disabled ||
+          mode === props.data.reward_preference.mode
+        ) {
+          return
         }
+        submitLocked.current = true
+        mutation.mutate(mode, {
+          onSettled: () => {
+            submitLocked.current = false
+          },
+        })
       }}
     >
       <FieldGroup className='gap-3'>
