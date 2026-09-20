@@ -48,6 +48,7 @@ type authClaims struct {
 	Method          string   `json:"method,omitempty"`
 	Scopes          []string `json:"scopes,omitempty"`
 	ContextHash     string   `json:"context_hash,omitempty"`
+	EmailHash       string   `json:"email_hash,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -128,6 +129,9 @@ func IssueSecurityProof(identity AuthIdentity, method string, binding Verificati
 	if identity.UserID <= 0 || identity.SessionID == "" || identity.UserAuthVersion <= 0 || identity.SessionVersion <= 0 || method == "" || binding.Scope == "" || binding.ContextHash == "" {
 		return "", 0, ErrAuthTokenInvalid
 	}
+	if method == VerificationMethodEmail && (binding.EmailSnapshot == "" || (binding.Scope != VerificationScopeTeamPayoutWrite && binding.Scope != VerificationScopeTeamReferralWrite)) {
+		return "", 0, ErrAuthTokenInvalid
+	}
 	now := time.Now()
 	expiresAt := now.Add(SecurityProofTTL).Truncate(time.Second)
 	proofID, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
@@ -154,6 +158,9 @@ func IssueSecurityProof(identity AuthIdentity, method string, binding Verificati
 			IssuedAt:  jwt.NewNumericDate(now),
 			ID:        proofID,
 		},
+	}
+	if method == VerificationMethodEmail {
+		claims.EmailHash = common.GenerateHMACWithKey(authSigningKey("verification-email"), binding.EmailSnapshot)
 	}
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(authSigningKey(securityProofTokenUse))
 	return signed, expiresAt.Unix(), err

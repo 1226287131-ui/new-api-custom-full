@@ -23,6 +23,17 @@ import i18next from 'i18next'
 export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
 
 const serverErrorMessageKeys = {
+  EMAIL_VERIFICATION_REQUIRED_EMAIL:
+    'Bind an email address in account settings before using email verification.',
+  EMAIL_VERIFICATION_UNAVAILABLE:
+    'Email verification is unavailable. Contact the administrator to configure SMTP.',
+  EMAIL_VERIFICATION_DELIVERY_FAILED:
+    'Verification email could not be sent. Please try again later.',
+  EMAIL_VERIFICATION_COOLDOWN:
+    'Please wait before requesting another verification email.',
+  EMAIL_VERIFICATION_INVALID: 'Email verification code is incorrect.',
+  EMAIL_VERIFICATION_LOCKED:
+    'Too many incorrect codes. Try again after the verification window expires.',
   TELEGRAM_OAUTH_NOT_CONFIGURED:
     'Telegram OAuth is not configured or enabled. Please contact your administrator.',
   TELEGRAM_OAUTH_CONFLICT:

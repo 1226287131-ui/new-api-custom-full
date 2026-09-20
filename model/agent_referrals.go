@@ -67,7 +67,7 @@ func GetAgentReferral(userID int) (*AgentReferral, error) {
 
 // ChangeAgentReferrer affects only future order snapshots. Neither historical
 // rewards nor the legacy signup-reward counters are rewritten.
-func ChangeAgentReferrer(operatorID, userID, expectedInviterID, newInviterID int, reason string) (*AgentReferralChange, error) {
+func ChangeAgentReferrer(operatorID, userID, expectedInviterID, newInviterID int, reason string, authorization ...*AuthFlowAuthorization) (*AgentReferralChange, error) {
 	reason = strings.TrimSpace(reason)
 	if operatorID <= 0 || userID <= 0 || expectedInviterID < 0 || newInviterID < 0 ||
 		newInviterID == userID || reason == "" || utf8.RuneCountInString(reason) > 200 {
@@ -84,6 +84,11 @@ func ChangeAgentReferrer(operatorID, userID, expectedInviterID, newInviterID int
 		if err := tx.Model(&AgentReferralGuard{}).Where("id = ?", 1).
 			UpdateColumn("revision", gorm.Expr("revision + 1")).Error; err != nil {
 			return err
+		}
+		if len(authorization) > 0 {
+			if err := ValidateTeamAuthorizationWithTx(tx, authorization[0], operatorID, "team.referral.write"); err != nil {
+				return err
+			}
 		}
 		var operator, user User
 		if err := lockForUpdate(tx).Select("id", "username", "role", "status").First(&operator, operatorID).Error; err != nil {

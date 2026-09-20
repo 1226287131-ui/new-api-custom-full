@@ -24,6 +24,7 @@ export type VerificationMethod =
   | 'password'
   | 'oauth'
   | 'session'
+  | 'email'
 export type SecurityProofScope =
   | 'team.referral.write'
   | 'team.payout.write'
@@ -45,6 +46,7 @@ export type SecurityProofScope =
   | 'account.delete'
 
 export type VerificationOperation =
+  | { scope: 'team.payout.write'; context: { account: string; name: string } }
   | {
       scope: 'team.referral.write'
       context: {
@@ -67,6 +69,7 @@ export type VerificationOperation =
         | 'account.binding.bind'
         | 'account.binding.unbind'
         | 'team.referral.write'
+        | 'team.payout.write'
       >
       context?: Record<string, never>
     }
@@ -83,9 +86,18 @@ export interface VerificationRequirements {
   methods: { method: VerificationMethod; available: boolean; reason?: string }[]
   oauth_providers: { slug: string; name: string }[]
   password_encryption_enabled: boolean
+  email?: string
+}
+
+export interface EmailVerificationFlow {
+  flow_token: string
+  expires_at: number
+  resend_at: number
+  email: string
 }
 
 export type VerificationInput =
+  | { method: 'email'; code: string; flow_token?: string }
   | { method: '2fa'; code: string }
   | { method: 'password'; password: string }
   | { method: 'passkey'; rpID?: string }

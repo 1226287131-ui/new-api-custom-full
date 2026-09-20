@@ -119,7 +119,7 @@ func GetAgentPayoutAccount(userID int) (*AgentPayoutAccount, error) {
 	return &account, err
 }
 
-func SaveAgentPayoutAccount(userID int, account, name string) (*AgentPayoutAccount, error) {
+func SaveAgentPayoutAccount(userID int, account, name string, authorization ...*AuthFlowAuthorization) (*AgentPayoutAccount, error) {
 	account, name = strings.TrimSpace(account), strings.TrimSpace(name)
 	if userID <= 0 || !utf8.ValidString(account) || !utf8.ValidString(name) || utf8.RuneCountInString(account) < 3 || utf8.RuneCountInString(account) > 128 || utf8.RuneCountInString(name) < 2 || utf8.RuneCountInString(name) > 128 {
 		return nil, errors.New("invalid Alipay account or name")
@@ -142,7 +142,17 @@ func SaveAgentPayoutAccount(userID int, account, name string) (*AgentPayoutAccou
 	}
 	maskedName := string(nameRunes[:1]) + "***"
 	record := &AgentPayoutAccount{UserID: userID, AccountCiphertext: accountCipher, NameCiphertext: nameCipher, AccountMasked: maskedAccount, NameMasked: maskedName, UpdatedAt: common.GetTimestamp()}
-	err = DB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}}, DoUpdates: clause.AssignmentColumns([]string{"account_ciphertext", "name_ciphertext", "account_masked", "name_masked", "updated_at"})}).Create(record).Error
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if len(authorization) > 0 {
+			if err := tx.Model(&User{}).Where("id = ?", userID).UpdateColumn("auth_version", gorm.Expr("auth_version")).Error; err != nil {
+				return err
+			}
+			if err := ValidateTeamAuthorizationWithTx(tx, authorization[0], userID, "team.payout.write"); err != nil {
+				return err
+			}
+		}
+		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}}, DoUpdates: clause.AssignmentColumns([]string{"account_ciphertext", "name_ciphertext", "account_masked", "name_masked", "updated_at"})}).Create(record).Error
+	})
 	if err != nil {
 		return nil, err
 	}

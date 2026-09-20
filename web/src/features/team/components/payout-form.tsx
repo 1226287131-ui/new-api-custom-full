@@ -75,6 +75,7 @@ export function PayoutForm(props: { data: TeamSelf }) {
           if (disabled) return
           const proof = await verification.requestVerification({
             scope: 'team.payout.write',
+            context: { ...body },
             title: t('Confirm payout account'),
           })
           if (!proof) return

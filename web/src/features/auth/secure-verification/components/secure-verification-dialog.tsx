@@ -33,11 +33,17 @@ import type {
   SecureVerificationState,
   VerificationInput,
   VerificationMethod,
+  EmailVerificationFlow,
 } from '../types'
 
 interface SecureVerificationDialogProps {
   state: SecureVerificationState
   passkeyDomains?: PasskeyDomains | null
+  emailFlow?: EmailVerificationFlow | null
+  emailSending?: boolean
+  emailResendSeconds?: number
+  emailExpired?: boolean
+  onSendEmail?: () => void | Promise<void>
   onVerify: () => void | Promise<void>
   onCancel: () => void
   onRetry: () => void
@@ -45,6 +51,7 @@ interface SecureVerificationDialogProps {
 }
 
 const methodLabels: Record<VerificationMethod, string> = {
+  email: 'Email verification',
   '2fa': 'Authenticator code',
   passkey: 'Passkey',
   password: 'Password',
@@ -64,7 +71,15 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
   const login = state.request.scope === 'auth.login'
   const acceptsBackupCode =
     state.request.scope !== '2fa.backup_codes.regenerate'
-  let canVerify = state.phase === 'ready' && Boolean(input)
+  let canVerify =
+    state.phase === 'ready' && Boolean(input) && !props.emailSending
+  if (input?.method === 'email') {
+    canVerify =
+      canVerify &&
+      Boolean(input.flow_token) &&
+      !props.emailExpired &&
+      /^\d{6}$/.test(input.code)
+  }
   if (input?.method === 'password') {
     canVerify = canVerify && input.password.length > 0
   }
@@ -104,6 +119,9 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
 
   const selectMethod = (method: string) => {
     switch (method) {
+      case 'email':
+        props.onInputChange({ method, code: '' })
+        break
       case '2fa':
         props.onInputChange({ method, code: '' })
         break
@@ -193,17 +211,87 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
             </div>
           ) : (
             <Tabs value={input.method} onValueChange={selectMethod}>
-              <TabsList>
+              <TabsList className='h-auto flex-wrap'>
                 {ready.requirements.methods.map((option) => (
                   <TabsTrigger
                     key={option.method}
                     value={option.method}
-                    disabled={!option.available || verifying}
+                    disabled={
+                      !option.available || verifying || props.emailSending
+                    }
                   >
                     {t(methodLabels[option.method])}
                   </TabsTrigger>
                 ))}
               </TabsList>
+              <TabsContent value='email' className='space-y-3'>
+                <p className='text-muted-foreground text-sm break-all'>
+                  {t('Verification email: {{email}}', {
+                    email: props.emailFlow?.email ?? ready.requirements.email,
+                  })}
+                </p>
+                <div className='space-y-2'>
+                  <Label htmlFor={inputId}>
+                    {t('Email verification code')}
+                  </Label>
+                  <Input
+                    id={inputId}
+                    aria-label={t('Email verification code')}
+                    maxLength={6}
+                    pattern='[0-9]*'
+                    inputMode='numeric'
+                    autoComplete='one-time-code'
+                    disabled={
+                      verifying ||
+                      props.emailSending ||
+                      !props.emailFlow ||
+                      props.emailExpired
+                    }
+                    value={input.method === 'email' ? input.code : ''}
+                    onChange={(event) =>
+                      props.onInputChange({
+                        method: 'email',
+                        code: event.target.value.replaceAll(/\D/g, ''),
+                      })
+                    }
+                  />
+                </div>
+                {props.emailExpired && (
+                  <p role='alert' className='text-destructive text-sm'>
+                    {t(
+                      'Email verification has ended. Start again to continue.'
+                    )}
+                  </p>
+                )}
+                {props.emailFlow && !props.emailExpired && (
+                  <p role='status' className='text-muted-foreground text-sm'>
+                    {t('Verification code sent! Please check your email.')}
+                  </p>
+                )}
+                <Button
+                  type='button'
+                  variant='outline'
+                  onClick={() => void props.onSendEmail?.()}
+                  disabled={
+                    verifying ||
+                    props.emailSending ||
+                    Boolean(props.emailResendSeconds)
+                  }
+                >
+                  {props.emailSending && (
+                    <Loader2 className='size-4 animate-spin' />
+                  )}
+                  {props.emailResendSeconds
+                    ? t('Resend in {{seconds}}s', {
+                        seconds: props.emailResendSeconds,
+                      })
+                    : t(
+                        props.emailFlow
+                          ? 'Resend verification code'
+                          : 'Send verification code'
+                      )}
+                </Button>
+              </TabsContent>
               <TabsContent value='password' className='space-y-2'>
                 <Label htmlFor={inputId}>{t('Password')}</Label>
                 <Input

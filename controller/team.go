@@ -121,10 +121,11 @@ func AdminChangeTeamReferral(c *gin.Context) {
 		common.ApiErrorMsg(c, "Invalid referral relationship")
 		return
 	}
-	if middleware.RequireSecurityProof(c, operation) == nil {
+	authorization := middleware.RequireSecurityProof(c, operation)
+	if authorization == nil {
 		return
 	}
-	audit, err := model.ChangeAgentReferrer(c.GetInt("id"), userID, *request.ExpectedInviterID, *request.InviterID, request.Reason)
+	audit, err := model.ChangeAgentReferrer(c.GetInt("id"), userID, *request.ExpectedInviterID, *request.InviterID, request.Reason, authorization)
 	if err != nil {
 		teamAPIError(c, err)
 		return
@@ -178,18 +179,21 @@ func getTeamCommissions(c *gin.Context, referrerID int) {
 }
 
 func SaveTeamPayoutAccount(c *gin.Context) {
-	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: securityProofScopeTeamPayoutWrite}) == nil {
-		return
-	}
-	var request struct {
-		Account string `json:"account"`
-		Name    string `json:"name"`
-	}
+	var request service.TeamPayoutWriteContext
 	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &request); err != nil {
 		common.ApiErrorMsg(c, "Invalid payout account")
 		return
 	}
-	account, err := model.SaveAgentPayoutAccount(c.GetInt("id"), request.Account, request.Name)
+	context, err := common.Marshal(request)
+	if err != nil {
+		teamAPIError(c, err)
+		return
+	}
+	authorization := middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: securityProofScopeTeamPayoutWrite, Context: context})
+	if authorization == nil {
+		return
+	}
+	account, err := model.SaveAgentPayoutAccount(c.GetInt("id"), request.Account, request.Name, authorization)
 	if err != nil {
 		teamAPIError(c, err)
 		return

@@ -30,6 +30,8 @@ const (
 	AuthFlowPurposeTwoFASetup        = "2fa_setup"
 	AuthFlowPurposeSecurityProof     = "security_proof"
 	AuthFlowPurposeEmailBinding      = "email_binding"
+	AuthFlowPurposeSecurityEmail     = "security_email"
+	AuthFlowPurposeSecurityEmailRate = "security_email_rate"
 	AuthFlowTokenBytes               = 32
 	AuthFlowDefaultCleanupRetention  = 24 * time.Hour
 )
@@ -90,10 +92,11 @@ type AuthSessionIdentity struct {
 // after a proof has been consumed. ProofID is a database ID, never the proof token.
 type AuthFlowAuthorization struct {
 	AuthSessionIdentity
-	ProofID     int64  `json:"proof_id"`
-	Scope       string `json:"scope"`
-	ContextHash string `json:"context_hash"`
-	Method      string `json:"method"`
+	ProofID       int64  `json:"proof_id"`
+	Scope         string `json:"scope"`
+	ContextHash   string `json:"context_hash"`
+	Method        string `json:"method"`
+	EmailSnapshot string `json:"email_snapshot,omitempty"`
 }
 
 // ValidateAuthSessionWithTx rechecks the authoritative identity while holding the

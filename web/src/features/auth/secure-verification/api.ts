@@ -47,7 +47,26 @@ import type {
   VerificationInput,
   VerificationOperation,
   VerificationRequirements,
+  EmailVerificationFlow,
 } from './types'
+
+export function sendVerificationEmail(
+  operation: VerificationOperation,
+  flowToken: string | undefined,
+  signal: AbortSignal
+): Promise<EmailVerificationFlow> {
+  return authResult<EmailVerificationFlow>(
+    api.post(
+      '/api/verify/email/send',
+      {
+        scope: operation.scope,
+        ...(operation.context ? { context: operation.context } : {}),
+        ...(flowToken ? { flow_token: flowToken } : {}),
+      },
+      { ...authRequestOptions, signal }
+    )
+  )
+}
 
 export async function checkVerificationMethods(
   scope: SecurityProofScope,
@@ -213,6 +232,20 @@ export async function verify(
     }
     let proof: SecurityProof
     switch (input.method) {
+      case 'email':
+        proof = await authResult<SecurityProof>(
+          api.post(
+            '/api/verify',
+            {
+              method: input.method,
+              ...operationFields,
+              flow_token: input.flow_token,
+              code: input.code.trim(),
+            },
+            { ...authRequestOptions, signal }
+          )
+        )
+        break
       case 'session':
         proof = await authResult<SecurityProof>(
           api.post(

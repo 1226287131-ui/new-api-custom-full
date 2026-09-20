@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
+import { useCountdown } from '@/hooks/use-countdown'
 import { AuthOperationError } from '@/lib/secure-verification'
 import type { AuthBundle } from '@/stores/auth-store'
 
@@ -25,6 +26,7 @@ import type { PasskeyDomains } from '../../passkey/assertion'
 import {
   checkVerificationMethods,
   getLoginVerificationRequirements,
+  sendVerificationEmail,
   verify,
   verifyLogin,
 } from '../api'
@@ -37,6 +39,7 @@ import type {
   SecurityProof,
   VerificationInput,
   VerificationRequirements,
+  EmailVerificationFlow,
 } from '../types'
 
 type VerificationAction =
@@ -62,9 +65,14 @@ function verificationReducer(
         (option) => option.available
       )
       const preferred =
-        methods.find((option) => option.method === 'passkey') ?? methods[0]
+        methods.find((option) => option.method === 'email') ??
+        methods.find((option) => option.method === 'passkey') ??
+        methods[0]
       let input: VerificationInput | null = null
       switch (preferred?.method) {
+        case 'email':
+          input = { method: 'email', code: '' }
+          break
         case '2fa':
           input = { method: '2fa', code: '' }
           break
@@ -105,6 +113,7 @@ function verificationReducer(
         input = { method: 'password', password: '' }
       }
       if (input?.method === '2fa') input = { method: '2fa', code: '' }
+      if (input?.method === 'email') input = { ...input, code: '' }
       return { ...state, phase: 'verifying', input, error: undefined }
     }
     case 'error':
@@ -120,6 +129,7 @@ interface PendingVerificationBase {
   controller: AbortController
   reject: (error: unknown) => void
   submitting: boolean
+  sendingEmail?: boolean
 }
 
 type PendingVerification = PendingVerificationBase &
@@ -141,6 +151,18 @@ type PendingVerification = PendingVerificationBase &
 export function useSecureVerification() {
   const [state, dispatch] = useReducer(verificationReducer, { phase: 'idle' })
   const pending = useRef<PendingVerification | null>(null)
+  const [emailFlow, setEmailFlow] = useState<EmailVerificationFlow | null>(null)
+  const [emailSending, setEmailSending] = useState(false)
+  const {
+    secondsLeft: emailResendSeconds,
+    start: startResend,
+    reset: resetResend,
+  } = useCountdown({ initialSeconds: 0 })
+  const {
+    isActive: emailValid,
+    start: startDeadline,
+    reset: resetDeadline,
+  } = useCountdown({ initialSeconds: 0 })
   const [passkeyDomains, setPasskeyDomains] = useState<PasskeyDomains | null>(
     null
   )
@@ -152,8 +174,12 @@ export function useSecureVerification() {
     if (current) current.initialPassword = undefined
     current?.resolve(null)
     setPasskeyDomains(null)
+    setEmailFlow(null)
+    setEmailSending(false)
+    resetResend()
+    resetDeadline()
     dispatch({ type: 'reset' })
-  }, [])
+  }, [resetResend, resetDeadline])
 
   useEffect(() => cancel, [cancel])
 
@@ -247,11 +273,15 @@ export function useSecureVerification() {
           submitting: false,
         }
         pending.current = current
+        setEmailFlow(null)
+        setEmailSending(false)
+        resetResend()
+        resetDeadline()
         setPasskeyDomains(null)
         void loadRequirements(current)
       })
     },
-    [loadRequirements]
+    [loadRequirements, resetResend, resetDeadline]
   )
 
   const requestLoginVerification = useCallback(
@@ -277,13 +307,79 @@ export function useSecureVerification() {
     [loadRequirements]
   )
 
+  const sendEmail = useCallback(async () => {
+    const current = pending.current
+    if (
+      !current ||
+      current.kind !== 'operation' ||
+      current.submitting ||
+      current.sendingEmail ||
+      state.phase !== 'ready' ||
+      state.input?.method !== 'email' ||
+      emailResendSeconds > 0
+    ) {
+      return
+    }
+    current.sendingEmail = true
+    setEmailSending(true)
+    try {
+      const flow = await sendVerificationEmail(
+        current.request,
+        emailValid ? emailFlow?.flow_token : undefined,
+        current.controller.signal
+      )
+      if (pending.current !== current) return
+      setEmailFlow(flow)
+      const now = Date.now() / 1000
+      startResend(Math.max(1, Math.ceil(flow.resend_at - now)))
+      startDeadline(Math.max(1, Math.ceil(flow.expires_at - now)))
+      dispatch({
+        type: 'input',
+        input: { method: 'email', code: '', flow_token: flow.flow_token },
+      })
+    } catch (error) {
+      if (pending.current !== current) return
+      const failure = AuthOperationError.from(error)
+      if (
+        [
+          'EMAIL_VERIFICATION_LOCKED',
+          'AUTH_FLOW_INVALID',
+          'ACCOUNT_SECURITY_STATE_CHANGED',
+        ].includes(failure.code ?? '')
+      ) {
+        resetDeadline()
+      }
+      dispatch({ type: 'error', error: failure.message })
+    } finally {
+      current.sendingEmail = false
+      if (pending.current === current) setEmailSending(false)
+    }
+  }, [
+    state,
+    emailResendSeconds,
+    emailFlow,
+    emailValid,
+    startResend,
+    startDeadline,
+    resetDeadline,
+  ])
+
   const executeVerification = useCallback(async () => {
     const current = pending.current
     if (
       !current ||
       current.submitting ||
+      current.sendingEmail ||
       state.phase !== 'ready' ||
       !state.input
+    ) {
+      return
+    }
+    if (
+      state.input.method === 'email' &&
+      (!emailValid ||
+        !state.input.flow_token ||
+        !/^\d{6}$/.test(state.input.code))
     ) {
       return
     }
@@ -316,6 +412,9 @@ export function useSecureVerification() {
         current.resolve(proof)
       }
       pending.current = null
+      setEmailFlow(null)
+      resetResend()
+      resetDeadline()
       dispatch({ type: 'reset' })
     } catch (error) {
       if (pending.current !== current) return
@@ -324,11 +423,21 @@ export function useSecureVerification() {
         cancel()
         return
       }
+      if (
+        input.method === 'email' &&
+        [
+          'EMAIL_VERIFICATION_LOCKED',
+          'AUTH_FLOW_INVALID',
+          'ACCOUNT_SECURITY_STATE_CHANGED',
+        ].includes(failure.code ?? '')
+      ) {
+        resetDeadline()
+      }
       dispatch({ type: 'error', error: failure.message })
     } finally {
       current.submitting = false
     }
-  }, [cancel, state])
+  }, [cancel, state, emailValid, resetResend, resetDeadline])
 
   const retry = useCallback(() => {
     if (pending.current && state.phase === 'error') {
@@ -336,8 +445,17 @@ export function useSecureVerification() {
     }
   }, [loadRequirements, state.phase])
   const setInput = useCallback(
-    (input: VerificationInput) => dispatch({ type: 'input', input }),
-    []
+    (input: VerificationInput) => {
+      if (pending.current?.sendingEmail) return
+      dispatch({
+        type: 'input',
+        input:
+          input.method === 'email'
+            ? { ...input, flow_token: emailFlow?.flow_token }
+            : input,
+      })
+    },
+    [emailFlow]
   )
 
   return {
@@ -348,6 +466,11 @@ export function useSecureVerification() {
     dialogProps: {
       state,
       passkeyDomains,
+      emailFlow,
+      emailSending,
+      emailResendSeconds,
+      emailExpired: Boolean(emailFlow && !emailValid),
+      onSendEmail: sendEmail,
       onCancel: cancel,
       onRetry: retry,
       onInputChange: setInput,

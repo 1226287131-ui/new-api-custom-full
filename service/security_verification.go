@@ -6,6 +6,8 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -20,6 +22,7 @@ const (
 	VerificationMethodPassword            = "password"
 	VerificationMethodOAuth               = "oauth"
 	VerificationMethodSession             = "session"
+	VerificationMethodEmail               = "email"
 	VerificationScopeChannelKeyRead       = "channel.key.read"
 	VerificationScopePasskeyRegister      = "passkey.register"
 	VerificationScopePasskeyDelete        = "passkey.delete"
@@ -78,11 +81,17 @@ type TeamReferralWriteContext struct {
 	Reason            string `json:"reason"`
 }
 
+type TeamPayoutWriteContext struct {
+	Account string `json:"account"`
+	Name    string `json:"name"`
+}
+
 // VerificationBinding contains no original operation parameters. It can safely
 // travel through a signed proof or a server-owned interactive verification flow.
 type VerificationBinding struct {
-	Scope       string `json:"scope"`
-	ContextHash string `json:"context_hash"`
+	Scope         string `json:"scope"`
+	ContextHash   string `json:"context_hash"`
+	EmailSnapshot string `json:"-"`
 }
 
 func BindVerificationOperation(operation VerificationOperation) (VerificationBinding, error) {
@@ -94,6 +103,16 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case VerificationScopeTeamPayoutWrite:
+		var context TeamPayoutWriteContext
+		if len(fields) != 2 || common.Unmarshal(operation.Context, &context) != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		context.Account, context.Name = strings.TrimSpace(context.Account), strings.TrimSpace(context.Name)
+		if !utf8.ValidString(context.Account) || !utf8.ValidString(context.Name) || utf8.RuneCountInString(context.Account) < 3 || utf8.RuneCountInString(context.Account) > 128 || utf8.RuneCountInString(context.Name) < 2 || utf8.RuneCountInString(context.Name) > 128 || strings.IndexFunc(context.Account+context.Name, unicode.IsControl) >= 0 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
 	case VerificationScopeTeamReferralWrite:
 		var supplied struct {
 			UserID            *int    `json:"user_id"`
@@ -150,7 +169,7 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenRevoke,
-		VerificationScopeTeamPayoutWrite, VerificationScopeTeamWithdrawalWrite,
+		VerificationScopeTeamWithdrawalWrite,
 		VerificationScopeTeamWithdrawalReview, VerificationScopeTeamWithdrawalRead,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete:
 		if len(fields) != 0 {
@@ -197,6 +216,7 @@ type VerificationRequirements struct {
 	Methods                   []VerificationMethodOption  `json:"methods"`
 	OAuthProviders            []VerificationOAuthProvider `json:"oauth_providers"`
 	PasswordEncryptionEnabled bool                        `json:"password_encryption_enabled"`
+	Email                     string                      `json:"email,omitempty"`
 }
 
 // securityVerificationPolicy is the only operation-to-method policy. Device
@@ -210,9 +230,11 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		methods = append(methods, VerificationMethodPasskey)
 	}
 	switch scope {
+	case VerificationScopeTeamPayoutWrite, VerificationScopeTeamReferralWrite:
+		methods = append([]string{VerificationMethodEmail}, methods...)
 	case VerificationScopeChannelKeyRead, VerificationScopePasskeyDelete, VerificationScopeLogin,
-		VerificationScopeTeamPayoutWrite, VerificationScopeTeamWithdrawalWrite,
-		VerificationScopeTeamWithdrawalReview, VerificationScopeTeamWithdrawalRead, VerificationScopeTeamReferralWrite:
+		VerificationScopeTeamWithdrawalWrite,
+		VerificationScopeTeamWithdrawalReview, VerificationScopeTeamWithdrawalRead:
 	case VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes:
 		if !state.HasTwoFA {
 			return nil, model.ErrTwoFANotEnabled
@@ -243,6 +265,11 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 	options := make([]VerificationMethodOption, 0, len(methods))
 	for _, method := range methods {
 		option := VerificationMethodOption{Method: method, Available: true}
+		if method == VerificationMethodEmail {
+			if err := securityEmailAvailability(state.Email); err != nil {
+				option.Available, option.Reason = false, err.Error()
+			}
+		}
 		if method == VerificationMethodTwoFA && state.TwoFALocked {
 			option.Available, option.Reason = false, ErrVerificationLocked.Error()
 		}
@@ -276,6 +303,9 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 		return nil, err
 	}
 	requirements := &VerificationRequirements{Scope: scope, Methods: methods, OAuthProviders: []VerificationOAuthProvider{}, PasswordEncryptionEnabled: common.PasswordLoginEncryptionEnabled}
+	if scope == VerificationScopeTeamPayoutWrite || scope == VerificationScopeTeamReferralWrite {
+		requirements.Email = common.MaskEmail(state.Email)
+	}
 	for i := range methods {
 		if methods[i].Method == VerificationMethodPassword && !common.PasswordLoginEnabled {
 			switch scope {
@@ -357,6 +387,14 @@ func RequireVerificationMethod(identity AuthIdentity, scope, method string) (*Ve
 			continue
 		}
 		if !option.Available {
+			if method == VerificationMethodEmail {
+				if option.Reason == ErrSecurityEmailRequired.Error() {
+					return nil, ErrSecurityEmailRequired
+				}
+				if option.Reason == ErrSecurityEmailUnavailable.Error() {
+					return nil, ErrSecurityEmailUnavailable
+				}
+			}
 			return nil, ErrVerificationUnavailable
 		}
 		return requirements, nil
@@ -397,10 +435,24 @@ func ConsumeOperationProof(raw string, identity AuthIdentity, operation Verifica
 	if _, err := RequireVerificationMethod(identity, binding.Scope, claims.Method); err != nil {
 		return nil, err
 	}
+	var emailSnapshot string
 	flow, err := model.ConsumeAuthFlowWithAction(claims.ID, model.AuthFlowMatch{
 		Purpose: model.AuthFlowPurposeSecurityProof, UserId: identity.UserID, SessionId: identity.SessionID,
 	}, func(tx *gorm.DB, _ *model.AuthFlow) error {
-		return model.ValidateAuthSessionWithTx(tx, identity)
+		if err := model.ValidateAuthSessionWithTx(tx, identity); err != nil {
+			return err
+		}
+		if claims.Method == VerificationMethodEmail {
+			var user model.User
+			if err := tx.Select("email").First(&user, identity.UserID).Error; err != nil {
+				return err
+			}
+			emailSnapshot = model.NormalizeEmail(user.Email)
+			if emailSnapshot == "" || claims.EmailHash == "" || !hmac.Equal([]byte(claims.EmailHash), []byte(common.GenerateHMACWithKey(authSigningKey("verification-email"), emailSnapshot))) {
+				return model.ErrAccountBindingChanged
+			}
+		}
+		return nil
 	})
 	switch {
 	case errors.Is(err, model.ErrAuthFlowConsumed):
@@ -414,7 +466,7 @@ func ConsumeOperationProof(raw string, identity AuthIdentity, operation Verifica
 	}
 	return &model.AuthFlowAuthorization{
 		AuthSessionIdentity: identity, ProofID: flow.Id, Scope: binding.Scope,
-		ContextHash: binding.ContextHash, Method: claims.Method,
+		ContextHash: binding.ContextHash, Method: claims.Method, EmailSnapshot: emailSnapshot,
 	}, nil
 }
 
@@ -446,6 +498,7 @@ type VerificationInput struct {
 	Password          string          `json:"password,omitempty"`
 	PasswordEncrypted string          `json:"password_encrypted,omitempty"`
 	EncryptionKeyID   string          `json:"encryption_key_id,omitempty"`
+	FlowToken         string          `json:"flow_token,omitempty"`
 }
 
 func VerifySecurityInput(identity AuthIdentity, input VerificationInput) (*SecurityProof, error) {
@@ -457,6 +510,15 @@ func VerifySecurityInput(identity AuthIdentity, input VerificationInput) (*Secur
 		return nil, err
 	}
 	switch input.Method {
+	case VerificationMethodEmail:
+		user, err := model.GetUserById(identity.UserID, false)
+		if err != nil {
+			return nil, err
+		}
+		binding.EmailSnapshot = model.NormalizeEmail(user.Email)
+		if err := model.CompleteSecurityEmailChallenge(identity, input.FlowToken, binding.Scope, binding.ContextHash, binding.EmailSnapshot, input.Code); err != nil {
+			return nil, err
+		}
 	case VerificationMethodPassword:
 		password := input.Password
 		if common.PasswordLoginEncryptionEnabled {

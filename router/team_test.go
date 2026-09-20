@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/controller"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -127,6 +129,25 @@ func TestTeamRoutesEnforceDashboardRoles(t *testing.T) {
 	assert.True(t, policy.Enabled)
 }
 
+func TestTeamEmailEndpointsRejectCookieOnlyRequests(t *testing.T) {
+	fixture := setupTeamRouteTest(t)
+	fixture.engine.POST("/api/verify/email/send", middleware.UserAuth(), controller.SendSecurityVerificationEmail)
+	fixture.engine.POST("/api/verify", middleware.UserAuth(), controller.UniversalVerify)
+	for _, path := range []string{"/api/verify/email/send", "/api/verify"} {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"scope":"team.payout.write","context":{"account":"owner@example.com","name":"Owner"},"method":"email","code":"123456"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://untrusted.example")
+		request.AddCookie(&http.Cookie{Name: "session", Value: fixture.tokens[42]})
+		request.AddCookie(&http.Cookie{Name: "refresh_token", Value: fixture.tokens[42]})
+		response := httptest.NewRecorder()
+		fixture.engine.ServeHTTP(response, request)
+		assert.Equal(t, http.StatusUnauthorized, response.Code, path)
+	}
+	var challengeCount int64
+	require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("purpose IN ?", []string{model.AuthFlowPurposeSecurityEmail, model.AuthFlowPurposeSecurityProof}).Count(&challengeCount).Error)
+	assert.Zero(t, challengeCount)
+}
+
 func TestTeamSelfRoutesScopeRowsAndHidePayoutSecrets(t *testing.T) {
 	fixture := setupTeamRouteTest(t)
 	response := fixture.request(http.MethodGet, "/api/team/self?user_id=43&referrer_id=43", "", 42, "")
@@ -184,7 +205,7 @@ func TestTeamSelfRoutesScopeRowsAndHidePayoutSecrets(t *testing.T) {
 
 func TestTeamWritesIgnoreForgedUserID(t *testing.T) {
 	fixture := setupTeamRouteTest(t)
-	payoutBinding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: service.VerificationScopeTeamPayoutWrite})
+	payoutBinding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: service.VerificationScopeTeamPayoutWrite, Context: []byte(`{"account":"new-owner@example.com","name":"New Owner"}`)})
 	require.NoError(t, err)
 	payoutProof, _, err := service.IssueSecurityProof(fixture.identity[42], "2fa", payoutBinding)
 	require.NoError(t, err)

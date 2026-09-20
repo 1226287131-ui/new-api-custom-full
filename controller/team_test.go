@@ -69,6 +69,9 @@ func issueTeamProof(t *testing.T, identity service.AuthIdentity, method, scope s
 	if scope == service.VerificationScopeChannelKeyRead {
 		operation.Context = []byte(`{"channel_id":123}`)
 	}
+	if scope == service.VerificationScopeTeamPayoutWrite {
+		operation.Context = []byte(`{"account":"attacker@example.com","name":"Attacker"}`)
+	}
 	binding, err := service.BindVerificationOperation(operation)
 	require.NoError(t, err)
 	proof, _, err := service.IssueSecurityProof(identity, method, binding)

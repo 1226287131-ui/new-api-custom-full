@@ -33,6 +33,30 @@ func GetVerificationMethods(c *gin.Context) {
 	common.ApiSuccess(c, requirements)
 }
 
+func SendSecurityVerificationEmail(c *gin.Context) {
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "当前认证方式不支持安全验证"})
+		return
+	}
+	var request struct {
+		service.VerificationOperation
+		FlowToken string `json:"flow_token"`
+	}
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &request); err != nil {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+	data, err := service.SendSecurityVerificationEmail(identity, request.VerificationOperation, request.FlowToken)
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		recordUserSecurityAudit(c, identity.UserID, "user.security_email_send_failed", map[string]any{"code": c.GetString("security_error_code")})
+		return
+	}
+	recordUserSecurityAudit(c, identity.UserID, "user.security_email_sent", map[string]any{"scope": request.Scope})
+	common.ApiSuccess(c, data)
+}
+
 // writeSecurityOperationError only exposes known, fixed business messages.
 // Unexpected errors retain their cause for the existing server-side auth logger.
 func writeSecurityOperationError(c *gin.Context, err error) {
@@ -40,6 +64,19 @@ func writeSecurityOperationError(c *gin.Context, err error) {
 	var code, message string
 	var protocolError *protocol.Error
 	switch {
+	case errors.Is(err, service.ErrSecurityEmailRequired):
+		code, message = "EMAIL_VERIFICATION_REQUIRED_EMAIL", err.Error()
+	case errors.Is(err, service.ErrSecurityEmailUnavailable):
+		code, message = "EMAIL_VERIFICATION_UNAVAILABLE", err.Error()
+	case errors.Is(err, service.ErrSecurityEmailDelivery):
+		code, message = "EMAIL_VERIFICATION_DELIVERY_FAILED", err.Error()
+	case errors.Is(err, model.ErrSecurityEmailCooldown):
+		status = http.StatusTooManyRequests
+		code, message = "EMAIL_VERIFICATION_COOLDOWN", err.Error()
+	case errors.Is(err, model.ErrSecurityEmailInvalid):
+		code, message = "EMAIL_VERIFICATION_INVALID", err.Error()
+	case errors.Is(err, model.ErrSecurityEmailLocked):
+		code, message = "EMAIL_VERIFICATION_LOCKED", err.Error()
 	case errors.Is(err, passkeysvc.ErrRPIDUnavailable):
 		code, message = "PASSKEY_RP_ID_UNAVAILABLE", i18n.T(c, i18n.MsgPasskeyRPIDUnavailable)
 	case errors.Is(err, system_setting.ErrPasskeyRPIDInvalid):
@@ -141,13 +178,17 @@ func UniversalVerify(c *gin.Context) {
 		return
 	}
 	var request service.VerificationInput
-	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+	// Leave room for the existing encrypted-password envelope and action context.
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 16*1024), &request); err != nil {
 		common.ApiErrorMsg(c, "参数错误")
 		return
 	}
 	proof, err := service.VerifySecurityInput(identity, request)
 	if err != nil {
 		writeSecurityOperationError(c, err)
+		if request.Method == service.VerificationMethodEmail {
+			recordUserSecurityAudit(c, identity.UserID, "user.security_email_verify_failed", map[string]any{"code": c.GetString("security_error_code")})
+		}
 		return
 	}
 	recordUserSecurityAudit(c, identity.UserID, "user.security_verify", map[string]any{"method": proof.Method, "scope": proof.Scope})

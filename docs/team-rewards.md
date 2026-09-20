@@ -45,7 +45,7 @@ their terms, including their holding period, even when the policy is disabled.
 Changing a personal reward type likewise affects newly created orders only.
 
 Administrators can search users and change or remove their direct inviter on
-`/team/manage`. The server requires an enrolled strong factor, verifies the
+`/team/manage`. The server requires email verification or an enrolled strong factor, verifies the
 administrator's current role, rejects self-invitations and cycles, and binds a
 single-use proof to the user, previous inviter, new inviter and change reason.
 Concurrent edits use an expected-inviter check and a database guard. The change
@@ -95,13 +95,53 @@ All instances sharing the database must use the same key.
 
 Normal APIs return masked Alipay account/name values only. Full details require
 an administrator's security proof; the read is audited without recording the
-plaintext account. Binding, withdrawal requests, payout disclosure, and review
-require existing 2FA or passkey verification bound to the current session.
-If neither is enrolled, open `/security`, enable two-factor authentication or
-register a passkey, and return to bind the payout account. The verification
-dialog provides this setup entry; it does not fall back to password-only
-authorization. A locked factor or unsupported passkey device retains its
-specific error rather than being treated as missing enrollment.
+plaintext account. Binding or changing Alipay details defaults to email
+verification; enrolled 2FA and passkeys remain available. Withdrawal requests,
+payout disclosure and review still require 2FA or a passkey bound to the
+current session. For those operations, open `/security` to enroll a factor if
+needed. A locked factor or unsupported passkey device retains its specific
+error rather than being treated as missing enrollment.
+
+### Email Verification for Team Changes
+
+Only `team.payout.write` and `team.referral.write` allow email verification.
+The operator must already have a bound email address and the site's existing
+SMTP settings must work. Referral changes send the code to the administrator's
+own bound email, not the member or inviter. Clients cannot choose the recipient.
+Missing email or unavailable SMTP never bypasses verification.
+
+`POST /api/verify/email/send` accepts `scope`, `context` and an optional
+`flow_token` for resending. It returns the masked email, flow token, expiry and
+resend time. `POST /api/verify` accepts `method: "email"`, the same scope/context,
+flow token and six-digit code. Payout context contains `account` and `name`;
+referral context contains `user_id`, `expected_inviter_id`, `inviter_id` and
+`reason`. The resulting security proof is single-use and bound to that action.
+
+- Codes use the existing cryptographically random generator, are stored as
+  salted password hashes, and expire within an account-wide 10-minute window.
+- Resending is limited to once per 60 seconds. Five incorrect submissions lock
+  email verification until the window expires. Resending, changing sessions or
+  starting a new flow does not reset the error budget or extend the window.
+- A replacement code activates only after SMTP accepts the email. Delivery
+  failure preserves the previous valid code; SMTP acceptance cannot guarantee
+  inbox delivery.
+- Verification binds the user, session, email snapshot, scope and exact action
+  details. The final business transaction rechecks the session and email;
+  referral writes also recheck the administrator's role.
+- These APIs require explicit dashboard `Authorization` and a live session.
+  Cookies alone and personal access tokens cannot authorize them. Audit events
+  exclude codes, usable tokens and plaintext payout details.
+
+This extension reuses `AuthFlow` and adds no tables or schema migrations. The
+UI reuses the existing verification dialog and countdown hook, with all seven
+locales updated. Matching frontend/backend versions are required because payout
+proofs now include the specific account and name.
+
+Email confirmation is a convenience/security tradeoff requested for these two
+actions, not strong MFA. Compromise of both the login session and mailbox can
+authorize them. Login, email binding, MFA settings and withdrawal authorization
+are not relaxed. Protect the mailbox and retain stronger verification for
+financial review and payout operations.
 
 The withdrawal workflow is:
 
@@ -153,8 +193,9 @@ rewards and cash payouts must be reviewed under the applicable rules.
 ## Main-Branch Compatibility and Verification
 
 The integration uses the current main-branch single-use security proof API.
-Team operations retain their separate scopes, require 2FA or passkeys, and do
-not automatically replay requests after consuming a proof. Quota credits use
+Team operations retain their separate scopes and do not automatically replay
+requests after consuming a proof. Payout binding and referral changes allow
+email verification; other sensitive team operations require 2FA or passkeys. Quota credits use
 the existing wallet-wide limit rather than the smaller per-request billing
 limit. Existing task, video, pricing, gateway and other payment-provider paths
 remain on the main-branch implementation.
@@ -176,10 +217,18 @@ before enabling rewards.
 
 The sensitive-action design follows the OWASP Authentication, Session
 Management and Transaction Authorization Cheat Sheets: server-side role
-enforcement, strong-factor reauthentication, session/action-bound proofs,
+enforcement, scoped secondary verification, session/action-bound proofs,
 single use, and secret-free audit records. Focused tests exercise changed-action
 proof rejection, replay rejection, stale edits and unchanged historical orders.
 These checks are not a certification of full ASVS compliance.
+
+The email extension was checked against OWASP ASVS 5.0.0 controls for single
+use and hashed random codes (6.5.1-6.5.5), request binding and throttling
+(6.6.2-6.6.3), server-side session verification and revocation (7.2.1, 7.4.1),
+and server-side authorization (8.3.1). Email does not meet the strong out-of-band
+authentication guidance in V6.6 or L3 requirement 6.3.6. This documented
+exception is limited to the two actions above and must not be presented as
+ASVS L2/L3 certification.
 
 The 2026-09-20 preference/referral extension was verified with real SQLite
 3.50.4, MySQL 8.4.6 and PostgreSQL 17.6. Each engine passed fresh-install and
@@ -198,3 +247,25 @@ They skip when the corresponding DSN is absent and refuse nonempty databases.
 The minimum supported MySQL/PostgreSQL releases were not separately exercised;
 no version-specific SQL was introduced. This matrix does not replace live
 payment acceptance or multi-instance financial settlement stress testing.
+
+The email extension also passed real SQLite 3.50.4, MySQL 8.4.6 and PostgreSQL
+17.6 tests on 2026-09-20, including successful payout/referral writes, changed
+email and role rejection, expiry, replay, shared attempt budgets, concurrent
+sends/consumption, and preservation of the old code on SMTP failure:
+
+```sh
+go test ./service -run '^TestTeamEmailVerificationDatabaseMatrix$' -count=1 -v
+go test ./service ./model ./controller ./router ./middleware -run 'Test(Team|AuthFlow|ConsumeAuthFlow|ExternalAuthAssertion|SecurityProof|SecurityLogin|SessionCookieOrigin|AccessToken|DashboardAccessToken)' -count=1
+```
+
+The email matrix uses `TEST_SECURITY_EMAIL_MYSQL_DSN` and
+`TEST_SECURITY_EMAIL_POSTGRES_DSN`; use isolated local scratch databases only.
+External cases skip without these variables. The acceptance run set both and
+all three engines passed. The existing fresh/upgrade team matrix also passed.
+No production database or SMTP service was used.
+
+Frontend typechecking, focused lint, 74 frontend tests, production build and
+root `go build ./...` passed. Playwright exercised both actions with a local
+mock API at 1440px desktop and 375px mobile (light/dark), with no page errors or
+horizontal overflow. Production email delivery remains a deployment acceptance
+step; mock UI tests do not verify SMTP or financial payment processing.

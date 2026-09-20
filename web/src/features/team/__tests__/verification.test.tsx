@@ -160,6 +160,9 @@ it.each(operations)(
           scope: operation.scope,
           method: '2fa',
           code: '123456',
+          ...(operation.kind === 'payout'
+            ? { context: { account: 'pay@example.test', name: 'Li Ming' } }
+            : {}),
         })
         return {
           data: {

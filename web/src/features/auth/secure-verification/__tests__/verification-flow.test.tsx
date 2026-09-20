@@ -113,6 +113,301 @@ async function renderTeamVerification(
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
+
+it('reuses an email challenge when resending and prevents verification after it expires', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+  const operation = {
+    scope: 'team.payout.write' as const,
+    context: { account: 'pay@example.test', name: 'Li Ming' },
+  }
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...passwordRequirements,
+        scope: operation.scope,
+        email: 'o***@example.test',
+        methods: [{ method: 'email', available: true }],
+      },
+    },
+  })
+  const expiresAt = Date.now() / 1000 + 600
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => ({
+    data: {
+      success: true,
+      data: {
+        flow_token: 'same-flow',
+        expires_at: expiresAt,
+        resend_at: Date.now() / 1000 + 60,
+        email: 'o***@example.test',
+      },
+    },
+  }))
+  const result = vi.fn()
+  const user = userEvent.setup()
+  render(<Harness operation={operation} onResult={result} />)
+  await user.click(screen.getByText('Protected action'))
+  await user.click(
+    await screen.findByRole('button', { name: 'Send verification code' })
+  )
+  await waitFor(() =>
+    expect(screen.getByLabelText('Email verification code')).toBeEnabled()
+  )
+  expect(screen.getByRole('button', { name: 'Resend in 60s' })).toBeDisabled()
+  await act(async () => vi.advanceTimersByTime(60000))
+  await user.click(
+    screen.getByRole('button', { name: 'Resend verification code' })
+  )
+  await waitFor(() =>
+    expect(post).toHaveBeenLastCalledWith(
+      '/api/verify/email/send',
+      { ...operation, flow_token: 'same-flow' },
+      expect.anything()
+    )
+  )
+  await waitFor(() =>
+    expect(screen.getByLabelText('Email verification code')).toBeEnabled()
+  )
+  await user.type(screen.getByLabelText('Email verification code'), '123456')
+  expect(screen.getByRole('button', { name: 'Verify' })).toBeEnabled()
+  await act(async () => vi.advanceTimersByTime(540000))
+  expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Email verification has ended. Start again to continue.'
+  )
+  expect(result).not.toHaveBeenCalled()
+  expect(post).toHaveBeenCalledTimes(2)
+})
+
+it('verifies a payout with an email code bound to its submitted account without requiring an authenticator', async () => {
+  const operation = {
+    scope: 'team.payout.write' as const,
+    context: { account: 'pay@example.test', name: 'Li Ming' },
+  }
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...passwordRequirements,
+        scope: operation.scope,
+        email: 'o***@example.test',
+        methods: [
+          { method: 'email', available: true },
+          { method: '2fa', available: true },
+        ],
+      },
+    },
+  })
+  const expiresAt = Math.floor(Date.now() / 1000) + 600
+  const proof = {
+    proof_token: 'email-proof',
+    expires_at: expiresAt,
+    method: 'email',
+    scope: operation.scope,
+  }
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/verify/email/send'
+          ? {
+              flow_token: 'email-flow',
+              expires_at: expiresAt,
+              resend_at: Math.floor(Date.now() / 1000) + 60,
+              email: 'o***@example.test',
+            }
+          : proof,
+    },
+  }))
+  const result = vi.fn()
+  const user = userEvent.setup()
+  render(<Harness onResult={result} operation={operation} />)
+  await user.click(screen.getByText('Protected action'))
+  expect(
+    await screen.findByRole('tab', { name: 'Email verification' })
+  ).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
+  await user.click(
+    screen.getByRole('button', { name: 'Send verification code' })
+  )
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/verify/email/send',
+      operation,
+      expect.anything()
+    )
+  )
+  await user.type(screen.getByLabelText('Email verification code'), '123456')
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+  await waitFor(() => expect(result).toHaveBeenCalledExactlyOnceWith(proof))
+  expect(post).toHaveBeenLastCalledWith(
+    '/api/verify',
+    { ...operation, method: 'email', flow_token: 'email-flow', code: '123456' },
+    expect.anything()
+  )
+})
+
+it('ignores an email challenge delivered after its verification dialog was cancelled', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...passwordRequirements,
+        scope: 'team.payout.write',
+        email: 'o***@example.test',
+        methods: [{ method: 'email', available: true }],
+      },
+    },
+  })
+  const pending = pendingResponse<unknown>()
+  const post = vi
+    .spyOn(api, 'post')
+    .mockImplementation(() => pending.promise as ReturnType<typeof api.post>)
+  const result = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <Harness
+      onResult={result}
+      operation={{
+        scope: 'team.payout.write',
+        context: { account: 'pay@example.test', name: 'Li Ming' },
+      }}
+    />
+  )
+  await user.click(screen.getByText('Protected action'))
+  await user.click(
+    await screen.findByRole('button', { name: 'Send verification code' })
+  )
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await act(async () =>
+    pending.resolve({
+      data: {
+        success: true,
+        data: {
+          flow_token: 'stale-flow',
+          expires_at: 9999999999,
+          resend_at: 9999999999,
+          email: 'o***@example.test',
+        },
+      },
+    })
+  )
+  expect(result).toHaveBeenCalledExactlyOnceWith(null)
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(post).toHaveBeenCalledTimes(1)
+})
+
+it('keeps an incorrect email code retryable without performing the protected action', async () => {
+  const operation = {
+    scope: 'team.referral.write' as const,
+    context: {
+      user_id: 8,
+      expected_inviter_id: 2,
+      inviter_id: 3,
+      reason: 'Correction',
+    },
+  }
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...passwordRequirements,
+        scope: operation.scope,
+        email: 'a***@example.test',
+        methods: [{ method: 'email', available: true }],
+      },
+    },
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/verify/email/send') {
+      return {
+        data: {
+          success: true,
+          data: {
+            flow_token: 'referral-flow',
+            expires_at: Date.now() / 1000 + 600,
+            resend_at: Date.now() / 1000 + 60,
+            email: 'a***@example.test',
+          },
+        },
+      }
+    }
+    return { data: { success: false, code: 'EMAIL_VERIFICATION_INVALID' } }
+  })
+  const result = vi.fn()
+  const user = userEvent.setup()
+  render(<Harness onResult={result} operation={operation} />)
+  await user.click(screen.getByText('Protected action'))
+  await user.click(
+    await screen.findByRole('button', { name: 'Send verification code' })
+  )
+  const input = screen.getByLabelText('Email verification code')
+  await waitFor(() => expect(input).toBeEnabled())
+  await user.type(input, '123456')
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Email verification code is incorrect.'
+  )
+  expect(result).not.toHaveBeenCalled()
+  expect(input).toBeEnabled()
+  expect(input).toHaveValue('')
+  expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
+  await user.type(input, '654321')
+  expect(screen.getByRole('button', { name: 'Verify' })).toBeEnabled()
+  expect(post).toHaveBeenLastCalledWith(
+    '/api/verify',
+    {
+      ...operation,
+      method: 'email',
+      code: '123456',
+      flow_token: 'referral-flow',
+    },
+    expect.anything()
+  )
+})
+
+it('does not enable verification when email delivery fails and permits retrying delivery', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...passwordRequirements,
+        scope: 'team.payout.write',
+        email: 'a***@example.test',
+        methods: [{ method: 'email', available: true }],
+      },
+    },
+  })
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: false, code: 'EMAIL_VERIFICATION_DELIVERY_FAILED' },
+  })
+  const result = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <Harness
+      onResult={result}
+      operation={{
+        scope: 'team.payout.write',
+        context: { account: 'pay@example.test', name: 'Li Ming' },
+      }}
+    />
+  )
+  await user.click(screen.getByText('Protected action'))
+  await user.click(
+    await screen.findByRole('button', { name: 'Send verification code' })
+  )
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Verification email could not be sent. Please try again later.'
+  )
+  expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Send verification code' })
+  ).toBeEnabled()
+  expect(screen.getByLabelText('Email verification code')).toBeDisabled()
+  expect(post).toHaveBeenCalledTimes(1)
+  expect(result).not.toHaveBeenCalled()
 })
 
 function LoginHarness(props: {
@@ -477,7 +772,10 @@ it('takes an unenrolled team payout user to personal security settings without c
   const result = vi.fn()
   const user = userEvent.setup()
   const router = await renderTeamVerification(
-    { scope: 'team.payout.write' },
+    {
+      scope: 'team.payout.write',
+      context: { account: 'pay@example.test', name: 'Li Ming' },
+    },
     result
   )
   await user.click(screen.getByText('Protected action'))
@@ -503,6 +801,16 @@ it('takes an unenrolled team payout user to personal security settings without c
 })
 
 it.each([
+  {
+    method: 'email',
+    reason:
+      'Bind an email address in account settings before using email verification.',
+  },
+  {
+    method: 'email',
+    reason:
+      'Email verification is unavailable. Contact the administrator to configure SMTP.',
+  },
   { method: '2fa', reason: 'Two-factor authentication is temporarily locked.' },
   { method: 'passkey', reason: 'Passkey authentication is disabled.' },
   {
