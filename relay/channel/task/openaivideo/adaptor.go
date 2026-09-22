@@ -75,10 +75,10 @@ type videoProfile struct {
 }
 
 var defaultVideoProfile = videoProfile{
-	name:               "default",
-	defaultDuration:    5,
-	minDuration:        5,
-	maxDuration:        30,
+	name:            "default",
+	defaultDuration: 5,
+	minDuration:     5,
+	maxDuration:     30,
 	// Accept any integer duration within the profile's 5-30 second range.
 	// The upstream API does not require the legacy 5/10/15-second grid.
 	allowedDurations:   nil,
@@ -183,7 +183,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
-	profile := videoProfileForRequest(info, modelName, mappedModelName)
+	profile := videoProfileForModels(modelName, mappedModelName)
 
 	duration, err := normalizeDuration(payload, profile)
 	if err != nil {
@@ -683,9 +683,10 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	video.Size = task.Properties.VideoSize
 	if task.Status == model.TaskStatusSuccess {
 		video.CompletedAt = task.UpdatedAt
-		resultURL := taskcommon.BuildPublicVideoURL(task.TaskID)
-		video.ResultURL = resultURL
-		video.SetMetadata("url", resultURL)
+		if resultURL := service.CachedVideoPublicURL(task); resultURL != "" {
+			video.ResultURL = resultURL
+			video.SetMetadata("url", resultURL)
+		}
 	}
 	if task.Status == model.TaskStatusFailure {
 		video.Error = &dto.OpenAIVideoError{
@@ -789,45 +790,13 @@ func normalizeOpenAIVideoAliases(payload map[string]any) error {
 	return nil
 }
 
-func videoProfileForRequest(info *relaycommon.RelayInfo, modelNames ...string) videoProfile {
-	if info != nil && info.ChannelMeta != nil {
-		for _, modelName := range modelNames {
-			if isQYSeedance25ModelName(modelName) {
-				return qySeedance25VideoProfile
-			}
-		}
-		switch normalizeOpenAIVideoProfile(info.ChannelSetting.OpenAIVideoProfile) {
-		case "qy-seedance-2.5":
-			return qySeedance25VideoProfile
-		case "seedance-2.5":
-			return seedance25VideoProfile
-		case "default":
-			return defaultVideoProfile
-		}
-	}
-	return videoProfileForModels(modelNames...)
-}
-
-func normalizeOpenAIVideoProfile(profile string) string {
-	normalized := strings.ToLower(strings.TrimSpace(profile))
-	normalized = strings.NewReplacer("_", "-", " ", "").Replace(normalized)
-	switch normalized {
-	case "qy-seedance-2.5":
-		return "qy-seedance-2.5"
-	case "seedance-2.5", "seedance2.5", "sd-2.5", "sd2.5", "video-v3":
-		return "seedance-2.5"
-	case "default", "seedance-2.0", "seedance2.0", "sd-2.0", "sd2.0":
-		return "default"
-	default:
-		return ""
-	}
-}
-
 func videoProfileForModels(modelNames ...string) videoProfile {
 	for _, modelName := range modelNames {
 		if isQYSeedance25ModelName(modelName) {
 			return qySeedance25VideoProfile
 		}
+	}
+	for _, modelName := range modelNames {
 		if isSeedance25ModelName(modelName) {
 			return seedance25VideoProfile
 		}

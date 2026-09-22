@@ -455,37 +455,72 @@ func TestVideoV3AcceptsNativeContentAndInputReferenceArray(t *testing.T) {
 	assert.NotContains(t, upstreamPayload, "input_reference")
 }
 
-func TestSeedance25ChannelProfileAcceptsCustomDownstreamModelName(t *testing.T) {
-	requestBody, err := common.Marshal(map[string]any{
-		"model":      "my-customer-video-model",
-		"prompt":     "animate the reference subject",
-		"duration":   30,
-		"ratio":      "9:16",
-		"resolution": "1080p",
-		"images":     []string{"https://images.example/reference.png"},
-	})
-	require.NoError(t, err)
+func TestLegacyChannelProfileCannotOverrideModelCompatibility(t *testing.T) {
+	tests := []struct {
+		name           string
+		legacyProfile  string
+		model          string
+		upstreamModel  string
+		duration       int
+		resolution     string
+		wantProfile    string
+		wantResolution string
+		wantError      string
+	}{
+		{name: "custom alias retains default contract", legacyProfile: "seedance-2.5", model: "my-customer-video-model", upstreamModel: "provider-sd25-deployment", duration: 30, resolution: "1080p", wantProfile: "default", wantResolution: "1080p"},
+		{name: "legacy setting cannot lower default minimum", legacyProfile: "seedance-2.5", model: "my-customer-video-model", upstreamModel: "provider-sd25-deployment", duration: 4, resolution: "1080p", wantError: "invalid_duration"},
+		{name: "mapped seedance model keeps native compatibility", legacyProfile: "default", model: "my-customer-video-model", upstreamModel: "video-v3", duration: 4, resolution: "1080p", wantProfile: "seedance-2.5", wantResolution: "720p"},
+		{name: "mapped QY model retains precedence", legacyProfile: "seedance-2.5", model: "video-v3", upstreamModel: "qy-seedance-2.5", duration: 29, resolution: "720p", wantProfile: "qy-seedance-2.5", wantResolution: "720p"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requestBody, err := common.Marshal(map[string]any{
+				"model":      tt.model,
+				"prompt":     "animate the reference subject",
+				"duration":   tt.duration,
+				"ratio":      "9:16",
+				"resolution": tt.resolution,
+				"images":     []string{"https://images.example/reference.png"},
+			})
+			require.NoError(t, err)
+			c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
+			legacySetting, err := common.Marshal(map[string]any{
+				"openai_video_profile":  tt.legacyProfile,
+				"openai_video_endpoint": "/v1/video/generations",
+			})
+			require.NoError(t, err)
+			require.NoError(t, common.Unmarshal(legacySetting, &info.ChannelSetting))
+			info.UpstreamModelName = tt.upstreamModel
+			mapping, err := common.Marshal(map[string]string{tt.model: tt.upstreamModel})
+			require.NoError(t, err)
+			c.Set("model_mapping", string(mapping))
+			adaptor.Init(info)
 
-	c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
-	info.ChannelSetting.OpenAIVideoProfile = "seedance-2.5"
-	info.UpstreamModelName = "provider-sd25-deployment"
-	c.Set("model_mapping", `{"my-customer-video-model":"provider-sd25-deployment"}`)
-
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	body, err := adaptor.BuildRequestBody(c, info)
-	require.NoError(t, err)
-	encoded, err := io.ReadAll(body)
-	require.NoError(t, err)
-
-	var upstreamPayload map[string]any
-	require.NoError(t, common.Unmarshal(encoded, &upstreamPayload))
-	assert.Equal(t, "provider-sd25-deployment", upstreamPayload["model"])
-	assert.Equal(t, float64(30), upstreamPayload["duration"])
-	assert.Equal(t, "9:16", upstreamPayload["ratio"])
-	assert.Equal(t, "720p", upstreamPayload["resolution"])
-	request, err := relaycommon.GetTaskRequest(c)
-	require.NoError(t, err)
-	assert.Equal(t, "seedance-2.5", request.Metadata["video_profile"])
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			if tt.wantError != "" {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, tt.wantError, taskErr.Code)
+				return
+			}
+			require.Nil(t, taskErr)
+			upstreamURL, err := adaptor.BuildRequestURL(info)
+			require.NoError(t, err)
+			assert.Equal(t, "https://upstream.example/v1/video/generations", upstreamURL)
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			encoded, err := io.ReadAll(body)
+			require.NoError(t, err)
+			var upstreamPayload map[string]any
+			require.NoError(t, common.Unmarshal(encoded, &upstreamPayload))
+			assert.Equal(t, tt.upstreamModel, upstreamPayload["model"])
+			assert.Equal(t, float64(tt.duration), upstreamPayload["duration"])
+			assert.Equal(t, "9:16", upstreamPayload["aspect_ratio"])
+			assert.Equal(t, tt.wantResolution, upstreamPayload["resolution"])
+			request, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantProfile, request.Metadata["video_profile"])
+		})
+	}
 }
 
 func TestVideoV3RejectsOutOfRangeDurationAndReferenceCounts(t *testing.T) {
@@ -827,6 +862,9 @@ func TestDoResponseUsesPublicTaskIDForNestedUpstreamTask(t *testing.T) {
 }
 
 func TestConvertToOpenAIVideoReturnsPublicCacheURL(t *testing.T) {
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	_, err := service.CacheVideoDataURL(t.Context(), "task_public", "data:video/mp4;base64,dmlkZW8=")
+	require.NoError(t, err)
 	previousServerAddress := system_setting.ServerAddress
 	system_setting.ServerAddress = "https://api.example"
 	t.Cleanup(func() { system_setting.ServerAddress = previousServerAddress })

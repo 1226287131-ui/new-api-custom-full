@@ -252,11 +252,16 @@ func TestUpdateVideoSingleTaskKeepsCompletedStatusWhenCacheFails(t *testing.T) {
 	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
 	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), saved.Status)
 	assert.Equal(t, "100%", saved.Progress)
-	assert.Equal(t, taskcommon.BuildPublicVideoURL(task.TaskID), saved.PrivateData.ResultURL)
-	assert.NotZero(t, saved.PrivateData.VideoCacheAttempts)
+	assert.Empty(t, saved.PrivateData.ResultURL)
+	assert.Equal(t, 1, saved.PrivateData.VideoCacheAttempts)
 	assert.Zero(t, saved.PrivateData.VideoCachedAt)
 	assert.Equal(t, "ftp://provider.example/video.mp4", saved.PrivateData.UpstreamResultURL)
 	assert.NotContains(t, string(saved.Data), "provider.example")
+	require.NoError(t, cacheSuccessfulVideoTask(task.TaskID))
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), saved.Status)
+	assert.Empty(t, saved.PrivateData.ResultURL)
+	assert.Equal(t, 1, saved.PrivateData.VideoCacheAttempts)
 }
 
 func TestUpdateVideoSingleTaskPublishesOnlyCachedVideo(t *testing.T) {
@@ -335,6 +340,11 @@ func TestUpdateVideoSingleTaskCachesCompletedRemoteVideoOnTrustedPort(t *testing
 	var saved model.Task
 	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
 	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), saved.Status)
+	assert.Empty(t, saved.PrivateData.ResultURL)
+	assert.Equal(t, server.URL+"/video.mp4", saved.PrivateData.UpstreamResultURL)
+	assert.NoFileExists(t, filepath.Join(cacheDir, task.TaskID+".mp4"))
+	require.NoError(t, cacheSuccessfulVideoTask(task.TaskID))
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)
 	assert.Equal(t, taskcommon.BuildPublicVideoURL(task.TaskID), saved.PrivateData.ResultURL)
 	assert.NotContains(t, string(saved.Data), server.URL)
 	assert.FileExists(t, filepath.Join(cacheDir, task.TaskID+".mp4"))
@@ -368,6 +378,7 @@ func TestUpdateVideoSingleTaskCacheFailureCannotRefundCompletedUpstreamTask(t *t
 	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, channel, task.GetUpstreamTaskID(), map[string]*model.Task{
 		task.GetUpstreamTaskID(): task,
 	}))
+	require.NoError(t, cacheSuccessfulVideoTask(task.TaskID))
 
 	var saved model.Task
 	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&saved).Error)

@@ -621,17 +621,23 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		if videoSourceURL == "" {
 			videoSourceURL = ExtractVideoDataURL(responseBody)
 		}
-		if _, cacheErr := CacheVideoTaskResult(ctx, task, ch, videoSourceURL); cacheErr != nil {
-			// The provider result is authoritative. A local cache failure is
-			// recoverable and must not downgrade a completed task or trigger a refund.
-			logger.LogError(ctx, fmt.Sprintf("Failed to cache video task %s locally: %s", task.TaskID, cacheErr.Error()))
-			MarkVideoCacheFailure(task, cacheErr)
-			taskResult.TerminalError = false
-			task.PrivateData.ResultURL = ""
-		} else {
-			MarkVideoTaskCached(task)
+		// Inline results are already downloaded. Store them before sanitizing
+		// the response, without persisting large base64 payloads in the database.
+		if strings.HasPrefix(strings.ToLower(videoSourceURL), "data:") {
+			if _, cacheErr := CacheVideoDataURL(ctx, task.TaskID, videoSourceURL); cacheErr != nil {
+				MarkVideoCacheFailure(task, cacheErr)
+				logger.LogError(ctx, fmt.Sprintf("Failed to store inline video task %s: %s", task.TaskID, truncateVideoCacheError(cacheErr)))
+			} else {
+				MarkVideoTaskCached(task)
+			}
+		} else if err := PrepareVideoTaskCacheSource(task, ch, videoSourceURL); err != nil {
+			MarkVideoCacheFailure(task, err)
+		}
+		if _, cached := CachedVideoPath(task.TaskID); cached && !VideoCacheExpired(task) {
 			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
 		}
+		taskResult.TerminalError = false
+		task.PrivateData.ResultURL = localVideoURL
 	}
 
 	if legacyTask && constant.IsVideoTaskChannelType(ch.Type) {
@@ -669,8 +675,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			task.FinishTime = now
 		}
 		if legacyTask && constant.IsVideoTaskChannelType(ch.Type) {
-			// Every asynchronous video exposes the same shareable local .mp4 URL.
-			task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+			// Publish a shareable local URL only after its complete file exists.
+			task.PrivateData.ResultURL = localVideoURL
 		} else if taskResult.Url != "" {
 			task.PrivateData.ResultURL = taskResult.Url
 		} else {
@@ -718,6 +724,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 			RefundTaskQuota(ctx, task, task.FailReason)
 		}
+	}
+	if legacyTask && constant.IsVideoTaskChannelType(ch.Type) && task.Status == model.TaskStatusSuccess {
+		// The worker reloads the persisted SUCCESS row and never settles billing.
+		QueueVideoTaskCache(task.TaskID)
 	}
 
 	return nil

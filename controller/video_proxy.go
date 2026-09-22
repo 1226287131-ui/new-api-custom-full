@@ -728,24 +728,13 @@ func videoProxy(c *gin.Context, public bool) {
 		return
 	}
 
-	// Cache misses may trigger a server-side download, but the browser is
-	// never redirected to a provider URL.
-	if _, cacheErr := service.CacheVideoTask(c.Request.Context(), task, channel); cacheErr == nil {
-		service.MarkVideoTaskCached(task)
-		task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-		if updateErr := task.Update(); updateErr != nil {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to persist video cache metadata for task %s: %s", taskID, updateErr.Error()))
-		}
-		if cachedPath, ok := service.CachedVideoPath(task.TaskID); ok {
-			if err := serveCachedVideo(c, cachedPath); err != nil {
-				logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to serve cached video for task %s: %s", taskID, err.Error()))
-				videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to read cached video")
-			}
-			return
-		}
-	} else {
-		service.MarkVideoCacheFailure(task, cacheErr)
-		_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
+	// Downloading belongs to the bounded background worker. A viewer closing
+	// this request must not cancel the download or postpone its retry time.
+	if _, sourceErr := service.VideoCacheSourceForTask(task, channel); sourceErr == nil {
+		service.QueueVideoTaskCache(task.TaskID)
+		c.Header("Retry-After", "30")
+		videoProxyError(c, http.StatusServiceUnavailable, "server_error", "Video cache is being prepared")
+		return
 	}
 
 	// Legacy Gemini/Vertex rows may not have retained a private source URL.

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -183,6 +185,9 @@ func TestTaskLogDTODoesNotInventHistoricalPluginProvenance(t *testing.T) {
 }
 
 func TestTaskLogDTOReplacesLegacyVideoURLWithLocalCacheAndAvailabilityFlag(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("VIDEO_CACHE_DIR", cacheDir)
+	require.NoError(t, os.WriteFile(filepath.Join(cacheDir, "task_legacy_video.mp4"), []byte("video"), 0600))
 	task := &model.Task{
 		TaskID:     "task_legacy_video",
 		Platform:   "jimeng",

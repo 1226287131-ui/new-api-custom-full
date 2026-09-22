@@ -274,7 +274,6 @@ export const channelFormSchema = z
     responses_websocket_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
-    openai_video_profile: z.enum(['auto', 'seedance-2.5']).optional(),
     openai_video_endpoint: z
       .enum(['/v1/videos', '/v1/video/generations', '/v1/videos/generations'])
       .optional(),
@@ -471,7 +470,6 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   responses_websocket_enabled: false,
   system_prompt: '',
   system_prompt_override: false,
-  openai_video_profile: 'auto',
   openai_video_endpoint: '/v1/videos',
   minimax_video_prompt_enhance: false,
   // Type-specific settings
@@ -519,7 +517,6 @@ export function transformChannelToFormDefaults(
     responses_websocket_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
-    openai_video_profile: 'auto' as 'auto' | 'seedance-2.5',
     openai_video_endpoint: '/v1/videos' as
       | '/v1/videos'
       | '/v1/video/generations'
@@ -549,10 +546,6 @@ export function transformChannelToFormDefaults(
           parsed.responses_websocket_enabled === true,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
-        openai_video_profile:
-          parsed.openai_video_profile === 'seedance-2.5'
-            ? 'seedance-2.5'
-            : 'auto',
         openai_video_endpoint:
           parsed.openai_video_endpoint === '/v1/video/generations' ||
           parsed.openai_video_endpoint === '/v1/videos/generations'
@@ -708,13 +701,6 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
     settingObj.http_protocol = HTTP_PROTOCOL_HTTP1
   } else if (shards > 1) {
     settingObj.http2_connection_shards = shards
-  }
-
-  if (
-    formData.type === CHANNEL_TYPE_OPENAI_VIDEO &&
-    formData.openai_video_profile === 'seedance-2.5'
-  ) {
-    settingObj.openai_video_profile = 'seedance-2.5'
   }
 
   if (

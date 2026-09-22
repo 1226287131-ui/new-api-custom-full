@@ -62,7 +62,6 @@ const CONFIGURATION_BLOCKS = {
       'ollama_openai_chat',
       'system_prompt',
       'system_prompt_override',
-      'openai_video_profile',
       'openai_video_endpoint',
       'minimax_video_prompt_enhance',
     ],
@@ -161,7 +160,6 @@ export function getChannelConfigurationState(
       (values.type === CHANNEL_TYPE_OLLAMA && values.ollama_openai_chat) ||
       values.system_prompt?.trim() ||
       values.minimax_video_prompt_enhance ||
-      values.openai_video_profile === 'seedance-2.5' ||
       (values.openai_video_endpoint &&
         values.openai_video_endpoint !== '/v1/videos') ||
       values.system_prompt_override

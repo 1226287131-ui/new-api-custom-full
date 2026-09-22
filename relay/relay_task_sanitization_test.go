@@ -2,6 +2,8 @@ package relay
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -14,6 +16,9 @@ import (
 )
 
 func TestTaskModel2DtoSanitizesNewAPIVideoProviderData(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("VIDEO_CACHE_DIR", cacheDir)
+	require.NoError(t, os.WriteFile(filepath.Join(cacheDir, "task_public.mp4"), []byte("video"), 0600))
 	previousServerAddress := system_setting.ServerAddress
 	system_setting.ServerAddress = "https://api.example"
 	t.Cleanup(func() {
@@ -42,6 +47,9 @@ func TestTaskModel2DtoSanitizesNewAPIVideoProviderData(t *testing.T) {
 }
 
 func TestTaskModel2DtoSanitizesOpenAIVideoProviderData(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("VIDEO_CACHE_DIR", cacheDir)
+	require.NoError(t, os.WriteFile(filepath.Join(cacheDir, "task_public.mp4"), []byte("video"), 0600))
 	previousServerAddress := system_setting.ServerAddress
 	system_setting.ServerAddress = "https://api.example"
 	t.Cleanup(func() {
@@ -68,6 +76,10 @@ func TestTaskModel2DtoSanitizesOpenAIVideoProviderData(t *testing.T) {
 	assert.NotContains(t, string(dto.Data), "upstream.example")
 	assert.NotContains(t, string(dto.Data), "provider_task_123")
 	assert.Contains(t, string(dto.Data), "task_public")
+	require.NoError(t, os.Remove(filepath.Join(cacheDir, "task_public.mp4")))
+	missing := TaskModel2Dto(task)
+	assert.Empty(t, missing.ResultURL)
+	assert.NotContains(t, string(missing.Data), "/video-cache/")
 }
 
 func TestTaskModel2DtoHidesExpiredVideoResultURL(t *testing.T) {

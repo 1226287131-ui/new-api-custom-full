@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -240,6 +241,9 @@ func TestMultipartInputReferenceBecomesTemporaryPublicImageURL(t *testing.T) {
 }
 
 func TestConvertToOpenAIVideoReturnsPublicResultURL(t *testing.T) {
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	_, err := service.CacheVideoDataURL(t.Context(), "task_public", "data:video/mp4;base64,dmlkZW8=")
+	require.NoError(t, err)
 	previousServerAddress := system_setting.ServerAddress
 	system_setting.ServerAddress = "https://api.example"
 	t.Cleanup(func() {

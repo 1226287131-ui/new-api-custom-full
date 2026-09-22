@@ -38,6 +38,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import type { TaskPluginOption } from '../../api'
 import {
   CHANNEL_TYPE_OLLAMA,
+  CHANNEL_TYPE_OPENAI_VIDEO,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
 } from '../../constants'
@@ -177,6 +178,38 @@ afterEach(() => {
   client.clear()
   useAuthStore.setState({ auth: originalAuth })
   vi.restoreAllMocks()
+})
+
+test('editing a video channel removes the retired profile while preserving its endpoint and egress settings', async () => {
+  editingChannel.type = CHANNEL_TYPE_OPENAI_VIDEO
+  editingChannel.setting = JSON.stringify({
+    openai_video_profile: 'seedance-2.5',
+    openai_video_endpoint: '/v1/video/generations',
+    video_cache_proxy_enabled: true,
+    upstream_egress_proxy_enabled: true,
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+
+  expect(screen.getByText('Openai Video Endpoint')).toBeVisible()
+  expect(screen.queryByText('Openai Video Profile')).not.toBeInTheDocument()
+  expect(screen.getByText('Legacy (/v1/video/generations)')).toBeVisible()
+
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const saved = put.mock.calls[0]?.[1] as { setting: string }
+  const settings = JSON.parse(saved.setting)
+  expect(settings).not.toHaveProperty('openai_video_profile')
+  expect(settings).toMatchObject({
+    openai_video_endpoint: '/v1/video/generations',
+    video_cache_proxy_enabled: true,
+    upstream_egress_proxy_enabled: true,
+  })
 })
 
 test('changing built-in providers updates server-provided URL placeholders without replacing the draft address', async () => {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -335,6 +336,62 @@ func TestDisabledArtifactStorePreservesPluginUpstreamContent(t *testing.T) {
 	assert.Equal(t, "artifact-bytes", recorder.Body.String())
 	assert.Equal(t, "video/mp4", recorder.Header().Get("Content-Type"))
 	assert.Equal(t, "bytes 0-13/14", recorder.Header().Get("Content-Range"))
+}
+
+func TestVideoProxyCacheMissPreservesBackgroundRetryAndBilling(t *testing.T) {
+	task := setupGenericTaskTest(t)
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	database, err := model.DB.DB()
+	require.NoError(t, err)
+	database.SetMaxOpenConns(1)
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("video-content"))
+	}))
+	defer upstream.Close()
+	allowPrivateTaskMediaTest(t)
+	previousMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousMemoryCache })
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", task.ChannelId).Updates(map[string]any{
+		"type":     constant.ChannelTypeOpenAIVideo,
+		"base_url": upstream.URL,
+	}).Error)
+	task.Platform = "openai-video"
+	task.Action = constant.TaskActionTextToVideo
+	task.FinishTime = time.Now().Unix()
+	task.Quota = 1234
+	task.PrivateData.UpstreamResultURL = upstream.URL + "/video.mp4"
+	task.PrivateData.VideoCacheAttempts = 3
+	task.PrivateData.VideoCacheNextRetryAt = time.Now().Add(10 * time.Minute).Unix()
+	task.PrivateData.VideoCacheLastError = "previous incomplete transfer"
+	require.NoError(t, model.DB.Save(task).Error)
+
+	for _, public := range []bool{false, true} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Set("id", task.UserId)
+		c.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID+"/content", nil)
+		videoProxy(c, public)
+		assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+		assert.Equal(t, "30", recorder.Header().Get("Retry-After"))
+		assert.Equal(t, "private, no-store", recorder.Header().Get("Cache-Control"))
+		assert.NotContains(t, recorder.Body.String(), upstream.URL)
+	}
+
+	waitContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, service.RetryVideoTaskCaches(waitContext))
+	assert.Zero(t, upstreamCalls.Load())
+	var persisted model.Task
+	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+	assert.Equal(t, task.Status, persisted.Status)
+	assert.Equal(t, task.Quota, persisted.Quota)
+	assert.Equal(t, task.FinishTime, persisted.FinishTime)
+	assert.Equal(t, task.PrivateData, persisted.PrivateData)
 }
 
 func TestPublicVideoProxyCachesPluginVideoAsMP4(t *testing.T) {

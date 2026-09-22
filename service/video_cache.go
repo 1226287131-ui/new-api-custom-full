@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -98,6 +99,9 @@ func CacheVideoSource(ctx context.Context, taskID string, source VideoCacheSourc
 	defer client.CloseIdleConnections()
 
 	timeoutSeconds := common.GetEnvOrDefault("VIDEO_CACHE_DOWNLOAD_TIMEOUT_SECONDS", 600)
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 600
+	}
 	downloadCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
@@ -318,72 +322,204 @@ func truncateVideoCacheError(err error) string {
 	return message
 }
 
-// StartVideoCacheRetry continuously repairs successful video tasks whose local
-// cache write failed. It is deliberately independent from async task polling:
-// a provider-successful task must never become pending again just because the
-// local disk or network had a transient problem.
-func StartVideoCacheRetry() {
-	retry := func() {
-		if err := RetryVideoTaskCaches(context.Background()); err != nil {
-			common.SysError(fmt.Sprintf("video cache retry pass failed: %v", err))
-		}
-	}
-	retry()
-	go func() {
-		ticker := time.NewTicker(videoCacheRetryInterval)
-		defer ticker.Stop()
-		for range ticker.C {
-			retry()
-		}
-	}()
+type videoCacheQueue struct {
+	jobs    chan string
+	mu      sync.Mutex
+	pending map[string]struct{}
+	idle    chan struct{}
 }
 
-// RetryVideoTaskCaches performs one bounded retry pass. It is exported for
-// focused tests and for operators that want to trigger a manual repair pass.
+func newVideoCacheQueue(capacity int) *videoCacheQueue {
+	idle := make(chan struct{})
+	close(idle)
+	return &videoCacheQueue{jobs: make(chan string, capacity), pending: make(map[string]struct{}), idle: idle}
+}
+
+var videoCacheQueueMu sync.RWMutex
+var activeVideoCacheQueue *videoCacheQueue
+
+// enqueue reserves the task before publishing it so polling requests cannot
+// create duplicate transfers. A full queue is recovered by the durable scanner.
+func (queue *videoCacheQueue) enqueue(taskID string) bool {
+	if strings.TrimSpace(taskID) == "" {
+		return true
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if _, exists := queue.pending[taskID]; exists {
+		return true
+	}
+	select {
+	case queue.jobs <- taskID:
+		if len(queue.pending) == 0 {
+			queue.idle = make(chan struct{})
+		}
+		queue.pending[taskID] = struct{}{}
+		return true
+	default:
+		return false
+	}
+}
+
+func (queue *videoCacheQueue) run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case taskID := <-queue.jobs:
+			if err := cacheSuccessfulVideoTask(taskID); err != nil {
+				common.SysError(fmt.Sprintf("video task %s background cache failed: %v", taskID, err))
+			}
+			queue.mu.Lock()
+			delete(queue.pending, taskID)
+			if len(queue.pending) == 0 {
+				close(queue.idle)
+			}
+			queue.mu.Unlock()
+		}
+	}
+}
+
+func (queue *videoCacheQueue) wait(ctx context.Context) error {
+	queue.mu.Lock()
+	idle := queue.idle
+	queue.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-idle:
+		return nil
+	}
+}
+
+// QueueVideoTaskCache never borrows the querying client's context or blocks a
+// response on a download. Only persisted successful legacy video tasks are read.
+func QueueVideoTaskCache(taskID string) {
+	videoCacheQueueMu.RLock()
+	queue := activeVideoCacheQueue
+	videoCacheQueueMu.RUnlock()
+	if queue != nil {
+		queue.enqueue(taskID)
+	}
+}
+
+var videoCacheRetryOnce sync.Once
+
+// StartVideoCacheRetry starts asynchronously: slow downloads must not hold up
+// application startup or the normal async-task polling/settlement worker.
+func StartVideoCacheRetry() {
+	videoCacheRetryOnce.Do(func() {
+		queue := newVideoCacheQueue(videoCacheRetryBatchSize)
+		workers := max(1, min(common.GetEnvOrDefault("VIDEO_CACHE_WORKERS", 2), 8))
+		for range workers {
+			go queue.run(context.Background())
+		}
+		videoCacheQueueMu.Lock()
+		activeVideoCacheQueue = queue
+		videoCacheQueueMu.Unlock()
+		go func() {
+			ticker := time.NewTicker(videoCacheRetryInterval)
+			defer ticker.Stop()
+			for {
+				if err := queue.scan(context.Background()); err != nil {
+					common.SysError(fmt.Sprintf("video cache retry pass failed: %v", err))
+				}
+				<-ticker.C
+			}
+		}()
+	})
+}
+
+func (queue *videoCacheQueue) scan(ctx context.Context) error {
+	now := time.Now()
+	var afterID int64
+	for {
+		tasks, err := model.GetSuccessfulVideoTasksForCachePage(ctx, now.Add(-defaultVideoCacheTTL).Unix(), afterID, videoCacheRetryBatchSize)
+		if err != nil {
+			return err
+		}
+		for _, task := range tasks {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			afterID = task.ID
+			if !videoTaskUsesBackgroundCache(task) || VideoCacheExpired(task) || task.PrivateData.VideoCacheNextRetryAt > now.Unix() {
+				continue
+			}
+			if task.PrivateData.VideoCachedAt > 0 {
+				if _, exists := CachedVideoPath(task.TaskID); exists {
+					continue
+				}
+			}
+			if !queue.enqueue(task.TaskID) {
+				return nil
+			}
+		}
+		if len(tasks) < videoCacheRetryBatchSize {
+			return nil
+		}
+	}
+}
+
+// RetryVideoTaskCaches schedules a repair pass and waits for its current queue.
+// Canceling that wait does not cancel downloads already accepted by workers.
 func RetryVideoTaskCaches(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	now := time.Now()
-	tasks := model.GetRecentSuccessfulVideoTasksForCache(now.Add(-defaultVideoCacheTTL).Unix(), videoCacheRetryBatchSize)
-	for _, task := range tasks {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	queue := newVideoCacheQueue(videoCacheRetryBatchSize)
+	workerCtx, stop := context.WithCancel(context.Background())
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Go(func() { queue.run(workerCtx) })
+	}
+	defer func() { stop(); workers.Wait() }()
+	if err := queue.scan(ctx); err != nil {
+		return err
+	}
+	return queue.wait(ctx)
+}
+
+func videoTaskUsesBackgroundCache(task *model.Task) bool {
+	return task != nil && task.Status == model.TaskStatusSuccess && constant.IsVideoTaskPlatform(task.Platform) &&
+		(task.PrivateData.Execution == nil || task.PrivateData.Execution.TaskPlugin == nil)
+}
+
+func cacheSuccessfulVideoTask(taskID string) error {
+	task, exists, err := model.GetUniqueByOnlyTaskId(taskID)
+	if err != nil || !exists {
+		return err
+	}
+	if !videoTaskUsesBackgroundCache(task) || VideoCacheExpired(task) {
+		return nil
+	}
+	expected := task.PrivateData
+	_, cached := CachedVideoPath(task.TaskID)
+	if !cached {
+		if task.PrivateData.VideoCacheNextRetryAt > time.Now().Unix() {
+			return nil
 		}
-		if task == nil || !constant.IsVideoTaskPlatform(task.Platform) || task.PrivateData.VideoCachedAt > 0 || VideoCacheExpired(task) {
-			continue
+		channel, channelErr := model.CacheGetChannel(task.ChannelId)
+		if channelErr != nil || channel == nil || !constant.IsVideoTaskChannelType(channel.Type) {
+			err = fmt.Errorf("video cache channel is unavailable")
+		} else {
+			_, err = CacheVideoTask(context.Background(), task, channel)
 		}
-		if _, cached := CachedVideoPath(task.TaskID); cached {
-			MarkVideoTaskCached(task)
-			task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
-			continue
-		}
-		if next := task.PrivateData.VideoCacheNextRetryAt; next > now.Unix() {
-			continue
-		}
-		channel, err := model.CacheGetChannel(task.ChannelId)
-		if err != nil || channel == nil || !constant.IsVideoTaskChannelType(channel.Type) {
-			if err == nil {
-				err = fmt.Errorf("channel is unavailable or not a video channel")
+		if err != nil {
+			MarkVideoCacheFailure(task, err)
+			if isLocalVideoProxySource(task.PrivateData.ResultURL) {
+				task.PrivateData.ResultURL = ""
 			}
-			MarkVideoCacheFailure(task, err)
-			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
-			continue
-		}
-		if _, err = CacheVideoTask(ctx, task, channel); err != nil {
-			MarkVideoCacheFailure(task, err)
-			common.SysError(fmt.Sprintf("video task %s cache retry %d failed; next retry at %s: %s", task.TaskID, task.PrivateData.VideoCacheAttempts, time.Unix(task.PrivateData.VideoCacheNextRetryAt, 0).Format(time.RFC3339), truncateVideoCacheError(err)))
-			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
-			continue
-		}
-		MarkVideoTaskCached(task)
-		task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-		if won, updateErr := task.UpdateWithStatus(model.TaskStatusSuccess); updateErr != nil {
-			common.SysError(fmt.Sprintf("persist video cache retry metadata for %s: %v", task.TaskID, updateErr))
-		} else if !won {
-			common.SysLog(fmt.Sprintf("video task %s changed while cache retry was running", task.TaskID))
+		} else {
+			cached = true
 		}
 	}
-	return nil
+	if cached {
+		MarkVideoTaskCached(task)
+		task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+	}
+	if _, updateErr := model.UpdateVideoCacheMetadata(task, expected); updateErr != nil {
+		return fmt.Errorf("persist video cache metadata: %w", updateErr)
+	}
+	return err
 }

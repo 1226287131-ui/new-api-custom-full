@@ -27,9 +27,6 @@ type ChannelSettings struct {
 	PassThroughBodyEnabled     bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt               string `json:"system_prompt,omitempty"`
 	SystemPromptOverride       bool   `json:"system_prompt_override,omitempty"`
-	// OpenAIVideoProfile selects the request contract for channel type 60.
-	// "seedance-2.5" applies the SD2.5 contract independently of model name.
-	OpenAIVideoProfile string `json:"openai_video_profile,omitempty"`
 	// OpenAIVideoEndpoint selects the upstream OpenAI Video API route. Empty
 	// values use the current standard endpoint (/v1/videos).
 	OpenAIVideoEndpoint string `json:"openai_video_endpoint,omitempty"`

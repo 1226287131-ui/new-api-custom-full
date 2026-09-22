@@ -11,10 +11,43 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 )
 
 var ErrVideoCacheExpired = errors.New("video cache retention expired")
+
+// CachedVideoPublicURL publishes only a complete file within its fixed retention.
+func CachedVideoPublicURL(task *model.Task) string {
+	if task == nil || task.Status != model.TaskStatusSuccess || VideoCacheExpired(task) {
+		return ""
+	}
+	if _, cached := CachedVideoPath(task.TaskID); !cached {
+		return ""
+	}
+	return taskcommon.BuildPublicVideoURL(task.TaskID)
+}
+
+// PrepareVideoTaskCacheSource retains the remote source before public payload
+// sanitization. The caller persists the successful task before queueing it.
+func PrepareVideoTaskCacheSource(task *model.Task, channel *model.Channel, resultURL string) error {
+	if task == nil || channel == nil {
+		return fmt.Errorf("task and channel are required")
+	}
+	resultURL = strings.TrimSpace(resultURL)
+	if strings.HasPrefix(strings.ToLower(resultURL), "data:") {
+		return fmt.Errorf("inline video must be cached before response sanitization")
+	}
+	if resultURL != "" && !isLocalVideoProxySource(resultURL) {
+		baseURL := channel.GetBaseURL()
+		if baseURL == "" && channel.Type >= 0 && channel.Type < len(constant.ChannelBaseURLs) {
+			baseURL = constant.ChannelBaseURLs[channel.Type]
+		}
+		task.PrivateData.UpstreamResultURL = ResolveVideoResultURL(baseURL, resultURL)
+	}
+	_, err := VideoCacheSourceForTask(task, channel)
+	return err
+}
 
 // VideoCacheSourceForTask resolves the private provider source for a completed
 // video task. Public result URLs are deliberately ignored so a cache miss can
@@ -179,7 +212,7 @@ func CacheVideoTaskResult(ctx context.Context, task *model.Task, channel *model.
 // MarkVideoCacheFailure records a recoverable local-cache failure. The task
 // remains SUCCESS; these fields make retries survive process restarts.
 func MarkVideoCacheFailure(task *model.Task, cacheErr error) {
-	if task == nil || task.PrivateData.VideoCachedAt > 0 {
+	if task == nil {
 		return
 	}
 	attempts := task.PrivateData.VideoCacheAttempts + 1
@@ -192,10 +225,12 @@ func MarkVideoCacheFailure(task *model.Task, cacheErr error) {
 // intentionally not refreshed by later reads, so public links cannot extend
 // the retention window.
 func MarkVideoTaskCached(task *model.Task) {
-	if task == nil || task.PrivateData.VideoCachedAt > 0 {
+	if task == nil {
 		return
 	}
-	task.PrivateData.VideoCachedAt = time.Now().Unix()
+	if task.PrivateData.VideoCachedAt <= 0 {
+		task.PrivateData.VideoCachedAt = time.Now().Unix()
+	}
 	task.PrivateData.VideoCacheAttempts = 0
 	task.PrivateData.VideoCacheNextRetryAt = 0
 	task.PrivateData.VideoCacheLastError = ""
@@ -211,6 +246,9 @@ func VideoCacheExpired(task *model.Task) bool {
 	cachedAt := task.PrivateData.VideoCachedAt
 	if cachedAt <= 0 {
 		cachedAt = task.FinishTime
+	}
+	if cachedAt <= 0 {
+		cachedAt = task.UpdatedAt
 	}
 	if cachedAt <= 0 {
 		return false

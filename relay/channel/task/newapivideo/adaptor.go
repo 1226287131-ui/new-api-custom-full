@@ -352,7 +352,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	video.Size = task.Properties.VideoSize
 	if task.Status == model.TaskStatusSuccess {
 		video.CompletedAt = task.UpdatedAt
-		if resultURL := strings.TrimSpace(taskcommon.BuildPublicVideoURL(task.TaskID)); resultURL != "" {
+		if resultURL := service.CachedVideoPublicURL(task); resultURL != "" {
 			video.ResultURL = resultURL
 			video.SetMetadata("url", resultURL)
 		}

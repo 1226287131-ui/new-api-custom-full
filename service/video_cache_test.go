@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,8 +20,12 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func TestExtractVideoResultURLPrefersResultPayload(t *testing.T) {
@@ -214,6 +219,9 @@ func TestVideoCacheExpiredUsesFixedFirstCacheTime(t *testing.T) {
 
 	assert.True(t, VideoCacheExpired(expired))
 	assert.False(t, VideoCacheExpired(fresh))
+	legacy := &model.Task{Status: model.TaskStatusSuccess, UpdatedAt: now - int64(defaultVideoCacheTTL.Seconds()) - 1}
+	assert.True(t, VideoCacheExpired(legacy))
+	assert.Zero(t, legacy.FinishTime)
 
 	MarkVideoTaskCached(fresh)
 	assert.Equal(t, now, fresh.PrivateData.VideoCachedAt)
@@ -288,6 +296,206 @@ func TestRetryVideoTaskCachesDoesNotAbandonAnExhaustedTask(t *testing.T) {
 	assert.NotZero(t, saved.PrivateData.VideoCachedAt)
 	assert.Zero(t, saved.PrivateData.VideoCacheAttempts)
 	assert.FileExists(t, filepath.Join(videoCacheDir(), task.TaskID+".mp4"))
+}
+
+// External DSNs must target disposable test databases, never production data.
+func TestVideoCacheWorkerDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []struct {
+		kind common.DatabaseType
+		env  string
+	}{
+		{common.DatabaseTypeSQLite, ""},
+		{common.DatabaseTypeMySQL, "TEST_VIDEO_CACHE_MYSQL_DSN"},
+		{common.DatabaseTypePostgreSQL, "TEST_VIDEO_CACHE_POSTGRES_DSN"},
+	} {
+		t.Run(string(dialect.kind), func(t *testing.T) {
+			var driver gorm.Dialector = sqlite.Open(":memory:")
+			if dialect.env != "" {
+				dsn := os.Getenv(dialect.env)
+				if dsn == "" {
+					t.Skip(dialect.env + " is not configured")
+				}
+				if dialect.kind == common.DatabaseTypeMySQL {
+					driver = mysql.Open(dsn)
+				} else {
+					driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+				}
+			}
+			db, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(1)
+			oldDB, oldType, oldCache := model.DB, common.MainDatabaseType(), common.MemoryCacheEnabled
+			model.DB, common.MemoryCacheEnabled = db, false
+			common.SetMainDatabaseType(dialect.kind)
+			t.Cleanup(func() {
+				model.DB, common.MemoryCacheEnabled = oldDB, oldCache
+				common.SetMainDatabaseType(oldType)
+				assert.NoError(t, sqlDB.Close())
+			})
+			require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}))
+			query := "select version()"
+			if dialect.kind == common.DatabaseTypeSQLite {
+				query = "select sqlite_version()"
+			}
+			var version string
+			require.NoError(t, db.Raw(query).Scan(&version).Error)
+			t.Logf("database version: %s", version)
+			t.Run("detached_download_and_accounting", testVideoCacheDetachedDownload)
+			t.Run("backoff_and_page_progress", testVideoCacheRetryPagination)
+			t.Run("metadata_compare_and_swap", testVideoCacheMetadataCAS)
+		})
+	}
+}
+
+func videoCacheWorkerFixture(t *testing.T) (*model.Channel, *videoCacheQueue) {
+	t.Helper()
+	require.NoError(t, model.DB.Where("1 = 1").Delete(&model.Task{}).Error)
+	require.NoError(t, model.DB.Where("1 = 1").Delete(&model.Channel{}).Error)
+	t.Setenv("VIDEO_CACHE_DIR", t.TempDir())
+	channel := &model.Channel{Type: constant.ChannelTypeKling, Key: "test-key", Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(channel).Error)
+	return channel, newVideoCacheQueue(videoCacheRetryBatchSize)
+}
+
+func testVideoCacheDetachedDownload(t *testing.T) {
+	channel, queue := videoCacheWorkerFixture(t)
+	fetchSetting := system_setting.GetFetchSetting()
+	originalFetchSetting := *fetchSetting
+	fetchSetting.EnableSSRFProtection = false
+	t.Cleanup(func() { *fetchSetting = originalFetchSetting })
+	InitHttpClient()
+	started, release := make(chan struct{}), make(chan struct{})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			close(started)
+		}
+		<-release
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("complete-video"))
+	}))
+	defer server.Close()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	task := &model.Task{TaskID: "task_detached", ChannelId: channel.Id, Platform: "kling", Status: model.TaskStatusSuccess,
+		Quota: 123, FinishTime: time.Now().Unix(), Progress: "100%",
+		PrivateData: model.TaskPrivateData{UpstreamResultURL: server.URL, BillingSource: "wallet", TokenId: 42}}
+	require.NoError(t, model.DB.Create(task).Error)
+	workerCtx, stop := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() { queue.run(workerCtx); close(workerDone) }()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		stop()
+		<-workerDone
+	}()
+	require.True(t, queue.enqueue(task.TaskID))
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("background download did not start")
+	}
+	queryCtx, cancelQuery := context.WithCancel(context.Background())
+	cancelQuery()
+	assert.ErrorIs(t, queue.wait(queryCtx), context.Canceled)
+	require.True(t, queue.enqueue(task.TaskID))
+	// Simulate a settlement update that happens while the file is downloading.
+	privateData, err := common.Marshal(map[string]any{
+		"upstream_result_url": server.URL, "billing_source": "subscription", "token_id": 99,
+		"unknown_future_field": map[string]any{"preserved": true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(task).Updates(map[string]any{"quota": 456, "private_data": string(privateData)}).Error)
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, queue.wait(ctx))
+	var saved model.Task
+	require.NoError(t, model.DB.First(&saved, task.ID).Error)
+	assert.Equal(t, int32(1), requests.Load())
+	assert.Equal(t, 456, saved.Quota)
+	assert.Equal(t, task.FinishTime, saved.FinishTime)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), saved.Status)
+	assert.Equal(t, "subscription", saved.PrivateData.BillingSource)
+	assert.Equal(t, 99, saved.PrivateData.TokenId)
+	assert.NotZero(t, saved.PrivateData.VideoCachedAt)
+	var raw string
+	require.NoError(t, model.DB.Model(task).Select("private_data").Scan(&raw).Error)
+	assert.Contains(t, raw, "unknown_future_field")
+	contents, err := os.ReadFile(videoCacheFilePath(task.TaskID))
+	require.NoError(t, err)
+	assert.Equal(t, "complete-video", string(contents))
+}
+
+func testVideoCacheRetryPagination(t *testing.T) {
+	channel, queue := videoCacheWorkerFixture(t)
+	now := time.Now().Unix()
+	deferred := make([]model.Task, videoCacheRetryBatchSize)
+	for i := range deferred {
+		deferred[i] = model.Task{TaskID: fmt.Sprintf("task_deferred_%d", i), Platform: "kling", ChannelId: channel.Id,
+			Status: model.TaskStatusSuccess, FinishTime: now, PrivateData: model.TaskPrivateData{VideoCacheAttempts: 1, VideoCacheNextRetryAt: now + 300}}
+	}
+	require.NoError(t, model.DB.Create(&deferred).Error)
+	ready := &model.Task{TaskID: "task_after_deferred_page", Platform: "kling", ChannelId: channel.Id, Status: model.TaskStatusSuccess,
+		FinishTime: now, PrivateData: model.TaskPrivateData{UpstreamResultURL: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString([]byte("repaired"))}}
+	require.NoError(t, model.DB.Create(ready).Error)
+	require.NoError(t, queue.scan(context.Background()))
+	workerCtx, stop := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() { queue.run(workerCtx); close(workerDone) }()
+	defer func() { stop(); <-workerDone }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, queue.wait(ctx))
+	var saved model.Task
+	require.NoError(t, model.DB.First(&saved, ready.ID).Error)
+	assert.NotZero(t, saved.PrivateData.VideoCachedAt)
+	// An HTTP poll may requeue a deferred task, but must not move its retry time.
+	require.True(t, queue.enqueue(deferred[0].TaskID))
+	require.NoError(t, queue.wait(ctx))
+	saved = model.Task{}
+	require.NoError(t, model.DB.First(&saved, deferred[0].ID).Error)
+	assert.Equal(t, 1, saved.PrivateData.VideoCacheAttempts)
+	assert.Equal(t, now+300, saved.PrivateData.VideoCacheNextRetryAt)
+}
+
+func testVideoCacheMetadataCAS(t *testing.T) {
+	channel, _ := videoCacheWorkerFixture(t)
+	task := &model.Task{TaskID: "task_cache_cas", Platform: "kling", ChannelId: channel.Id, Status: model.TaskStatusSuccess, Quota: 321,
+		FinishTime: time.Now().Unix(), PrivateData: model.TaskPrivateData{BillingSource: "wallet"}}
+	require.NoError(t, model.DB.Create(task).Error)
+	expected := task.PrivateData
+	MarkVideoTaskCached(task)
+	task.PrivateData.ResultURL = "/video-cache/task_cache_cas.mp4"
+	won, err := model.UpdateVideoCacheMetadata(task, expected)
+	require.NoError(t, err)
+	require.True(t, won)
+	task.PrivateData = expected
+	MarkVideoCacheFailure(task, fmt.Errorf("stale failed transfer"))
+	won, err = model.UpdateVideoCacheMetadata(task, expected)
+	require.NoError(t, err)
+	assert.False(t, won)
+	var saved model.Task
+	require.NoError(t, model.DB.First(&saved, task.ID).Error)
+	assert.NotZero(t, saved.PrivateData.VideoCachedAt)
+	assert.Zero(t, saved.PrivateData.VideoCacheAttempts)
+	assert.Equal(t, 321, saved.Quota)
+	expected = saved.PrivateData
+	require.NoError(t, model.DB.Model(task).UpdateColumn("status", model.TaskStatusFailure).Error)
+	won, err = model.UpdateVideoCacheMetadata(&saved, expected)
+	require.NoError(t, err)
+	assert.False(t, won)
 }
 
 func TestCacheRemoteVideoWithHeaders(t *testing.T) {

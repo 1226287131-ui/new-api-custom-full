@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -410,6 +411,81 @@ func GetRecentSuccessfulVideoTasksForCache(cutoffUnix int64, limit int) []*Task 
 		return nil
 	}
 	return tasks
+}
+
+// GetSuccessfulVideoTasksForCachePage advances by primary key before callers
+// filter retry deadlines, so a full page of deferred tasks cannot hide older work.
+func GetSuccessfulVideoTasksForCachePage(ctx context.Context, cutoffUnix, afterID int64, limit int) ([]*Task, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var tasks []*Task
+	err := DB.WithContext(ctx).Where("id > ? AND status = ?", afterID, TaskStatusSuccess).
+		Where("LOWER(platform) IN ?", constant.VideoTaskPlatformValues()).
+		Where("finish_time = 0 OR finish_time >= ?", cutoffUnix).
+		Order("id ASC").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+// UpdateVideoCacheMetadata only merges cache-owned JSON fields into the latest
+// successful row. Accounting fields and unknown private metadata are untouched.
+func UpdateVideoCacheMetadata(task *Task, expected TaskPrivateData) (bool, error) {
+	updated := false
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current struct {
+			ID          int64
+			Status      TaskStatus
+			PrivateData *string
+		}
+		err := lockForUpdate(tx.Model(&Task{})).Select("id", "status", "private_data").
+			Where("id = ?", task.ID).Take(&current).Error
+		if err == gorm.ErrRecordNotFound {
+			return nil
+		}
+		if err != nil || current.Status != TaskStatusSuccess {
+			return err
+		}
+		fields := make(map[string]json.RawMessage)
+		var fresh TaskPrivateData
+		if current.PrivateData != nil && *current.PrivateData != "" {
+			if err := common.UnmarshalJsonStr(*current.PrivateData, &fields); err != nil {
+				return err
+			}
+			if err := common.UnmarshalJsonStr(*current.PrivateData, &fresh); err != nil {
+				return err
+			}
+		}
+		if fresh.VideoCachedAt != expected.VideoCachedAt || fresh.VideoCacheAttempts != expected.VideoCacheAttempts ||
+			fresh.VideoCacheNextRetryAt != expected.VideoCacheNextRetryAt {
+			return nil
+		}
+		if fields == nil {
+			fields = make(map[string]json.RawMessage)
+		}
+		for name, value := range map[string]any{
+			"result_url":                task.PrivateData.ResultURL,
+			"video_cached_at":           task.PrivateData.VideoCachedAt,
+			"video_cache_attempts":      task.PrivateData.VideoCacheAttempts,
+			"video_cache_next_retry_at": task.PrivateData.VideoCacheNextRetryAt,
+			"video_cache_last_error":    task.PrivateData.VideoCacheLastError,
+		} {
+			encoded, err := common.Marshal(value)
+			if err != nil {
+				return err
+			}
+			fields[name] = encoded
+		}
+		encoded, err := common.Marshal(fields)
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&Task{}).Where("id = ? AND status = ?", task.ID, TaskStatusSuccess).
+			UpdateColumn("private_data", string(encoded))
+		updated = result.RowsAffected > 0
+		return result.Error
+	})
+	return updated, err
 }
 
 // HasUnfinishedSyncTasks reports whether at least one async (Suno/video) task is

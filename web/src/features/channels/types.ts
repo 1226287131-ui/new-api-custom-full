@@ -90,7 +90,6 @@ export interface ChannelSettings {
   responses_websocket_enabled?: boolean
   system_prompt?: string
   system_prompt_override?: boolean
-  openai_video_profile?: 'seedance-2.5' | string
   openai_video_endpoint?: '/v1/videos' | '/v1/video/generations' | '/v1/videos/generations' | string
   http_protocol?: 'auto' | 'http1' | string
   http2_connection_shards?: number
