@@ -122,6 +122,8 @@ export interface UserSettings {
   upstream_model_update_notify_enabled?: boolean
   /** Preferred interface/API response language */
   language?: string
+  /** Preferred delivery node for newly cached images and videos */
+  media_delivery_node?: 'us' | 'hk'
 }
 
 /**
@@ -162,6 +164,7 @@ export interface UpdateUserSettingsRequest {
   accept_unset_model_ratio_model?: boolean
   record_ip_log?: boolean
   upstream_model_update_notify_enabled?: boolean
+  media_delivery_node?: 'us' | 'hk'
 }
 
 /**

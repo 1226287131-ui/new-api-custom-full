@@ -34,12 +34,14 @@ interface ProfileSettingsCardProps {
   profile: UserProfile | null
   loading: boolean
   onProfileUpdate: () => void
+  mediaDeliveryNodeEnabled?: boolean
 }
 
 export function ProfileSettingsCard({
   profile,
   loading,
   onProfileUpdate,
+  mediaDeliveryNodeEnabled = false,
 }: ProfileSettingsCardProps) {
   const { t } = useTranslation()
 
@@ -67,7 +69,11 @@ export function ProfileSettingsCard({
       iconTone='info'
       disableHoverEffect
     >
-      <NotificationTab profile={profile} onUpdate={onProfileUpdate} />
+      <NotificationTab
+        profile={profile}
+        onUpdate={onProfileUpdate}
+        mediaDeliveryNodeEnabled={mediaDeliveryNodeEnabled}
+      />
     </TitledCard>
   )
 }

@@ -1,0 +1,20 @@
+services:
+  media-hk:
+    build: .
+    container_name: newapi-media-hk
+    restart: unless-stopped
+    environment:
+      MEDIA_HK_INGEST_TOKEN: ${MEDIA_HK_INGEST_TOKEN:?set a long random token}
+      MEDIA_INGEST_ROOT: /var/lib/newapi-media
+      MEDIA_INGEST_ADDR: 0.0.0.0:8091
+    volumes:
+      - ./data:/var/lib/newapi-media
+    expose:
+      - "8091"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

@@ -1278,6 +1278,7 @@ type UpdateUserSettingRequest struct {
 	UpstreamModelUpdateNotifyEnabled *bool   `json:"upstream_model_update_notify_enabled,omitempty"`
 	AcceptUnsetModelRatioModel       bool    `json:"accept_unset_model_ratio_model"`
 	RecordIpLog                      bool    `json:"record_ip_log"`
+	MediaDeliveryNode                *string `json:"media_delivery_node,omitempty"`
 }
 
 func UpdateUserSetting(c *gin.Context) {
@@ -1368,19 +1369,39 @@ func UpdateUserSetting(c *gin.Context) {
 		return
 	}
 	existingSettings := user.GetSetting()
+	// 未提供该字段的旧前端请求保留既有节点；新设置或空值按美国直连处理。
+	mediaDeliveryNode := existingSettings.MediaDeliveryNode
+	if req.MediaDeliveryNode != nil {
+		mediaDeliveryNode = *req.MediaDeliveryNode
+	}
+	if mediaDeliveryNode == "" {
+		mediaDeliveryNode = dto.MediaDeliveryNodeUS
+	}
+	if mediaDeliveryNode != dto.MediaDeliveryNodeUS && mediaDeliveryNode != dto.MediaDeliveryNodeHK {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
 	upstreamModelUpdateNotifyEnabled := existingSettings.UpstreamModelUpdateNotifyEnabled
 	if user.Role >= common.RoleAdminUser && req.UpstreamModelUpdateNotifyEnabled != nil {
 		upstreamModelUpdateNotifyEnabled = *req.UpstreamModelUpdateNotifyEnabled
 	}
 
-	// 构建设置
-	settings := dto.UserSetting{
-		NotifyType:                       req.QuotaWarningType,
-		QuotaWarningThreshold:            req.QuotaWarningThreshold,
-		UpstreamModelUpdateNotifyEnabled: upstreamModelUpdateNotifyEnabled,
-		AcceptUnsetRatioModel:            req.AcceptUnsetModelRatioModel,
-		RecordIpLog:                      req.RecordIpLog,
-	}
+	// 基于已有设置合并更新。设置接口的请求只包含当前表单字段，不能因保存通知或媒体节点而清空
+	// 语言、侧栏、计费偏好等其他用户设置。
+	settings := existingSettings
+	settings.NotifyType = req.QuotaWarningType
+	settings.QuotaWarningThreshold = req.QuotaWarningThreshold
+	settings.UpstreamModelUpdateNotifyEnabled = upstreamModelUpdateNotifyEnabled
+	settings.AcceptUnsetRatioModel = req.AcceptUnsetModelRatioModel
+	settings.RecordIpLog = req.RecordIpLog
+	settings.MediaDeliveryNode = mediaDeliveryNode
+	settings.WebhookUrl = ""
+	settings.WebhookSecret = ""
+	settings.NotificationEmail = ""
+	settings.BarkUrl = ""
+	settings.GotifyUrl = ""
+	settings.GotifyToken = ""
+	settings.GotifyPriority = 0
 
 	// 如果是webhook类型,添加webhook相关设置
 	if req.QuotaWarningType == dto.NotifyTypeWebhook {

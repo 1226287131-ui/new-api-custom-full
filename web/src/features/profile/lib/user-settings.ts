@@ -27,6 +27,8 @@ export function normalizeUserSettings(
   setting?: string
 ): Required<UpdateUserSettingsRequest> & { notify_type: NotifyType } {
   const parsed = parseUserSettings(setting)
+  const mediaDeliveryNode =
+    parsed.media_delivery_node === 'hk' ? 'hk' : 'us'
   const notifyType =
     NOTIFICATION_METHODS.find((method) => method.value === parsed.notify_type)
       ?.value ?? 'email'
@@ -46,5 +48,6 @@ export function normalizeUserSettings(
     record_ip_log: parsed.record_ip_log || false,
     upstream_model_update_notify_enabled:
       parsed.upstream_model_update_notify_enabled || false,
+    media_delivery_node: mediaDeliveryNode,
   }
 }

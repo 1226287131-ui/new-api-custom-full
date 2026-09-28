@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -126,6 +129,7 @@ func GetStatus(c *gin.Context) {
 		"user_agreement_enabled":      legalSetting.UserAgreement != "",
 		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "",
 		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
+		"media_delivery_node_enabled": mediaDeliveryNodeEnabled(),
 	}
 
 	// 根据启用状态注入可选内容
@@ -173,6 +177,25 @@ func GetStatus(c *gin.Context) {
 		"data":    data,
 	})
 	return
+}
+
+// mediaDeliveryNodeEnabled reports whether the optional Hong Kong media cache
+// is fully configured. The ingest token is intentionally only checked here and
+// is never included in the public status response.
+func mediaDeliveryNodeEnabled() bool {
+	if !service.MediaDeliveryEnabled() {
+		return false
+	}
+	if strings.TrimSpace(os.Getenv("MEDIA_HK_INGEST_TOKEN")) == "" {
+		return false
+	}
+	for _, envName := range []string{"MEDIA_HK_INGEST_BASE_URL", "MEDIA_HK_PUBLIC_BASE_URL"} {
+		parsed, err := url.Parse(strings.TrimSpace(os.Getenv(envName)))
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func GetNotice(c *gin.Context) {

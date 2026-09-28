@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 )
 
 const (
@@ -350,16 +349,45 @@ func RetryVideoTaskCaches(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if task == nil || !constant.IsVideoTaskPlatform(task.Platform) || task.PrivateData.VideoCachedAt > 0 || VideoCacheExpired(task) {
+		if task == nil || !constant.IsVideoTaskPlatform(task.Platform) || VideoCacheExpired(task) {
+			continue
+		}
+		if next := task.PrivateData.VideoCacheNextRetryAt; next > now.Unix() {
+			continue
+		}
+		needsHongKongDelivery := task.PrivateData.VideoCachedAt > 0 &&
+			task.PrivateData.EffectiveMediaDeliveryNode() == "hk" &&
+			strings.TrimSpace(task.PrivateData.HongKongMediaURL) == ""
+		if task.PrivateData.VideoCachedAt > 0 && !needsHongKongDelivery {
 			continue
 		}
 		if _, cached := CachedVideoPath(task.TaskID); cached {
 			MarkVideoTaskCached(task)
-			task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
-			continue
-		}
-		if next := task.PrivateData.VideoCacheNextRetryAt; next > now.Unix() {
+			publicURL, deliveryErr := PublishVideoTaskDelivery(ctx, task, "")
+			task.PrivateData.ResultURL = publicURL
+			if deliveryErr != nil {
+				task.PrivateData.HongKongMediaLastError = truncateVideoCacheError(deliveryErr)
+				attempts := task.PrivateData.VideoCacheAttempts + 1
+				task.PrivateData.VideoCacheAttempts = attempts
+				task.PrivateData.VideoCacheNextRetryAt = time.Now().Add(videoCacheRetryDelay(attempts)).Unix()
+			} else {
+				task.PrivateData.VideoCacheAttempts = 0
+				task.PrivateData.VideoCacheNextRetryAt = 0
+				task.PrivateData.VideoCacheLastError = ""
+			}
+			if err := task.UpdateVideoCacheMetadataWithDelivery(
+				task.PrivateData.ResultURL,
+				task.PrivateData.VideoCachedAt,
+				task.PrivateData.VideoCacheAttempts,
+				task.PrivateData.VideoCacheNextRetryAt,
+				task.PrivateData.VideoCacheLastError,
+				task.PrivateData.MediaDeliveryNode,
+				task.PrivateData.HongKongMediaURL,
+				task.PrivateData.HongKongMediaUploadedAt,
+				task.PrivateData.HongKongMediaLastError,
+			); err != nil {
+				common.SysError(fmt.Sprintf("persist video cache metadata for %s: %v", task.TaskID, err))
+			}
 			continue
 		}
 		channel, err := model.CacheGetChannel(task.ChannelId)
@@ -368,21 +396,56 @@ func RetryVideoTaskCaches(ctx context.Context) error {
 				err = fmt.Errorf("channel is unavailable or not a video channel")
 			}
 			MarkVideoCacheFailure(task, err)
-			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
+			if updateErr := task.UpdateVideoCacheMetadata(
+				task.PrivateData.ResultURL,
+				task.PrivateData.VideoCachedAt,
+				task.PrivateData.VideoCacheAttempts,
+				task.PrivateData.VideoCacheNextRetryAt,
+				task.PrivateData.VideoCacheLastError,
+			); updateErr != nil {
+				common.SysError(fmt.Sprintf("persist video cache retry metadata for %s: %v", task.TaskID, updateErr))
+			}
 			continue
 		}
 		if _, err = CacheVideoTask(ctx, task, channel); err != nil {
 			MarkVideoCacheFailure(task, err)
 			common.SysError(fmt.Sprintf("video task %s cache retry %d failed; next retry at %s: %s", task.TaskID, task.PrivateData.VideoCacheAttempts, time.Unix(task.PrivateData.VideoCacheNextRetryAt, 0).Format(time.RFC3339), truncateVideoCacheError(err)))
-			_, _ = task.UpdateWithStatus(model.TaskStatusSuccess)
+			if updateErr := task.UpdateVideoCacheMetadata(
+				task.PrivateData.ResultURL,
+				task.PrivateData.VideoCachedAt,
+				task.PrivateData.VideoCacheAttempts,
+				task.PrivateData.VideoCacheNextRetryAt,
+				task.PrivateData.VideoCacheLastError,
+			); updateErr != nil {
+				common.SysError(fmt.Sprintf("persist video cache retry metadata for %s: %v", task.TaskID, updateErr))
+			}
 			continue
 		}
 		MarkVideoTaskCached(task)
-		task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-		if won, updateErr := task.UpdateWithStatus(model.TaskStatusSuccess); updateErr != nil {
+		publicURL, deliveryErr := PublishVideoTaskDelivery(ctx, task, "")
+		task.PrivateData.ResultURL = publicURL
+		if deliveryErr != nil {
+			task.PrivateData.HongKongMediaLastError = truncateVideoCacheError(deliveryErr)
+			attempts := task.PrivateData.VideoCacheAttempts + 1
+			task.PrivateData.VideoCacheAttempts = attempts
+			task.PrivateData.VideoCacheNextRetryAt = time.Now().Add(videoCacheRetryDelay(attempts)).Unix()
+		} else {
+			task.PrivateData.VideoCacheAttempts = 0
+			task.PrivateData.VideoCacheNextRetryAt = 0
+			task.PrivateData.VideoCacheLastError = ""
+		}
+		if updateErr := task.UpdateVideoCacheMetadataWithDelivery(
+			task.PrivateData.ResultURL,
+			task.PrivateData.VideoCachedAt,
+			task.PrivateData.VideoCacheAttempts,
+			task.PrivateData.VideoCacheNextRetryAt,
+			task.PrivateData.VideoCacheLastError,
+			task.PrivateData.MediaDeliveryNode,
+			task.PrivateData.HongKongMediaURL,
+			task.PrivateData.HongKongMediaUploadedAt,
+			task.PrivateData.HongKongMediaLastError,
+		); updateErr != nil {
 			common.SysError(fmt.Sprintf("persist video cache retry metadata for %s: %v", task.TaskID, updateErr))
-		} else if !won {
-			common.SysLog(fmt.Sprintf("video task %s changed while cache retry was running", task.TaskID))
 		}
 	}
 	return nil

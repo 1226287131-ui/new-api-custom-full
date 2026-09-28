@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -73,6 +75,10 @@ type ImageCacheJob struct {
 	UserID    int
 	Request   *http.Request
 	Sources   []ImageCacheSource
+	// MediaDeliveryNode is a request snapshot (us or hk). It must be captured
+	// before the asynchronous cache job starts so a later preference change
+	// cannot redirect an already completed request.
+	MediaDeliveryNode string
 }
 
 // StartImageCacheJob downloads image sources in the background and enriches
@@ -82,7 +88,7 @@ func StartImageCacheJob(job *ImageCacheJob) {
 		return
 	}
 	go func() {
-		info := CacheImageSources(context.Background(), job.Request, job.Sources)
+		info := CacheImageSourcesForNode(context.Background(), job.Request, job.Sources, job.MediaDeliveryNode)
 		for index, reason := range info.FailedReasons {
 			common.SysError(fmt.Sprintf(
 				"image cache failed: request=%s source=%d/%d reason=%s",
@@ -96,6 +102,143 @@ func StartImageCacheJob(job *ImageCacheJob) {
 			common.SysError(fmt.Sprintf("image cache log update failed for request %s: %v", job.RequestID, err))
 		}
 	}()
+}
+
+// CacheImageSourcesForNode caches images locally first, then optionally
+// replicates the completed files to the configured Hong Kong media receiver.
+// Replication is deliberately best-effort: a receiver outage must not turn a
+// successful upstream image response into a cache failure.
+func CacheImageSourcesForNode(ctx context.Context, request *http.Request, sources []ImageCacheSource, node string) ImageCacheInfo {
+	if MediaDeliveryEnabled() && strings.EqualFold(strings.TrimSpace(node), "hk") {
+		return cacheImageSourcesWithDelivery(ctx, request, sources, "hk")
+	}
+	return CacheImageSources(ctx, request, sources)
+}
+
+func cacheImageSourcesWithDelivery(ctx context.Context, request *http.Request, sources []ImageCacheSource, node string) ImageCacheInfo {
+	info := ImageCacheInfo{TotalCount: len(sources), CachedAt: time.Now().Unix()}
+	for _, source := range sources {
+		cachedURL, err := cacheImageSourceForDelivery(ctx, request, source, node)
+		if err != nil {
+			info.FailedCount++
+			info.FailedReasons = append(info.FailedReasons, err.Error())
+			continue
+		}
+		info.URLs = append(info.URLs, cachedURL)
+		info.CachedCount++
+	}
+	if info.CachedCount == info.TotalCount && info.TotalCount > 0 {
+		info.Status = "cached"
+	} else if info.CachedCount > 0 {
+		info.Status = "partial"
+	} else if info.TotalCount > 0 {
+		info.Status = "failed"
+	}
+	if info.CachedCount > 0 {
+		info.ExpiresAt = time.Now().Add(defaultImageCacheTTL).Unix()
+	}
+	return info
+}
+
+func cacheImageSourceForDelivery(ctx context.Context, request *http.Request, source ImageCacheSource, node string) (string, error) {
+	if !MediaDeliveryEnabled() || !strings.EqualFold(strings.TrimSpace(node), "hk") {
+		return CacheImageSource(ctx, request, source)
+	}
+	cachedURL, err := CacheImageSource(ctx, request, source)
+	if err != nil {
+		return "", err
+	}
+	deliveredURL, deliveryErr := deliverCachedImageToHK(ctx, cachedURL)
+	if deliveryErr != nil {
+		common.SysError(fmt.Sprintf("image cache HK delivery failed; using US cache: %v", deliveryErr))
+		return cachedURL, nil
+	}
+	return deliveredURL, nil
+}
+
+func deliverCachedImageToHK(ctx context.Context, cachedURL string) (string, error) {
+	baseUpload := strings.TrimRight(strings.TrimSpace(os.Getenv("MEDIA_HK_INGEST_BASE_URL")), "/")
+	publicBase := strings.TrimRight(strings.TrimSpace(os.Getenv("MEDIA_HK_PUBLIC_BASE_URL")), "/")
+	token := strings.TrimSpace(os.Getenv("MEDIA_HK_INGEST_TOKEN"))
+	if baseUpload == "" || publicBase == "" || token == "" {
+		return "", fmt.Errorf("Hong Kong media delivery is not configured")
+	}
+	for _, base := range []string{baseUpload, publicBase} {
+		parsed, err := url.Parse(base)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+			return "", fmt.Errorf("Hong Kong media delivery URL is invalid")
+		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	parsed, err := url.Parse(cachedURL)
+	if err != nil {
+		return "", fmt.Errorf("parse local image cache URL: %w", err)
+	}
+	fileName := filepath.Base(parsed.Path)
+	path, mimeType, ok := CachedImagePath(fileName)
+	if !ok {
+		return "", fmt.Errorf("local image cache file not found")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open local image cache: %w", err)
+	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat local image cache: %w", err)
+	}
+	if stat.Size() <= 0 {
+		return "", fmt.Errorf("local image cache is empty")
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("hash local image cache: %w", err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("rewind local image cache: %w", err)
+	}
+	uploadURL := baseUpload + "/__media_ingest/image-cache/" + url.PathEscape(fileName)
+	uploadCtx, cancel := context.WithTimeout(ctx, imageCacheDownloadTimeout())
+	defer cancel()
+	req, err := http.NewRequestWithContext(uploadCtx, http.MethodPut, uploadURL, file)
+	if err != nil {
+		return "", fmt.Errorf("create HK image upload: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Content-SHA256", hex.EncodeToString(hash.Sum(nil)))
+	req.Header.Set("Content-Type", mimeType)
+	req.ContentLength = stat.Size()
+	client := &http.Client{
+		Timeout: imageCacheDownloadTimeout(),
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload image to HK: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("HK image upload returned status %d", resp.StatusCode)
+	}
+	publicURL := publicBase + "/image-cache/" + url.PathEscape(fileName)
+	headReq, err := http.NewRequestWithContext(uploadCtx, http.MethodHead, publicURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create HK image verification: %w", err)
+	}
+	headResp, err := client.Do(headReq)
+	if err != nil {
+		return "", fmt.Errorf("verify HK image cache: %w", err)
+	}
+	headResp.Body.Close()
+	if headResp.StatusCode < http.StatusOK || headResp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("HK image verification returned status %d", headResp.StatusCode)
+	}
+	return publicURL, nil
 }
 
 func imageCacheDir() string {

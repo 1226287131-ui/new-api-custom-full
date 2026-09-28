@@ -1,7 +1,12 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -72,6 +77,53 @@ func TestCacheImageDataURLAcceptsRawURLSafeBase64(t *testing.T) {
 	contents, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, testPNGBytes(t), contents)
+}
+
+func TestCacheImageSourcesForNodeUploadsVerifiedImageToHK(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("IMAGE_CACHE_DIR", cacheDir)
+	t.Setenv("IMAGE_CACHE_PUBLIC_BASE_URL", "https://us.example")
+	t.Setenv("MEDIA_HK_INGEST_TOKEN", "test-token")
+
+	var uploaded []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			require.True(t, strings.HasPrefix(r.URL.Path, "/__media_ingest/image-cache/"))
+			require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+			uploaded, _ = io.ReadAll(r.Body)
+			digest := sha256.Sum256(uploaded)
+			require.Equal(t, hex.EncodeToString(digest[:]), r.Header.Get("X-Content-SHA256"))
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodHead:
+			require.True(t, strings.HasPrefix(r.URL.Path, "/image-cache/"))
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("MEDIA_HK_INGEST_BASE_URL", server.URL)
+	t.Setenv("MEDIA_HK_PUBLIC_BASE_URL", server.URL)
+
+	info := CacheImageSourcesForNode(nil, nil, []ImageCacheSource{{Raw: testPNGBytes(t), MIMEType: "image/png"}}, "hk")
+	require.Equal(t, "cached", info.Status)
+	require.Len(t, info.URLs, 1)
+	assert.Contains(t, info.URLs[0], server.URL+"/image-cache/")
+	assert.Equal(t, testPNGBytes(t), uploaded)
+}
+
+func TestCacheImageSourcesForNodeFallsBackToUSWhenHKUploadFails(t *testing.T) {
+	t.Setenv("IMAGE_CACHE_DIR", t.TempDir())
+	t.Setenv("IMAGE_CACHE_PUBLIC_BASE_URL", "https://us.example")
+	t.Setenv("MEDIA_HK_INGEST_TOKEN", "test-token")
+	t.Setenv("MEDIA_HK_INGEST_BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("MEDIA_HK_PUBLIC_BASE_URL", "https://hk.example")
+
+	info := CacheImageSourcesForNode(nil, nil, []ImageCacheSource{{Raw: testPNGBytes(t), MIMEType: "image/png"}}, "hk")
+	require.Equal(t, "cached", info.Status)
+	require.Len(t, info.URLs, 1)
+	assert.Contains(t, info.URLs[0], "https://us.example/image-cache/")
 }
 
 func TestCacheImageSourceDetectsImageBytesWhenContentTypeIsGeneric(t *testing.T) {

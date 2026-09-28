@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -119,6 +120,10 @@ type TaskPrivateData struct {
 	UpstreamTaskID        string                 `json:"upstream_task_id,omitempty"`          // 上游真实 task ID
 	ResultURL             string                 `json:"result_url,omitempty"`                // 任务成功后的结果 URL（视频地址等）
 	UpstreamResultURL     string                 `json:"upstream_result_url,omitempty"`       // 上游结果地址，仅供服务端缓存回源使用
+	MediaDeliveryNode     string                 `json:"media_delivery_node,omitempty"`       // 媒体交付节点快照（us/hk）；空值兼容历史任务并按 us 处理
+	HongKongMediaURL      string                 `json:"hong_kong_media_url,omitempty"`        // 香港节点媒体地址，上传校验成功后写入
+	HongKongMediaUploadedAt int64                `json:"hong_kong_media_uploaded_at,omitempty"` // 香港节点媒体上传完成时间
+	HongKongMediaLastError string                `json:"hong_kong_media_last_error,omitempty"`  // 最近一次香港节点上传错误（仅服务端）
 	VideoCachedAt         int64                  `json:"video_cached_at,omitempty"`           // 本地视频缓存完成时间，用于固定 48 小时保留期
 	VideoCacheAttempts    int                    `json:"video_cache_attempts,omitempty"`      // 本地视频缓存补偿尝试次数
 	VideoCacheNextRetryAt int64                  `json:"video_cache_next_retry_at,omitempty"` // 下次缓存补偿时间
@@ -195,6 +200,16 @@ func (t *Task) GetResultURL() string {
 	return t.FailReason
 }
 
+// EffectiveMediaDeliveryNode returns the node captured for this task.
+// Empty values are historical task rows and intentionally default to the US
+// direct node so introducing node selection never changes their behavior.
+func (p TaskPrivateData) EffectiveMediaDeliveryNode() string {
+	if p.MediaDeliveryNode == dto.MediaDeliveryNodeHK {
+		return dto.MediaDeliveryNodeHK
+	}
+	return dto.MediaDeliveryNodeUS
+}
+
 // GenerateTaskID 生成对外暴露的 task_xxxx 格式 ID
 func GenerateTaskID() string {
 	key, _ := common.GenerateRandomCharsKey(32)
@@ -213,6 +228,8 @@ func (p TaskPrivateData) Value() (driver.Value, error) {
 	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" &&
 		p.UpstreamResultURL == "" && p.VideoCachedAt == 0 && p.VideoCacheAttempts == 0 &&
 		p.VideoCacheNextRetryAt == 0 && p.VideoCacheLastError == "" &&
+		p.MediaDeliveryNode == "" && p.HongKongMediaURL == "" &&
+		p.HongKongMediaUploadedAt == 0 && p.HongKongMediaLastError == "" &&
 		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
 		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
 		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 {
@@ -524,6 +541,10 @@ type taskSnapshot struct {
 	FailReason            string
 	ResultURL             string
 	UpstreamResultURL     string
+	MediaDeliveryNode     string
+	HongKongMediaURL      string
+	HongKongMediaUploadedAt int64
+	HongKongMediaLastError string
 	VideoCachedAt         int64
 	VideoCacheAttempts    int
 	VideoCacheNextRetryAt int64
@@ -541,6 +562,10 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		s.FailReason == other.FailReason &&
 		s.ResultURL == other.ResultURL &&
 		s.UpstreamResultURL == other.UpstreamResultURL &&
+		s.MediaDeliveryNode == other.MediaDeliveryNode &&
+		s.HongKongMediaURL == other.HongKongMediaURL &&
+		s.HongKongMediaUploadedAt == other.HongKongMediaUploadedAt &&
+		s.HongKongMediaLastError == other.HongKongMediaLastError &&
 		s.VideoCachedAt == other.VideoCachedAt &&
 		s.VideoCacheAttempts == other.VideoCacheAttempts &&
 		s.VideoCacheNextRetryAt == other.VideoCacheNextRetryAt &&
@@ -559,6 +584,10 @@ func (t *Task) Snapshot() taskSnapshot {
 		FailReason:            t.FailReason,
 		ResultURL:             t.PrivateData.ResultURL,
 		UpstreamResultURL:     t.PrivateData.UpstreamResultURL,
+		MediaDeliveryNode:     t.PrivateData.MediaDeliveryNode,
+		HongKongMediaURL:      t.PrivateData.HongKongMediaURL,
+		HongKongMediaUploadedAt: t.PrivateData.HongKongMediaUploadedAt,
+		HongKongMediaLastError:  t.PrivateData.HongKongMediaLastError,
 		VideoCachedAt:         t.PrivateData.VideoCachedAt,
 		VideoCacheAttempts:    t.PrivateData.VideoCacheAttempts,
 		VideoCacheNextRetryAt: t.PrivateData.VideoCacheNextRetryAt,
@@ -577,6 +606,58 @@ func (Task *Task) Update() error {
 
 func (t *Task) UpdateQuota() error {
 	return DB.Model(t).Update("quota", t.Quota).Error
+}
+
+// UpdateVideoCacheMetadata changes only the video-cache fields in private_data.
+// It reloads the current JSON under a row lock so unrelated private task data
+// written since the caller loaded the task is preserved.
+func (t *Task) UpdateVideoCacheMetadata(resultURL string, cachedAt int64, attempts int, nextRetryAt int64, lastError string) error {
+	return t.updateVideoCacheMetadata(resultURL, cachedAt, attempts, nextRetryAt, lastError, nil)
+}
+
+// UpdateVideoCacheMetadataWithDelivery updates local cache metadata together
+// with the delivery-node snapshot. The row is reloaded under a lock, so status,
+// billing, plugin state, and other private data written concurrently remain
+// untouched. Passing delivery metadata explicitly is used by the HK upload
+// path; callers that only update the local cache should use the legacy wrapper.
+func (t *Task) UpdateVideoCacheMetadataWithDelivery(resultURL string, cachedAt int64, attempts int, nextRetryAt int64, lastError string, mediaDeliveryNode string, hongKongMediaURL string, hongKongMediaUploadedAt int64, hongKongMediaLastError string) error {
+	return t.updateVideoCacheMetadata(resultURL, cachedAt, attempts, nextRetryAt, lastError, &videoDeliveryMetadata{
+		mediaDeliveryNode:     mediaDeliveryNode,
+		hongKongMediaURL:      hongKongMediaURL,
+		hongKongMediaUploadedAt: hongKongMediaUploadedAt,
+		hongKongMediaLastError: hongKongMediaLastError,
+	})
+}
+
+type videoDeliveryMetadata struct {
+	mediaDeliveryNode       string
+	hongKongMediaURL        string
+	hongKongMediaUploadedAt int64
+	hongKongMediaLastError  string
+}
+
+func (t *Task) updateVideoCacheMetadata(resultURL string, cachedAt int64, attempts int, nextRetryAt int64, lastError string, delivery *videoDeliveryMetadata) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var current Task
+		if err := lockForUpdate(tx).Select("private_data").First(&current, t.ID).Error; err != nil {
+			return err
+		}
+
+		current.PrivateData.ResultURL = resultURL
+		current.PrivateData.VideoCachedAt = cachedAt
+		current.PrivateData.VideoCacheAttempts = attempts
+		current.PrivateData.VideoCacheNextRetryAt = nextRetryAt
+		current.PrivateData.VideoCacheLastError = lastError
+		if delivery != nil {
+			current.PrivateData.MediaDeliveryNode = delivery.mediaDeliveryNode
+			current.PrivateData.HongKongMediaURL = delivery.hongKongMediaURL
+			current.PrivateData.HongKongMediaUploadedAt = delivery.hongKongMediaUploadedAt
+			current.PrivateData.HongKongMediaLastError = delivery.hongKongMediaLastError
+		}
+
+		return tx.Model(&Task{}).Where("id = ?", t.ID).
+			UpdateColumn("private_data", current.PrivateData).Error
+	})
 }
 
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).

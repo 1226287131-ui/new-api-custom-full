@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
-	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -713,8 +712,20 @@ func videoProxy(c *gin.Context, public bool) {
 			return
 		}
 		service.MarkVideoTaskCached(task)
-		task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-		if updateErr := task.Update(); updateErr != nil {
+		publicURL, deliveryErr := service.PublishVideoTaskDelivery(c.Request.Context(), task, "")
+		task.PrivateData.ResultURL = publicURL
+		if deliveryErr != nil { task.PrivateData.HongKongMediaLastError = service.TruncateVideoCacheError(deliveryErr) }
+		if updateErr := task.UpdateVideoCacheMetadataWithDelivery(
+			task.PrivateData.ResultURL,
+			task.PrivateData.VideoCachedAt,
+			task.PrivateData.VideoCacheAttempts,
+			task.PrivateData.VideoCacheNextRetryAt,
+			task.PrivateData.VideoCacheLastError,
+			task.PrivateData.MediaDeliveryNode,
+			task.PrivateData.HongKongMediaURL,
+			task.PrivateData.HongKongMediaUploadedAt,
+			task.PrivateData.HongKongMediaLastError,
+		); updateErr != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to persist plugin video cache metadata for task %s: %s", taskID, updateErr.Error()))
 		}
 		if cachedPath, ok := service.CachedVideoPath(task.TaskID); ok {
@@ -732,8 +743,20 @@ func videoProxy(c *gin.Context, public bool) {
 	// never redirected to a provider URL.
 	if _, cacheErr := service.CacheVideoTask(c.Request.Context(), task, channel); cacheErr == nil {
 		service.MarkVideoTaskCached(task)
-		task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-		if updateErr := task.Update(); updateErr != nil {
+		publicURL, deliveryErr := service.PublishVideoTaskDelivery(c.Request.Context(), task, "")
+		task.PrivateData.ResultURL = publicURL
+		if deliveryErr != nil { task.PrivateData.HongKongMediaLastError = service.TruncateVideoCacheError(deliveryErr) }
+		if updateErr := task.UpdateVideoCacheMetadataWithDelivery(
+			task.PrivateData.ResultURL,
+			task.PrivateData.VideoCachedAt,
+			task.PrivateData.VideoCacheAttempts,
+			task.PrivateData.VideoCacheNextRetryAt,
+			task.PrivateData.VideoCacheLastError,
+			task.PrivateData.MediaDeliveryNode,
+			task.PrivateData.HongKongMediaURL,
+			task.PrivateData.HongKongMediaUploadedAt,
+			task.PrivateData.HongKongMediaLastError,
+		); updateErr != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to persist video cache metadata for task %s: %s", taskID, updateErr.Error()))
 		}
 		if cachedPath, ok := service.CachedVideoPath(task.TaskID); ok {
@@ -781,8 +804,20 @@ func videoProxy(c *gin.Context, public bool) {
 		}
 		if cacheErr == nil {
 			service.MarkVideoTaskCached(task)
-			task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
-			if updateErr := task.Update(); updateErr != nil {
+			publicURL, deliveryErr := service.PublishVideoTaskDelivery(c.Request.Context(), task, "")
+			task.PrivateData.ResultURL = publicURL
+			if deliveryErr != nil { task.PrivateData.HongKongMediaLastError = service.TruncateVideoCacheError(deliveryErr) }
+			if updateErr := task.UpdateVideoCacheMetadataWithDelivery(
+				task.PrivateData.ResultURL,
+				task.PrivateData.VideoCachedAt,
+				task.PrivateData.VideoCacheAttempts,
+				task.PrivateData.VideoCacheNextRetryAt,
+				task.PrivateData.VideoCacheLastError,
+				task.PrivateData.MediaDeliveryNode,
+				task.PrivateData.HongKongMediaURL,
+				task.PrivateData.HongKongMediaUploadedAt,
+				task.PrivateData.HongKongMediaLastError,
+			); updateErr != nil {
 				logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to persist legacy video cache source for task %s: %s", taskID, updateErr.Error()))
 			}
 			if cachedPath, ok := service.CachedVideoPath(task.TaskID); ok {

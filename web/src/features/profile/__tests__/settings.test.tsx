@@ -53,6 +53,7 @@ const settings = {
   accept_unset_model_ratio_model: true,
   record_ip_log: true,
   upstream_model_update_notify_enabled: true,
+  media_delivery_node: 'us',
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -97,6 +98,7 @@ describe('user settings saves across profile and security', () => {
       accept_unset_model_ratio_model: false,
       record_ip_log: true,
       upstream_model_update_notify_enabled: false,
+      media_delivery_node: 'us',
     })
   })
 
@@ -190,5 +192,49 @@ describe('user settings saves across profile and security', () => {
       quota_warning_threshold: 2700,
       record_ip_log: false,
     })
+  })
+
+  it('shows the delivery selector only when enabled and saves the selected node', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { ...profile, setting: JSON.stringify(settings) } },
+    })
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+
+    const { rerender } = render(
+      <NotificationTab profile={profile} onUpdate={vi.fn()} />
+    )
+    expect(screen.queryByRole('button', { name: 'Hong Kong Node' })).not.toBeInTheDocument()
+
+    rerender(
+      <NotificationTab
+        profile={profile}
+        onUpdate={vi.fn()}
+        mediaDeliveryNodeEnabled
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Hong Kong Node' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    expect(put).toHaveBeenCalledWith('/api/user/setting', {
+      ...settings,
+      media_delivery_node: 'hk',
+    })
+  })
+
+  it('defaults an unset delivery node to US Direct', () => {
+    render(
+      <NotificationTab
+        profile={{ ...profile, setting: JSON.stringify({ notify_type: 'email' }) }}
+        onUpdate={vi.fn()}
+        mediaDeliveryNodeEnabled
+      />
+    )
+    expect(screen.getByRole('button', { name: 'US Direct' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 })

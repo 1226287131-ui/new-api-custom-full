@@ -147,6 +147,7 @@ func TestTaskPrivateDataPersistsCacheRecoveryWithoutOtherFields(t *testing.T) {
 		{"retry count", TaskPrivateData{VideoCacheAttempts: 2}},
 		{"retry schedule", TaskPrivateData{VideoCacheNextRetryAt: 12346}},
 		{"retry error", TaskPrivateData{VideoCacheLastError: "temporary download failure"}},
+		{"media delivery", TaskPrivateData{MediaDeliveryNode: "hk", HongKongMediaURL: "https://cdn.example/video.mp4", HongKongMediaUploadedAt: 12347, HongKongMediaLastError: "previous transient error"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			task := &Task{TaskID: "task_private_" + tc.name, PrivateData: tc.data}
@@ -226,6 +227,29 @@ func TestSnapshotEqual_PluginStateAndPollFailures(t *testing.T) {
 		Status:       TaskStatusInProgress,
 		PluginState:  json.RawMessage(`{"req_key":"a"}`),
 		PollFailures: 3,
+	}))
+}
+
+func TestTaskPrivateData_EffectiveMediaDeliveryNodeDefaultsToUS(t *testing.T) {
+	assert.Equal(t, "us", (TaskPrivateData{}).EffectiveMediaDeliveryNode())
+	assert.Equal(t, "us", (TaskPrivateData{MediaDeliveryNode: "unknown"}).EffectiveMediaDeliveryNode())
+	assert.Equal(t, "hk", (TaskPrivateData{MediaDeliveryNode: "hk"}).EffectiveMediaDeliveryNode())
+}
+
+func TestSnapshotEqual_MediaDeliveryState(t *testing.T) {
+	base := taskSnapshot{
+		Status:                  TaskStatusSuccess,
+		MediaDeliveryNode:      "hk",
+		HongKongMediaURL:       "https://cdn.example/video.mp4",
+		HongKongMediaUploadedAt: 123,
+		HongKongMediaLastError: "",
+	}
+	assert.True(t, base.Equal(base))
+	assert.False(t, base.Equal(taskSnapshot{
+		Status:                  TaskStatusSuccess,
+		MediaDeliveryNode:      "us",
+		HongKongMediaURL:       base.HongKongMediaURL,
+		HongKongMediaUploadedAt: base.HongKongMediaUploadedAt,
 	}))
 }
 
@@ -407,4 +431,48 @@ func TestUpdateWithStatus_PersistsPluginStateAndPollFailures(t *testing.T) {
 	assert.EqualValues(t, TaskStatusInProgress, reloaded.Status)
 	assert.JSONEq(t, `{"req_key":"new"}`, string(reloaded.PrivateData.PluginState))
 	assert.Equal(t, 4, reloaded.PrivateData.PollFailures)
+}
+
+func TestUpdateVideoCacheMetadataPreservesTaskAndPrivateState(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID: "task_video_cache_metadata",
+		Status: TaskStatusSuccess,
+		Quota:  1234,
+		Data:   json.RawMessage(`{"prompt":"keep"}`),
+		PrivateData: TaskPrivateData{
+			UpstreamTaskID: "upstream-task",
+			PluginState:    json.RawMessage(`{"plugin":"keep"}`),
+			BillingSource:  "wallet",
+			ResultURL:      "https://old.example/video.mp4",
+			MediaDeliveryNode: "hk",
+		},
+	}
+	insertTask(t, task)
+
+	require.NoError(t, task.UpdateVideoCacheMetadata(
+		"https://new.example/video.mp4", 100, 2, 200, "",
+	))
+	require.NoError(t, task.UpdateVideoCacheMetadataWithDelivery(
+		"https://new.example/video.mp4", 101, 3, 201, "",
+		"hk", "https://hk.example/video.mp4", 101, "",
+	))
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, TaskStatusSuccess, reloaded.Status)
+	assert.Equal(t, 1234, reloaded.Quota)
+	assert.JSONEq(t, `{"prompt":"keep"}`, string(reloaded.Data))
+	assert.Equal(t, "https://new.example/video.mp4", reloaded.PrivateData.ResultURL)
+	assert.Equal(t, int64(101), reloaded.PrivateData.VideoCachedAt)
+	assert.Equal(t, 3, reloaded.PrivateData.VideoCacheAttempts)
+	assert.Equal(t, int64(201), reloaded.PrivateData.VideoCacheNextRetryAt)
+	assert.Empty(t, reloaded.PrivateData.VideoCacheLastError)
+	assert.Equal(t, "upstream-task", reloaded.PrivateData.UpstreamTaskID)
+	assert.JSONEq(t, `{"plugin":"keep"}`, string(reloaded.PrivateData.PluginState))
+	assert.Equal(t, "wallet", reloaded.PrivateData.BillingSource)
+	assert.Equal(t, "hk", reloaded.PrivateData.MediaDeliveryNode)
+	assert.Equal(t, "https://hk.example/video.mp4", reloaded.PrivateData.HongKongMediaURL)
+	assert.Equal(t, int64(101), reloaded.PrivateData.HongKongMediaUploadedAt)
 }

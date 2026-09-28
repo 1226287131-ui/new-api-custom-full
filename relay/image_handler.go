@@ -264,6 +264,12 @@ func prepareImageCacheJob(c *gin.Context, info *relaycommon.RelayInfo, body []by
 		UserID:    userID,
 		Request:   requestSnapshot,
 		Sources:   sources,
+		MediaDeliveryNode: func() string {
+			if service.MediaDeliveryEnabled() && info != nil && info.UserSetting.MediaDeliveryNode == dto.MediaDeliveryNodeHK {
+				return dto.MediaDeliveryNodeHK
+			}
+			return dto.MediaDeliveryNodeUS
+		}(),
 	}
 }
 

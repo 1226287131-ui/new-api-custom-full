@@ -179,13 +179,24 @@ func CacheVideoTaskResult(ctx context.Context, task *model.Task, channel *model.
 // MarkVideoCacheFailure records a recoverable local-cache failure. The task
 // remains SUCCESS; these fields make retries survive process restarts.
 func MarkVideoCacheFailure(task *model.Task, cacheErr error) {
-	if task == nil || task.PrivateData.VideoCachedAt > 0 {
+	if task == nil {
+		return
+	}
+	// A local cache timestamp alone is not enough to stop repair: an HK
+	// delivery may still be missing, or the local file may have disappeared.
+	if task.PrivateData.VideoCachedAt > 0 &&
+		(task.PrivateData.EffectiveMediaDeliveryNode() != "hk" || task.PrivateData.HongKongMediaURL != "") {
 		return
 	}
 	attempts := task.PrivateData.VideoCacheAttempts + 1
 	task.PrivateData.VideoCacheAttempts = attempts
 	task.PrivateData.VideoCacheLastError = truncateVideoCacheError(cacheErr)
 	task.PrivateData.VideoCacheNextRetryAt = time.Now().Add(videoCacheRetryDelay(attempts)).Unix()
+}
+
+// TruncateVideoCacheError exposes the bounded error text to delivery callers.
+func TruncateVideoCacheError(cacheErr error) string {
+	return truncateVideoCacheError(cacheErr)
 }
 
 // MarkVideoTaskCached records the first completed local cache write. It is

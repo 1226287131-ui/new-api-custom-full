@@ -1,0 +1,20 @@
+# Include inside the server block for the configured media hostname.
+# This hostname is supplied at deployment time; it is not hard-coded here.
+location ^~ /image-cache/ {
+    alias /srv/newapi-media/image-cache/;
+    try_files $request_filename =404;
+    limit_except GET HEAD { deny all; }
+    add_header Cache-Control "public, max-age=300" always;
+    add_header X-Content-Type-Options nosniff always;
+}
+
+location ^~ /video-cache/ {
+    alias /srv/newapi-media/video-cache/;
+    try_files $request_filename =404;
+    limit_except GET HEAD { deny all; }
+    add_header Cache-Control "public, max-age=300" always;
+    add_header X-Content-Type-Options nosniff always;
+    # Nginx static files support HEAD and byte ranges (206 / Content-Range) by default.
+}
+
+# Keep the ingest endpoint private to the application network. Do not expose it via this vhost.

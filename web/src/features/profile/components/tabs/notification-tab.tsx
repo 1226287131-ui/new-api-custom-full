@@ -49,9 +49,14 @@ const NOTIFICATION_ICONS: Record<NotifyType, typeof Mail> = {
 interface NotificationTabProps {
   profile: UserProfile | null
   onUpdate: () => void
+  mediaDeliveryNodeEnabled?: boolean
 }
 
-export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
+export function NotificationTab({
+  profile,
+  onUpdate,
+  mediaDeliveryNodeEnabled = false,
+}: NotificationTabProps) {
   const { t } = useTranslation()
   const isAdmin = (profile?.role ?? 0) >= ROLE.ADMIN
   const [loading, setLoading] = useState(false)
@@ -336,6 +341,46 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
           />
         </div>
       </div>
+
+      {mediaDeliveryNodeEnabled && (
+        <div className='space-y-2.5'>
+          <div className='space-y-1'>
+            <Label>{t('Image and video delivery')}</Label>
+            <p className='text-muted-foreground text-xs sm:text-sm'>
+              {t(
+                'Choose the delivery node for new cached images and videos.'
+              )}
+            </p>
+          </div>
+          <ToggleGroup
+            value={[settings.media_delivery_node]}
+            onValueChange={(value) => {
+              const nextValue = value[0]
+              if (nextValue === 'us' || nextValue === 'hk') {
+                updateField('media_delivery_node', nextValue)
+              }
+            }}
+            aria-label={t('Image and video delivery')}
+            variant='outline'
+            size='default'
+            spacing={2}
+            className='grid w-full grid-cols-2 gap-2 sm:w-fit sm:grid-cols-2'
+          >
+            <ToggleGroupItem
+              value='us'
+              className='h-auto min-h-10 min-w-0 whitespace-normal px-3'
+            >
+              {t('US Direct')}
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value='hk'
+              className='h-auto min-h-10 min-w-0 whitespace-normal px-3'
+            >
+              {t('Hong Kong Node')}
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+      )}
 
       {/* Save Button */}
       <div className='flex justify-end'>

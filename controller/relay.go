@@ -24,6 +24,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -653,6 +654,13 @@ func executeTaskSubmissionWith(
 	}
 	stage = "insert"
 	task := model.InitTask(result.Platform, relayInfo)
+	if constant.IsVideoTaskChannelType(relayInfo.ChannelType) {
+		node := strings.TrimSpace(relayInfo.UserSetting.MediaDeliveryNode)
+		if !service.MediaDeliveryEnabled() || node != kitdto.MediaDeliveryNodeHK {
+			node = kitdto.MediaDeliveryNodeUS
+		}
+		task.PrivateData.MediaDeliveryNode = node
+	}
 	if constant.IsVideoTaskChannelType(relayInfo.ChannelType) {
 		task.PrivateData.Key = relayInfo.ApiKey
 		if request, requestErr := relaycommon.GetTaskRequest(c); requestErr == nil {

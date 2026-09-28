@@ -630,7 +630,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			task.PrivateData.ResultURL = ""
 		} else {
 			MarkVideoTaskCached(task)
-			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+			var deliveryErr error
+			localVideoURL, deliveryErr = PublishVideoTaskDelivery(ctx, task, "")
+			if deliveryErr != nil {
+				task.PrivateData.HongKongMediaLastError = truncateVideoCacheError(deliveryErr)
+			}
 		}
 	}
 
@@ -670,7 +674,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 		if legacyTask && constant.IsVideoTaskChannelType(ch.Type) {
 			// Every asynchronous video exposes the same shareable local .mp4 URL.
-			task.PrivateData.ResultURL = taskcommon.BuildPublicVideoURL(task.TaskID)
+			task.PrivateData.ResultURL = localVideoURL
 		} else if taskResult.Url != "" {
 			task.PrivateData.ResultURL = taskResult.Url
 		} else {

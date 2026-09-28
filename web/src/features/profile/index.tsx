@@ -58,6 +58,9 @@ export function Profile() {
                   profile={profile}
                   loading={loading}
                   onProfileUpdate={refreshProfile}
+                  mediaDeliveryNodeEnabled={
+                    status?.media_delivery_node_enabled === true
+                  }
                 />
                 <LanguagePreferencesCard
                   profile={profile}
