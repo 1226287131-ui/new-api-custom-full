@@ -348,6 +348,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "ImageResolutionModelMap":
+		err = ratio_setting.ValidateImageResolutionModelMapJSONString(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "图片 1K 上游模型映射设置失败: " + err.Error(),
+			})
+			return
+		}
 	case "AudioRatio":
 		err = ratio_setting.UpdateAudioRatioByJSONString(option.Value.(string))
 		if err != nil {

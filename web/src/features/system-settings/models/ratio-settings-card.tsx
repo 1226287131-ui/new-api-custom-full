@@ -123,6 +123,7 @@ const createModelSchema = (t: Translate) =>
     CompletionRatio: createJsonStringField(t),
     ImageRatio: createJsonStringField(t),
     ImageResolutionPrice: createJsonStringField(t),
+    ImageResolutionModelMap: createJsonStringField(t),
     AudioRatio: createJsonStringField(t),
     AudioCompletionRatio: createJsonStringField(t),
     ExposeRatioEnabled: z.boolean(),
@@ -238,6 +239,9 @@ export function RatioSettingsCard({
     ImageResolutionPrice: normalizeJsonString(
       modelDefaults.ImageResolutionPrice
     ),
+    ImageResolutionModelMap: normalizeJsonString(
+      modelDefaults.ImageResolutionModelMap
+    ),
     AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
     AudioCompletionRatio: normalizeJsonString(
       modelDefaults.AudioCompletionRatio
@@ -282,6 +286,9 @@ export function RatioSettingsCard({
       ImageResolutionPrice: formatJsonForTextarea(
         modelDefaults.ImageResolutionPrice
       ),
+      ImageResolutionModelMap: formatJsonForTextarea(
+        modelDefaults.ImageResolutionModelMap
+      ),
       AudioRatio: formatJsonForTextarea(modelDefaults.AudioRatio),
       AudioCompletionRatio: formatJsonForTextarea(
         modelDefaults.AudioCompletionRatio
@@ -323,6 +330,9 @@ export function RatioSettingsCard({
       ImageResolutionPrice: normalizeJsonString(
         modelDefaults.ImageResolutionPrice
       ),
+      ImageResolutionModelMap: normalizeJsonString(
+        modelDefaults.ImageResolutionModelMap
+      ),
       AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
       AudioCompletionRatio: normalizeJsonString(
         modelDefaults.AudioCompletionRatio
@@ -346,6 +356,9 @@ export function RatioSettingsCard({
       ImageRatio: formatJsonForTextarea(modelDefaults.ImageRatio),
       ImageResolutionPrice: formatJsonForTextarea(
         modelDefaults.ImageResolutionPrice
+      ),
+      ImageResolutionModelMap: formatJsonForTextarea(
+        modelDefaults.ImageResolutionModelMap
       ),
       AudioRatio: formatJsonForTextarea(modelDefaults.AudioRatio),
       AudioCompletionRatio: formatJsonForTextarea(
@@ -398,6 +411,9 @@ export function RatioSettingsCard({
         CompletionRatio: normalizeJsonString(values.CompletionRatio),
         ImageRatio: normalizeJsonString(values.ImageRatio),
         ImageResolutionPrice: normalizeJsonString(values.ImageResolutionPrice),
+        ImageResolutionModelMap: normalizeJsonString(
+          values.ImageResolutionModelMap
+        ),
         AudioRatio: normalizeJsonString(values.AudioRatio),
         AudioCompletionRatio: normalizeJsonString(values.AudioCompletionRatio),
         ExposeRatioEnabled: values.ExposeRatioEnabled,
@@ -418,15 +434,24 @@ export function RatioSettingsCard({
         const visibilityChanged =
           normalized.ExposeRatioEnabled !==
           modelNormalizedDefaults.current.ExposeRatioEnabled
-        if (!changes.length && !visibilityChanged) {
+        const imageModelMapChanged =
+          normalized.ImageResolutionModelMap !==
+          modelNormalizedDefaults.current.ImageResolutionModelMap
+        if (!changes.length && !visibilityChanged && !imageModelMapChanged) {
           toast.info(t('No model price changes to save'))
           return
         }
-        await savePricing.mutateAsync(changes)
+        if (changes.length) await savePricing.mutateAsync(changes)
         if (visibilityChanged) {
           await updateOption.mutateAsync({
             key: 'ExposeRatioEnabled',
             value: normalized.ExposeRatioEnabled,
+          })
+        }
+        if (imageModelMapChanged) {
+          await updateOption.mutateAsync({
+            key: 'ImageResolutionModelMap',
+            value: normalized.ImageResolutionModelMap,
           })
         }
         const refreshed = await pricingQuery.refetch()

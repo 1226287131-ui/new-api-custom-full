@@ -59,6 +59,7 @@ type ModelFormValues = {
   CompletionRatio: string
   ImageRatio: string
   ImageResolutionPrice: string
+  ImageResolutionModelMap: string
   AudioRatio: string
   AudioCompletionRatio: string
   ExposeRatioEnabled: boolean
@@ -87,6 +88,7 @@ type ModelJsonFieldName =
   | 'CompletionRatio'
   | 'ImageRatio'
   | 'ImageResolutionPrice'
+  | 'ImageResolutionModelMap'
   | 'AudioRatio'
   | 'AudioCompletionRatio'
   | 'TaskBillingPricing'
@@ -134,6 +136,12 @@ const modelJsonFields: Array<{
     name: 'ImageResolutionPrice',
     labelKey: 'Image resolution pricing',
     descriptionKey: 'JSON map of model to 1K, 2K and 4K image prices.',
+  },
+  {
+    name: 'ImageResolutionModelMap',
+    labelKey: 'Image 1K upstream model mapping',
+    descriptionKey:
+      'JSON map of public image model → upstream model used only for 1K requests. Billing remains on the public model.',
   },
   {
     name: 'AudioRatio',
@@ -331,8 +339,12 @@ export const ModelRatioForm = memo(function ModelRatioForm({
           <div className='space-y-6'>
             <ImageResolutionPricingEditor
               value={form.watch('ImageResolutionPrice')}
+              modelMapValue={form.watch('ImageResolutionModelMap')}
               onChange={(value) =>
                 handleFieldChange('ImageResolutionPrice', value)
+              }
+              onModelMapChange={(value) =>
+                handleFieldChange('ImageResolutionModelMap', value)
               }
               onSave={handleSave}
               isSaving={isSaving}

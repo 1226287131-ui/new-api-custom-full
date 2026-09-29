@@ -110,6 +110,8 @@ type RelayInfo struct {
 	// separate from OriginModelName and UpstreamModelName so virtual pricing
 	// aliases never participate in channel selection or upstream routing.
 	BillingModelName string
+	// This flag only covers the optional resolution-specific upstream override.
+	IsImageResolutionModelMapped bool
 
 	RequestURLPath     string
 	RequestHeaders     map[string]string

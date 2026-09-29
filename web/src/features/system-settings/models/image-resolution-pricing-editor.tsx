@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Plus, Save, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -40,6 +40,7 @@ type ResolutionTier = '1K' | '2K' | '4K'
 type ResolutionPrices = Record<ResolutionTier, number>
 
 type ResolutionPriceMap = Record<string, ResolutionPrices>
+type ResolutionModelMap = Record<string, string>
 
 const tiers: ResolutionTier[] = ['1K', '2K', '4K']
 
@@ -50,10 +51,6 @@ function ResolutionPriceInput(props: {
   onCommit: (value: number) => void
 }) {
   const [draft, setDraft] = useState(String(props.value))
-
-  useEffect(() => {
-    setDraft(String(props.value))
-  }, [props.value])
 
   const commit = () => {
     const next = Number(draft)
@@ -87,7 +84,9 @@ function ResolutionPriceInput(props: {
 
 export function ImageResolutionPricingEditor(props: {
   value: string
+  modelMapValue: string
   onChange: (value: string) => void
+  onModelMapChange: (value: string) => void
   onSave: () => void | Promise<void>
   isSaving: boolean
 }) {
@@ -100,6 +99,14 @@ export function ImageResolutionPricingEditor(props: {
         silent: true,
       }),
     [props.value]
+  )
+  const modelMap = useMemo(
+    () =>
+      safeJsonParse<ResolutionModelMap>(props.modelMapValue, {
+        fallback: {},
+        silent: true,
+      }),
+    [props.modelMapValue]
   )
   const modelNames = useMemo(
     () => Object.keys(prices).sort((a, b) => a.localeCompare(b)),
@@ -114,6 +121,15 @@ export function ImageResolutionPricingEditor(props: {
       Object.entries(next).sort(([left], [right]) => left.localeCompare(right))
     )
     props.onChange(JSON.stringify(sorted, null, 2))
+  }
+
+  const updateModelMap = (next: ResolutionModelMap) => {
+    const cleaned = Object.fromEntries(
+      Object.entries(next)
+        .filter(([, mapped]) => mapped.trim() !== '')
+        .sort(([left], [right]) => left.localeCompare(right))
+    )
+    props.onModelMapChange(JSON.stringify(cleaned, null, 2))
   }
 
   const addModel = () => {
@@ -203,6 +219,11 @@ export function ImageResolutionPricingEditor(props: {
                             const next = { ...prices }
                             delete next[model]
                             updatePrices(next)
+                            if (modelMap[model] !== undefined) {
+                              const nextModelMap = { ...modelMap }
+                              delete nextModelMap[model]
+                              updateModelMap(nextModelMap)
+                            }
                           }}
                         >
                           <Trash2 />
@@ -222,17 +243,37 @@ export function ImageResolutionPricingEditor(props: {
                   <span className='text-muted-foreground text-xs font-medium md:sr-only'>
                     {tier}
                   </span>
-                  <ResolutionPriceInput
-                    model={model}
-                    tier={tier}
-                    value={prices[model][tier]}
-                    onCommit={(value) =>
-                      updatePrices({
-                        ...prices,
-                        [model]: { ...prices[model], [tier]: value },
-                      })
-                    }
-                  />
+                  <div className='space-y-1.5'>
+                    <ResolutionPriceInput
+                      key={`${tier}-${prices[model][tier]}`}
+                      model={model}
+                      tier={tier}
+                      value={prices[model][tier]}
+                      onCommit={(value) =>
+                        updatePrices({
+                          ...prices,
+                          [model]: { ...prices[model], [tier]: value },
+                        })
+                      }
+                    />
+                    {tier === '1K' && (
+                      <Input
+                        className='h-8 text-xs'
+                        value={modelMap[model] ?? ''}
+                        placeholder={t('Optional upstream model for 1K')}
+                        aria-label={`${model} ${t('Optional upstream model for 1K')}`}
+                        onChange={(event) => {
+                          const next = { ...modelMap }
+                          if (event.target.value.trim()) {
+                            next[model] = event.target.value
+                          } else {
+                            delete next[model]
+                          }
+                          updateModelMap(next)
+                        }}
+                      />
+                    )}
+                  </div>
                 </label>
               ))}
 
@@ -250,6 +291,11 @@ export function ImageResolutionPricingEditor(props: {
                           const next = { ...prices }
                           delete next[model]
                           updatePrices(next)
+                          if (modelMap[model] !== undefined) {
+                            const nextModelMap = { ...modelMap }
+                            delete nextModelMap[model]
+                            updateModelMap(nextModelMap)
+                          }
                         }}
                       >
                         <Trash2 />

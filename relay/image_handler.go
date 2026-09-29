@@ -40,6 +40,9 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
+	if err = helper.ApplyImageResolutionModelMapping(info, request, c.GetString("model_mapping")); err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
 
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
@@ -62,10 +65,26 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		}
 		if strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
 			requestBody = common.NewReplayableBodyReader(storage)
+			if info.IsImageResolutionModelMapped {
+				var contentType string
+				originalContentType := c.Request.Header.Get("Content-Type")
+				requestBody, contentType, err = helper.RewriteImageMultipartModel(requestBody, originalContentType, request.Model)
+				if err != nil {
+					return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+				}
+				c.Request.Header.Set("Content-Type", contentType)
+				defer c.Request.Header.Set("Content-Type", originalContentType)
+			}
 		} else {
 			jsonData, err = storage.Bytes()
 			if err != nil {
 				return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			if info.IsImageResolutionModelMapped {
+				jsonData, err = helper.RewriteImageRequestModel(jsonData, request.Model)
+				if err != nil {
+					return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+				}
 			}
 		}
 	} else {

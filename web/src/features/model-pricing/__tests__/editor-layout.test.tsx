@@ -365,6 +365,7 @@ function PricingFormFixture(props: {
     BillingExpr: '{}',
     PluginBillingExpr: '{}',
     ImageResolutionPrice: '{}',
+    ImageResolutionModelMap: '{}',
     TaskBillingPricing: '{}',
     ScheduledDiscount: '{}',
     ExposeRatioEnabled: false,

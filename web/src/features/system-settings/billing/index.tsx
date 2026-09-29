@@ -46,6 +46,7 @@ const defaultBillingSettings: BillingSettings = {
   CompletionRatio: '',
   ImageRatio: '',
   ImageResolutionPrice: '{}',
+  ImageResolutionModelMap: '{}',
   AudioRatio: '',
   AudioCompletionRatio: '',
   ExposeRatioEnabled: false,
