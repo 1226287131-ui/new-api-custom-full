@@ -101,7 +101,7 @@ func TestBuildRequestURLSupportsConfiguredOpenAIVideoEndpoints(t *testing.T) {
 	}
 }
 
-func TestBuildRequestBodyUsesAspectRatioForGenerationsEndpoints(t *testing.T) {
+func TestBuildRequestBodyKeepsUnifiedRatioForGenerationsEndpoints(t *testing.T) {
 	for _, endpoint := range []string{"/v1/video/generations", "/v1/videos/generations"} {
 		t.Run(endpoint, func(t *testing.T) {
 			upstreamPayload, c, adaptor, info := buildOpenAIVideoRequestBody(t, map[string]any{
@@ -115,10 +115,9 @@ func TestBuildRequestBodyUsesAspectRatioForGenerationsEndpoints(t *testing.T) {
 			require.NoError(t, err)
 			encoded, err := io.ReadAll(body)
 			require.NoError(t, err)
-			upstreamPayload = nil
 			require.NoError(t, common.Unmarshal(encoded, &upstreamPayload))
-			assert.Equal(t, "9:16", upstreamPayload["aspect_ratio"])
-			assert.NotContains(t, upstreamPayload, "ratio")
+			assert.Equal(t, "9:16", upstreamPayload["ratio"])
+			assert.NotContains(t, upstreamPayload, "aspect_ratio")
 		})
 	}
 }
@@ -155,7 +154,7 @@ func TestBuildRequestBodyPreservesSeedanceMediaAndPrompt(t *testing.T) {
 		"async":      true,
 	})
 
-	info.UpstreamModelName = "cvk-2-fast-720"
+	info.UpstreamModelName = "cvk-2.5-720"
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
 	remappedBody, err := io.ReadAll(body)
@@ -163,7 +162,7 @@ func TestBuildRequestBodyPreservesSeedanceMediaAndPrompt(t *testing.T) {
 	var remapped map[string]any
 	require.NoError(t, common.Unmarshal(remappedBody, &remapped))
 
-	assert.Equal(t, "cvk-2-fast-720", remapped["model"])
+	assert.Equal(t, "cvk-2.5-720", remapped["model"])
 	assert.Equal(t, prompt, remapped["prompt"])
 	assert.Equal(t, []any{"https://images.example/one.png", "https://images.example/two.png"}, upstreamPayload["images"])
 	assert.Equal(t, []any{"https://videos.example/camera.mp4"}, upstreamPayload["videos"])
@@ -171,9 +170,92 @@ func TestBuildRequestBodyPreservesSeedanceMediaAndPrompt(t *testing.T) {
 	assert.Equal(t, float64(10), upstreamPayload["duration"])
 	assert.Equal(t, "9:16", upstreamPayload["ratio"])
 	assert.Equal(t, "720p", upstreamPayload["resolution"])
-	assert.Equal(t, map[string]any{"client": "downstream"}, upstreamPayload["metadata"])
+	assert.NotContains(t, upstreamPayload, "metadata")
 	assert.NotContains(t, upstreamPayload, "async")
 	assert.Equal(t, float64(10), adaptor.EstimateBilling(c, info)["seconds"])
+}
+
+func TestDoRequestSendsUnifiedVideoFieldsAfterModelMapping(t *testing.T) {
+	service.InitHttpClient()
+	for _, endpoint := range []string{"/v1/videos", "/v1/video/generations", "/v1/videos/generations"} {
+		t.Run(endpoint, func(t *testing.T) {
+			type capturedRequest struct {
+				body        []byte
+				readErr     error
+				path        string
+				contentType string
+			}
+			captured := make(chan capturedRequest, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				captured <- capturedRequest{body: body, readErr: err, path: r.URL.Path, contentType: r.Header.Get("Content-Type")}
+				w.WriteHeader(http.StatusAccepted)
+			}))
+			defer server.Close()
+
+			const requestJSON = `{
+				"model":"video-v3", "prompt":"  animate @图片1 with @视频1\n  ",
+				"images":["https://assets.example/two.png","https://assets.example/one.png","https://assets.example/two.png"],
+				"videos":["https://assets.example/reference.mp4"],
+				"audios":["https://assets.example/music.mp3"],
+				"ratio":"9:16", "duration":7, "resolution":"720p", "watermark":false,
+				"notify_url":"https://client.example/video/callback?tag=a%2Bb", "notify_secret":"client-signing-secret",
+				"generate_audio":true, "seed":42, "metadata":{"client":"test"}, "async":true
+			}`
+			c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", strings.NewReader(requestJSON))
+			info.ChannelBaseUrl = server.URL
+			info.ChannelSetting.OpenAIVideoEndpoint = endpoint
+			info.OriginModelName = "video-v3"
+			info.UpstreamModelName = "cvk-2.5-720"
+			c.Set("model_mapping", `{"video-v3":"cvk-2.5-720"}`)
+			adaptor.Init(info)
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			resp, err := adaptor.DoRequest(c, info, body)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+			upstream := <-captured
+			require.NoError(t, upstream.readErr)
+			assert.Equal(t, endpoint, upstream.path)
+			assert.Equal(t, "application/json", upstream.contentType)
+			assert.JSONEq(t, `{
+				"model":"cvk-2.5-720", "prompt":"  animate @图片1 with @视频1\n  ",
+				"images":["https://assets.example/two.png","https://assets.example/one.png","https://assets.example/two.png"],
+				"videos":["https://assets.example/reference.mp4"],
+				"audios":["https://assets.example/music.mp3"],
+				"ratio":"9:16", "duration":7, "resolution":"720p", "watermark":false,
+				"notify_url":"https://client.example/video/callback?tag=a%2Bb", "notify_secret":"client-signing-secret"
+			}`, string(upstream.body))
+			request, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, 7, request.Duration)
+			assert.Equal(t, "720p", request.BillingResolution)
+			assert.Equal(t, float64(7), adaptor.EstimateBilling(c, info)["seconds"])
+		})
+	}
+}
+
+func TestUnifiedVideoPreservesEmptyArraysAndBillingDefaults(t *testing.T) {
+	upstream, c, adaptor, info := buildOpenAIVideoRequestBody(t, map[string]any{
+		"model": "video-v3", "prompt": "animate this", "images": []string{}, "videos": []string{}, "audios": []string{},
+	})
+	for _, field := range []string{"images", "videos", "audios"} {
+		assert.Equal(t, []any{}, upstream[field])
+	}
+	assert.NotContains(t, upstream, "watermark")
+	assert.NotContains(t, upstream, "notify_url")
+	assert.NotContains(t, upstream, "content")
+	assert.Equal(t, float64(4), upstream["duration"])
+	assert.Equal(t, "16:9", upstream["ratio"])
+	assert.Equal(t, "720p", upstream["resolution"])
+	request, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, 4, request.Duration)
+	assert.Equal(t, "720p", request.BillingResolution)
+	assert.Equal(t, float64(4), adaptor.EstimateBilling(c, info)["seconds"])
 }
 
 func TestBuildRequestBodyMapsLegacySecondsAndSize(t *testing.T) {
@@ -280,9 +362,9 @@ func TestBuildRequestBodySupportsSeedanceReferenceAliasesAndAspectRatio(t *testi
 	assert.Equal(t, []any{"https://images.example/one.png", "https://images.example/two.png"}, upstreamPayload["images"])
 	assert.Equal(t, []any{"https://videos.example/reference.mp4"}, upstreamPayload["videos"])
 	assert.Equal(t, []any{"https://audios.example/reference.mp3"}, upstreamPayload["audios"])
-	assert.Equal(t, true, upstreamPayload["generate_audio"])
-	assert.Equal(t, true, upstreamPayload["bypass_face_check"])
-	assert.Equal(t, 0.5, upstreamPayload["grid_strength"])
+	assert.NotContains(t, upstreamPayload, "generate_audio")
+	assert.NotContains(t, upstreamPayload, "bypass_face_check")
+	assert.NotContains(t, upstreamPayload, "grid_strength")
 	assert.NotContains(t, upstreamPayload, "aspect_ratio")
 	assert.NotContains(t, upstreamPayload, "reference_image_urls")
 }
@@ -303,9 +385,9 @@ func TestQYSeedance25SupportsMetaJingAliasesAndDefaults(t *testing.T) {
 	assert.Equal(t, float64(29), upstreamPayload["duration"])
 	assert.Equal(t, "1:1", upstreamPayload["ratio"])
 	assert.Equal(t, "480p", upstreamPayload["resolution"])
-	assert.Equal(t, false, upstreamPayload["generate_audio"])
-	assert.Equal(t, float64(4294967295), upstreamPayload["seed"])
-	assert.Equal(t, 0.5, upstreamPayload["grid_strength"])
+	assert.NotContains(t, upstreamPayload, "generate_audio")
+	assert.NotContains(t, upstreamPayload, "seed")
+	assert.NotContains(t, upstreamPayload, "grid_strength")
 	assert.NotContains(t, upstreamPayload, "params")
 	assert.NotContains(t, upstreamPayload, "aspectRatio")
 	request, err := relaycommon.GetTaskRequest(c)
@@ -314,26 +396,20 @@ func TestQYSeedance25SupportsMetaJingAliasesAndDefaults(t *testing.T) {
 	assert.Equal(t, "480x480", request.Size)
 }
 
-func TestQYSeedance25SupportsFrameURLsAndReferenceVideoLimit(t *testing.T) {
+func TestQYSeedance25KeepsUnifiedReferenceVideos(t *testing.T) {
 	upstreamPayload, _, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
-		"model":           "qy-seedance-2.5",
-		"prompt":          "animate the subject",
-		"duration":        18,
-		"resolution":      "720p",
-		"aspect_ratio":    "9:16",
-		"videos":          []string{"https://videos.example/reference.mp4"},
-		"start_frame_url": "https://images.example/start.png",
-		"end_frame_url":   "https://images.example/end.png",
+		"model":        "qy-seedance-2.5",
+		"prompt":       "animate the subject",
+		"duration":     18,
+		"resolution":   "720p",
+		"aspect_ratio": "9:16",
+		"videos":       []string{"https://videos.example/reference.mp4"},
 	})
 
 	assert.Equal(t, "720p", upstreamPayload["resolution"])
-	assert.Equal(t, "https://images.example/start.png", upstreamPayload["start_frame_url"])
-	assert.Equal(t, "https://images.example/end.png", upstreamPayload["end_frame_url"])
-	assert.Equal(t, true, upstreamPayload["generate_audio"])
-	assert.NotContains(t, upstreamPayload, "videos")
-	content, ok := upstreamPayload["content"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, "video_url", content[1].(map[string]any)["type"])
+	assert.Equal(t, []any{"https://videos.example/reference.mp4"}, upstreamPayload["videos"])
+	assert.NotContains(t, upstreamPayload, "content")
+	assert.NotContains(t, upstreamPayload, "generate_audio")
 }
 
 func TestQYSeedance25RejectsUnsupportedCompatibilityValues(t *testing.T) {
@@ -348,8 +424,6 @@ func TestQYSeedance25RejectsUnsupportedCompatibilityValues(t *testing.T) {
 		{name: "end frame without start", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "end_frame_url": "https://images.example/end.png"}, code: "invalid_frame_parameters"},
 		{name: "2K is unsupported", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "size": "2K"}, code: "invalid_video_format"},
 		{name: "4K is unsupported", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "size": "3840x2160"}, code: "invalid_video_format"},
-		{name: "seed below zero", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "seed": -1}, code: "invalid_video_parameters"},
-		{name: "grid strength above 0.5", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "grid_strength": 0.51}, code: "invalid_video_parameters"},
 	}
 
 	for _, test := range tests {
@@ -365,7 +439,7 @@ func TestQYSeedance25RejectsUnsupportedCompatibilityValues(t *testing.T) {
 	}
 }
 
-func TestVideoV3BuildsNativeMultimodalContentAndUses720p(t *testing.T) {
+func TestVideoV3PreservesUnifiedMediaAndExplicitResolution(t *testing.T) {
 	images := make([]string, 30)
 	for index := range images {
 		images[index] = fmt.Sprintf("https://images.example/reference-%02d.png", index)
@@ -383,7 +457,7 @@ func TestVideoV3BuildsNativeMultimodalContentAndUses720p(t *testing.T) {
 		"model":          "video-v3",
 		"prompt":         "animate all reference media with a smooth camera move",
 		"duration":       30,
-		"size":           "1024x576",
+		"size":           "1920x1080",
 		"resolution":     "1080p",
 		"images":         images,
 		"videos":         videos,
@@ -394,65 +468,46 @@ func TestVideoV3BuildsNativeMultimodalContentAndUses720p(t *testing.T) {
 
 	assert.Equal(t, float64(30), upstreamPayload["duration"])
 	assert.Equal(t, "16:9", upstreamPayload["ratio"])
-	assert.Equal(t, "720p", upstreamPayload["resolution"])
-	assert.Equal(t, false, upstreamPayload["generate_audio"])
-	assert.Equal(t, float64(-1), upstreamPayload["seed"])
+	assert.Equal(t, "1080p", upstreamPayload["resolution"])
+	assert.NotContains(t, upstreamPayload, "generate_audio")
+	assert.NotContains(t, upstreamPayload, "seed")
 	assert.Equal(t, "animate all reference media with a smooth camera move", upstreamPayload["prompt"])
-	assert.NotContains(t, upstreamPayload, "images")
-	assert.NotContains(t, upstreamPayload, "videos")
-	assert.NotContains(t, upstreamPayload, "audios")
-
-	content, ok := upstreamPayload["content"].([]any)
-	require.True(t, ok)
-	assert.Len(t, content, 1+len(images)+len(videos)+len(audios))
-	assert.Equal(t, "text", content[0].(map[string]any)["type"])
-	assert.Equal(t, "image_url", content[1].(map[string]any)["type"])
-	assert.Equal(t, "video_url", content[1+len(images)].(map[string]any)["type"])
-	assert.Equal(t, "audio_url", content[1+len(images)+len(videos)].(map[string]any)["type"])
+	for field, expected := range map[string][]string{"images": images, "videos": videos, "audios": audios} {
+		actual, ok := upstreamPayload[field].([]any)
+		require.True(t, ok, field)
+		require.Len(t, actual, len(expected), field)
+		for index, value := range expected {
+			assert.Equal(t, value, actual[index], "%s[%d]", field, index)
+		}
+	}
+	assert.NotContains(t, upstreamPayload, "content")
 
 	request, err := relaycommon.GetTaskRequest(c)
 	require.NoError(t, err)
 	assert.Equal(t, 30, request.Duration)
 	assert.Equal(t, "30", request.Seconds)
-	assert.Equal(t, "1280x720", request.Size)
-	assert.Equal(t, "720p", request.Metadata["resolution"])
+	assert.Equal(t, "1920x1080", request.Size)
+	assert.Equal(t, "1080p", request.Metadata["resolution"])
+	assert.Equal(t, "1080p", request.BillingResolution)
 	assert.Equal(t, "seedance-2.5", request.Metadata["video_profile"])
 	assert.Equal(t, float64(30), adaptor.EstimateBilling(c, nil)["seconds"])
 }
 
-func TestVideoV3AcceptsNativeContentAndInputReferenceArray(t *testing.T) {
-	nativeContent := []any{
-		map[string]any{"type": "text", "text": "animate the reference subject"},
-		map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://images.example/reference.png"}},
-		map[string]any{"type": "video_url", "video_url": map[string]any{"url": "https://videos.example/reference.mp4"}},
-		map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "https://audios.example/reference.mp3"}},
-	}
-	upstreamPayload, _, _, _ := buildOpenAIVideoRequestBody(t, map[string]any{
-		"model":      "video-v3",
-		"content":    nativeContent,
-		"seconds":    "4",
-		"ratio":      "auto",
-		"resolution": "720p",
-	})
-
-	assert.Equal(t, float64(4), upstreamPayload["duration"])
-	assert.Equal(t, "auto", upstreamPayload["ratio"])
-	assert.Equal(t, "720p", upstreamPayload["resolution"])
-	assert.Equal(t, nativeContent, upstreamPayload["content"])
-	assert.Equal(t, "animate the reference subject", upstreamPayload["prompt"])
-	assert.NotContains(t, upstreamPayload, "images")
-
+func TestVideoV3NormalizesLegacyInputReferencesToUnifiedArrays(t *testing.T) {
 	inputPayload := map[string]any{
 		"model":           "video-v3",
 		"prompt":          "animate the reference images",
 		"seconds":         "4",
-		"input_reference": []string{"https://images.example/one.png", "https://images.example/two.png"},
+		"input_reference": []string{"https://images.example/one.png", "https://images.example/two.png", "https://videos.example/camera.mp4", "https://audios.example/music.mp3"},
 		"resolution":      "720p",
 		"ratio":           "9:16",
 	}
-	upstreamPayload, _, _, _ = buildOpenAIVideoRequestBody(t, inputPayload)
+	upstreamPayload, _, _, _ := buildOpenAIVideoRequestBody(t, inputPayload)
 	assert.Equal(t, []any{"https://images.example/one.png", "https://images.example/two.png"}, upstreamPayload["images"])
+	assert.Equal(t, []any{"https://videos.example/camera.mp4"}, upstreamPayload["videos"])
+	assert.Equal(t, []any{"https://audios.example/music.mp3"}, upstreamPayload["audios"])
 	assert.NotContains(t, upstreamPayload, "input_reference")
+	assert.NotContains(t, upstreamPayload, "content")
 }
 
 func TestSeedance25ChannelProfileAcceptsCustomDownstreamModelName(t *testing.T) {
@@ -482,7 +537,7 @@ func TestSeedance25ChannelProfileAcceptsCustomDownstreamModelName(t *testing.T) 
 	assert.Equal(t, "provider-sd25-deployment", upstreamPayload["model"])
 	assert.Equal(t, float64(30), upstreamPayload["duration"])
 	assert.Equal(t, "9:16", upstreamPayload["ratio"])
-	assert.Equal(t, "720p", upstreamPayload["resolution"])
+	assert.Equal(t, "1080p", upstreamPayload["resolution"])
 	request, err := relaycommon.GetTaskRequest(c)
 	require.NoError(t, err)
 	assert.Equal(t, "seedance-2.5", request.Metadata["video_profile"])
@@ -523,6 +578,41 @@ func TestVideoV3RejectsOutOfRangeDurationAndReferenceCounts(t *testing.T) {
 			require.NotNil(t, taskErr)
 			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 			assert.Equal(t, test.code, taskErr.Code)
+		})
+	}
+}
+
+func TestDefaultOpenAIVideoAllowsThirtyReferenceImages(t *testing.T) {
+	images := make([]string, 31)
+	for index := range images {
+		images[index] = fmt.Sprintf("https://images.example/%d.png", index)
+	}
+
+	for _, test := range []struct {
+		name       string
+		imageCount int
+		wantError  bool
+	}{
+		{name: "thirty accepted", imageCount: 30},
+		{name: "thirty one rejected", imageCount: 31, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, err := common.Marshal(map[string]any{
+				"model":  "video-v3-480p",
+				"prompt": "animate the reference images",
+				"images": images[:test.imageCount],
+			})
+			require.NoError(t, err)
+			c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(body))
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			if test.wantError {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+				assert.Equal(t, "invalid_images", taskErr.Code)
+				assert.Equal(t, "images supports at most 30 reference images", taskErr.Message)
+				return
+			}
+			require.Nil(t, taskErr)
 		})
 	}
 }
@@ -571,10 +661,10 @@ func TestFast720pRejectsUnsupportedInputs(t *testing.T) {
 			"videos":   []string{"https://videos.example/reference.mp4"},
 		},
 		{
-			"model":          "seedance-2.0-fast-720p",
-			"duration":       5,
-			"images":         []string{"https://images.example/reference.png"},
-			"generate_audio": true,
+			"model":    "seedance-2.0-fast-720p",
+			"duration": 5,
+			"images":   []string{"https://images.example/reference.png"},
+			"audios":   []string{"https://audios.example/reference.mp3"},
 		},
 		{
 			"model":      "seedance-2.0-fast-720p",
@@ -674,6 +764,36 @@ func TestValidateRequestRejectsInvalidBillingAndMediaInputs(t *testing.T) {
 			name: "invalid video URL",
 			body: map[string]any{"model": "seedance-2.0", "prompt": "x", "videos": []string{"file:///tmp/reference.mp4"}},
 			code: "invalid_videos",
+		},
+		{
+			name: "native content is not silently dropped",
+			body: map[string]any{"model": "video-v3", "prompt": "x", "content": []any{map[string]any{"type": "image_url", "image_url": "https://assets.example/one.png"}}},
+			code: "invalid_content",
+		},
+		{
+			name: "duplicate images count toward the reference limit",
+			body: map[string]any{"model": "video-v3", "prompt": "x", "images": strings.Split(strings.Repeat("https://assets.example/one.png,", 30)+"https://assets.example/one.png", ",")},
+			code: "invalid_images",
+		},
+		{
+			name: "non string prompt",
+			body: map[string]any{"model": "video-v3", "prompt": 42},
+			code: "invalid_prompt",
+		},
+		{
+			name: "invalid watermark",
+			body: map[string]any{"model": "video-v3", "prompt": "x", "watermark": 1},
+			code: "invalid_parameters",
+		},
+		{
+			name: "non string callback URL",
+			body: map[string]any{"model": "video-v3", "prompt": "x", "notify_url": []string{"https://client.example/callback"}},
+			code: "invalid_parameters",
+		},
+		{
+			name: "non string callback secret",
+			body: map[string]any{"model": "video-v3", "prompt": "x", "notify_secret": 12345},
+			code: "invalid_parameters",
 		},
 	}
 

@@ -239,16 +239,22 @@ Optional environment variables:
   `seedance-2.5`, and `sd2.5`, preserving backward compatibility.
 - Accepts integer `duration` or string/integer `seconds` from 4 through 30;
   omitted duration defaults to 4 seconds.
-- Enforces 720p output metadata and billing even when a client sends another
-  resolution alias, while accepting the documented `auto` and fixed aspect
-  ratios.
+- Defaults to 720p and preserves explicit supported resolutions in the
+  upstream request, output metadata, and billing. Accepts `auto` and fixed
+  aspect ratios.
 - Supports up to 30 image, 10 video, and 10 audio references. URL-based
   `input_reference` arrays are accepted; recognizable video and audio file
   extensions are classified as their corresponding media type.
-- Accepts the native `content[]` contract (`text`, `image_url`, `video_url`,
-  `audio_url`). When a client uses separate `videos` or `audios` arrays, the
-  adaptor converts the request into the native `content[]` format required by
-  the upstream.
+- Openai Video submissions use the unified top-level fields `model`, `prompt`,
+  `images`, `videos`, `audios`, `ratio`, `duration`, `resolution`, `watermark`,
+  `notify_url`, and `notify_secret`. Media arrays keep their order and repeated
+  references, and explicit `watermark: false` is preserved. Legacy aliases and
+  multipart uploads normalize to these fields; the upstream endpoint and model
+  mapping remain configurable. Generic profiles accept up to 30 images.
+- Native `content[]` and start/end-frame fields return HTTP 400 with migration
+  guidance instead of silently losing media. Other fields outside the unified
+  schema are omitted. Requests are no longer converted into `content[]` or
+  renamed to `aspect_ratio`, including on `/v1/video/generations`.
 
 ## Grok Video native relay
 

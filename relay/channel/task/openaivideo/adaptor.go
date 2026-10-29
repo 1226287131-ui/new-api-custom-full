@@ -39,7 +39,7 @@ const (
 )
 
 const (
-	defaultMaxReferenceImages = 9
+	defaultMaxReferenceImages = 30
 	defaultMaxReferenceVideos = 3
 	defaultMaxReferenceAudios = 3
 
@@ -59,26 +59,18 @@ type videoProfile struct {
 	maxReferenceImages   int
 	maxReferenceVideos   int
 	maxReferenceAudios   int
-	forceResolution      string
 	defaultResolution    string
 	allowedResolutions   []string
 	allowedRatios        []string
 	allowAutoRatio       bool
-	nativeMultimodalMode bool
-	supportsFrames       bool
-	supportsEndFrame     bool
-	framesConflictImages bool
 	maxDurationWithVideo int
-	defaultGenerateAudio bool
-	validateSeed         bool
-	strictGridStrength   bool
 }
 
 var defaultVideoProfile = videoProfile{
-	name:               "default",
-	defaultDuration:    5,
-	minDuration:        5,
-	maxDuration:        30,
+	name:            "default",
+	defaultDuration: 5,
+	minDuration:     5,
+	maxDuration:     30,
 	// Accept any integer duration within the profile's 5-30 second range.
 	// The upstream API does not require the legacy 5/10/15-second grid.
 	allowedDurations:   nil,
@@ -88,16 +80,15 @@ var defaultVideoProfile = videoProfile{
 }
 
 var seedance25VideoProfile = videoProfile{
-	name:                 "seedance-2.5",
-	defaultDuration:      4,
-	minDuration:          4,
-	maxDuration:          30,
-	maxReferenceImages:   sd25MaxReferenceImages,
-	maxReferenceVideos:   sd25MaxReferenceVideos,
-	maxReferenceAudios:   sd25MaxReferenceAudios,
-	forceResolution:      "720p",
-	allowAutoRatio:       true,
-	nativeMultimodalMode: true,
+	name:               "seedance-2.5",
+	defaultDuration:    4,
+	minDuration:        4,
+	maxDuration:        30,
+	maxReferenceImages: sd25MaxReferenceImages,
+	maxReferenceVideos: sd25MaxReferenceVideos,
+	maxReferenceAudios: sd25MaxReferenceAudios,
+	defaultResolution:  "720p",
+	allowAutoRatio:     true,
 }
 
 var qySeedance25VideoProfile = videoProfile{
@@ -111,22 +102,7 @@ var qySeedance25VideoProfile = videoProfile{
 	defaultResolution:    "480p",
 	allowedResolutions:   []string{"480p", "720p"},
 	allowedRatios:        []string{"16:9", "1:1", "9:16"},
-	nativeMultimodalMode: true,
-	supportsFrames:       true,
-	supportsEndFrame:     true,
-	framesConflictImages: true,
 	maxDurationWithVideo: 18,
-	defaultGenerateAudio: true,
-	validateSeed:         true,
-	strictGridStrength:   true,
-}
-
-type multimodalContent struct {
-	items  []any
-	prompt string
-	images []string
-	videos []string
-	audios []string
 }
 
 type normalizedVideoRequest struct {
@@ -165,11 +141,19 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
+	if form != nil {
+		defer form.RemoveAll()
+	}
 	if err := normalizeOpenAIVideoAliases(payload); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_parameters", http.StatusBadRequest)
 	}
-	if form != nil {
-		defer form.RemoveAll()
+	if content, exists := payload["content"]; exists && content != nil {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content is not supported; use prompt, images, videos, and audios"), "invalid_content", http.StatusBadRequest)
+	}
+	for _, key := range []string{"start_frame_url", "end_frame_url"} {
+		if value, exists := payload[key]; exists && value != nil {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("%s is not supported; use images", key), "invalid_frame_parameters", http.StatusBadRequest)
+		}
 	}
 
 	modelName := payloadString(payload, "model")
@@ -194,7 +178,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(err, "invalid_video_format", http.StatusBadRequest)
 	}
 
-	prompt := strings.TrimSpace(payloadString(payload, "prompt"))
+	prompt, validPrompt := payload["prompt"].(string)
+	if value, exists := payload["prompt"]; exists && value != nil && !validPrompt {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt must be a string"), "invalid_prompt", http.StatusBadRequest)
+	}
 	images, err := collectPayloadStringSlices(payload, "images", "images[]", "image_references", "reference_image_urls", "ref_image")
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_images", http.StatusBadRequest)
@@ -212,35 +199,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	}
-	if profile.nativeMultimodalMode {
-		images, videos, audios = appendSD25InputReferences(images, videos, audios, inputReferences)
-	} else {
-		for _, inputReference := range inputReferences {
-			images = appendUnique(images, inputReference)
-		}
-	}
-
-	var nativeContent *multimodalContent
-	if profile.nativeMultimodalMode {
-		nativeContent, err = parseMultimodalContent(payload)
-		if err != nil {
-			return service.TaskErrorWrapperLocal(err, "invalid_content", http.StatusBadRequest)
-		}
-		if nativeContent != nil {
-			hasUploadedReference := form != nil && len(form.File["input_reference"]) > 0
-			if prompt != "" || len(images) > 0 || len(videos) > 0 || len(audios) > 0 || hasUploadedReference {
-				return service.TaskErrorWrapperLocal(
-					fmt.Errorf("content cannot be combined with prompt or top-level reference media"),
-					"invalid_content",
-					http.StatusBadRequest,
-				)
-			}
-			prompt = nativeContent.prompt
-			images = nativeContent.images
-			videos = nativeContent.videos
-			audios = nativeContent.audios
-		}
-	}
+	images, videos, audios = appendInputReferences(images, videos, audios, inputReferences)
 
 	if form != nil {
 		for _, fileHeader := range form.File["input_reference"] {
@@ -269,49 +228,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(fmt.Errorf("duration with reference videos must be at most %d seconds", profile.maxDurationWithVideo), "invalid_duration", http.StatusBadRequest)
 	}
 
-	startFrameURL := payloadString(payload, "start_frame_url")
-	endFrameURL := payloadString(payload, "end_frame_url")
-	if (startFrameURL != "" || endFrameURL != "") && !profile.supportsFrames {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("start_frame_url and end_frame_url are not supported for this model"), "invalid_frame_parameters", http.StatusBadRequest)
-	}
-	if endFrameURL != "" && startFrameURL == "" {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("end_frame_url requires start_frame_url"), "invalid_frame_parameters", http.StatusBadRequest)
-	}
-	if startFrameURL != "" {
-		if err := validateMediaURLs("images", []string{startFrameURL}); err != nil {
-			return service.TaskErrorWrapperLocal(fmt.Errorf("start_frame_url %w", err), "invalid_frame_parameters", http.StatusBadRequest)
-		}
-	}
-	if endFrameURL != "" {
-		if !profile.supportsEndFrame {
-			return service.TaskErrorWrapperLocal(fmt.Errorf("end_frame_url is not supported for this model"), "invalid_frame_parameters", http.StatusBadRequest)
-		}
-		if err := validateMediaURLs("images", []string{endFrameURL}); err != nil {
-			return service.TaskErrorWrapperLocal(fmt.Errorf("end_frame_url %w", err), "invalid_frame_parameters", http.StatusBadRequest)
-		}
-	}
-	if profile.framesConflictImages && startFrameURL != "" && len(images) > 0 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("start/end frame mode cannot be combined with images"), "invalid_frame_parameters", http.StatusBadRequest)
-	}
-
 	fast720 := isFast720Model(mappedModelName)
-	if prompt == "" && (!fast720 || len(images) == 0) {
+	if strings.TrimSpace(prompt) == "" && (!fast720 || len(images) == 0) {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt field is required unless the fast-720p model receives at least one image"), "invalid_prompt", http.StatusBadRequest)
 	}
 
-	generateAudio, hasGenerateAudio, err := payloadBool(payload, "generate_audio")
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_generate_audio", http.StatusBadRequest)
-	}
-	if fast720 && (generateAudio || len(videos) > 0 || len(audios) > 0) {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("fast-720p does not support generate_audio, videos, or audios"), "invalid_fast_720p_parameters", http.StatusBadRequest)
-	}
-	if err := validateOptionalVideoParameters(payload, profile); err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_video_parameters", http.StatusBadRequest)
-	}
-	if profile.defaultGenerateAudio && !hasGenerateAudio {
-		generateAudio = true
-		hasGenerateAudio = true
+	if fast720 && (len(videos) > 0 || len(audios) > 0) {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("fast-720p does not support videos or audios"), "invalid_fast_720p_parameters", http.StatusBadRequest)
 	}
 	if fast720 && resolution != "720p" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("fast-720p only supports 720p resolution"), "invalid_video_format", http.StatusBadRequest)
@@ -330,75 +253,44 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := validateMediaURLs("audios", audios); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_audios", http.StatusBadRequest)
 	}
-	usesMultimodalContent := profile.nativeMultimodalMode && (nativeContent != nil || len(videos) > 0 || len(audios) > 0)
-	var upstreamContent []any
-	if usesMultimodalContent {
-		if nativeContent != nil {
-			upstreamContent = nativeContent.items
-		} else {
-			upstreamContent = buildMultimodalContent(prompt, images, videos, audios)
-		}
-	}
 
-	upstreamPayload := make(map[string]any, len(payload)+6)
-	for key, value := range payload {
-		upstreamPayload[key] = value
+	// Emit only the unified video schema. Profile selection controls validation,
+	// never the shape of reference media or the upstream field names.
+	upstreamPayload := map[string]any{
+		"model": modelName, "duration": duration, "ratio": ratio, "resolution": resolution,
 	}
-	for _, key := range []string{
-		"seconds", "size", "image", "input_reference", "quality", "async",
-		"aspect_ratio", "aspectRatio", "images[]", "videos[]", "audios[]",
-		"input_reference[]", "reference_image_urls", "image_references", "ref_image",
-		"reference_videos", "video_references", "ref_video", "reference_audios", "audio_reference", "ref_audio",
-		"audio", "generateAudio", "params",
-	} {
-		delete(upstreamPayload, key)
-	}
-	if profile.nativeMultimodalMode {
-		for _, key := range []string{"content", "images", "videos", "audios"} {
-			delete(upstreamPayload, key)
+	for _, key := range []string{"ratio", "resolution"} {
+		if value, exists := payload[key]; exists {
+			text, ok := value.(string)
+			if !ok || strings.TrimSpace(text) == "" {
+				return service.TaskErrorWrapperLocal(fmt.Errorf("%s must be a non-empty string", key), "invalid_video_format", http.StatusBadRequest)
+			}
+			upstreamPayload[key] = text
 		}
 	}
-	upstreamPayload["model"] = modelName
-	upstreamPayload["duration"] = duration
-	endpoint := a.endpointForInfo(info)
-	if isOpenAIVideoGenerationsEndpoint(endpoint) {
-		upstreamPayload["aspect_ratio"] = ratio
-		delete(upstreamPayload, "ratio")
-	} else {
-		upstreamPayload["ratio"] = ratio
-	}
-	upstreamPayload["resolution"] = resolution
-	if startFrameURL != "" {
-		upstreamPayload["start_frame_url"] = startFrameURL
-	}
-	if endFrameURL != "" {
-		upstreamPayload["end_frame_url"] = endFrameURL
-	}
-	if hasGenerateAudio {
-		if fast720 {
-			delete(upstreamPayload, "generate_audio")
-		} else {
-			upstreamPayload["generate_audio"] = generateAudio
-		}
-	}
-	if usesMultimodalContent {
-		upstreamPayload["content"] = upstreamContent
-		// The SD2.5 gateway requires a top-level prompt even when content carries text.
+	if validPrompt {
 		upstreamPayload["prompt"] = prompt
-	} else {
-		if prompt != "" {
-			upstreamPayload["prompt"] = prompt
-		} else {
-			delete(upstreamPayload, "prompt")
+	}
+	for key, values := range map[string][]string{"images": images, "videos": videos, "audios": audios} {
+		if len(values) > 0 {
+			upstreamPayload[key] = values
+		} else if _, exists := payload[key]; exists {
+			upstreamPayload[key] = []string{}
 		}
-		if len(images) > 0 {
-			upstreamPayload["images"] = images
-		}
-		if len(videos) > 0 {
-			upstreamPayload["videos"] = videos
-		}
-		if len(audios) > 0 {
-			upstreamPayload["audios"] = audios
+	}
+	watermark, hasWatermark, err := payloadBool(payload, "watermark")
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_parameters", http.StatusBadRequest)
+	}
+	if hasWatermark {
+		upstreamPayload["watermark"] = watermark
+	}
+	for _, key := range []string{"notify_url", "notify_secret"} {
+		if value, exists := payload[key]; exists {
+			if _, ok := value.(string); !ok {
+				return service.TaskErrorWrapperLocal(fmt.Errorf("%s must be a string", key), "invalid_parameters", http.StatusBadRequest)
+			}
+			upstreamPayload[key] = value
 		}
 	}
 
@@ -420,7 +312,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		},
 	}
 	action := constant.TaskActionTextGenerate
-	if len(images)+len(videos)+len(audios) > 0 || startFrameURL != "" || endFrameURL != "" {
+	if len(images)+len(videos)+len(audios) > 0 {
 		action = constant.TaskActionGenerate
 	}
 
@@ -472,12 +364,6 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		payload[key] = value
 	}
 	payload["model"] = info.UpstreamModelName
-	if isOpenAIVideoGenerationsEndpoint(a.endpointForInfo(info)) {
-		if ratio, exists := payload["ratio"]; exists {
-			payload["aspect_ratio"] = ratio
-		}
-		delete(payload, "ratio")
-	}
 
 	body, err := common.Marshal(payload)
 	if err != nil {
@@ -572,10 +458,6 @@ func normalizeOpenAIVideoEndpoint(endpoint string) string {
 	default:
 		return openAIVideoEndpointStandard
 	}
-}
-
-func isOpenAIVideoGenerationsEndpoint(endpoint string) bool {
-	return endpoint == openAIVideoEndpointLegacy || endpoint == openAIVideoEndpointGenerations
 }
 
 func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error) {
@@ -759,7 +641,7 @@ func normalizeOpenAIVideoAliases(payload map[string]any) error {
 			return fmt.Errorf("params must be an object")
 		}
 		for _, key := range []string{
-			"duration", "seconds", "ratio", "aspect_ratio", "aspectRatio", "audio", "generate_audio", "generateAudio",
+			"duration", "seconds", "ratio", "aspect_ratio", "aspectRatio", "resolution", "watermark", "notify_url", "notify_secret",
 			"images", "image", "image_references", "reference_image_urls", "input_reference",
 			"videos", "video_references", "reference_videos", "audios", "audio_reference", "reference_audios",
 			"start_frame_url", "end_frame_url", "seed", "bypass_face_check", "grid_strength",
@@ -785,7 +667,6 @@ func normalizeOpenAIVideoAliases(payload map[string]any) error {
 	}
 	copyAlias("duration", "seconds")
 	copyAlias("ratio", "aspect_ratio", "aspectRatio")
-	copyAlias("generate_audio", "audio", "generateAudio")
 	return nil
 }
 
@@ -898,9 +779,7 @@ func normalizeVideoFormat(payload map[string]any, profile videoProfile) (string,
 			resolution = sizeResolution
 		}
 	}
-	if profile.forceResolution != "" {
-		resolution = profile.forceResolution
-	} else if resolution == "" {
+	if resolution == "" {
 		if profile.defaultResolution != "" {
 			resolution = profile.defaultResolution
 		} else {
@@ -925,7 +804,7 @@ func normalizeVideoFormat(payload map[string]any, profile videoProfile) (string,
 		}
 		return "", "", "", fmt.Errorf("ratio must be one of 21:9, 16:9, 4:3, 1:1, 3:4, or 9:16")
 	}
-	if profile.forceResolution == "" && !isSupportedProfileResolution(resolution, profile) {
+	if !isSupportedProfileResolution(resolution, profile) {
 		return "", "", "", fmt.Errorf("resolution must be one of 480p, 720p, 1080p, 2K, or 4K")
 	}
 	return ratio, resolution, canonicalSize(ratio, resolution), nil
@@ -968,13 +847,6 @@ func isSupportedVideoRatio(ratio string, allowAuto bool) bool {
 }
 
 func videoFormatFromSize(size string, profile videoProfile) (string, string, error) {
-	if profile.forceResolution != "" {
-		ratio, err := ratioFromSize(size)
-		if err != nil {
-			return "", "", err
-		}
-		return ratio, profile.forceResolution, nil
-	}
 	normalizedSize := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(size, "×", "x")))
 	switch normalizedSize {
 	case "2k":
@@ -1145,7 +1017,7 @@ func canonicalSize(ratio, resolution string) string {
 	return fmt.Sprintf("%dx%d", width, height)
 }
 
-func appendSD25InputReferences(images, videos, audios, inputReferences []string) ([]string, []string, []string) {
+func appendInputReferences(images, videos, audios, inputReferences []string) ([]string, []string, []string) {
 	for _, inputReference := range inputReferences {
 		switch inputReferenceMediaKind(inputReference) {
 		case "video":
@@ -1180,107 +1052,6 @@ func inputReferenceMediaKind(inputReference string) string {
 	default:
 		return "image"
 	}
-}
-
-func parseMultimodalContent(payload map[string]any) (*multimodalContent, error) {
-	value, exists := payload["content"]
-	if !exists || value == nil {
-		return nil, nil
-	}
-	items, ok := value.([]any)
-	if !ok {
-		return nil, fmt.Errorf("content must be an array")
-	}
-	if len(items) == 0 {
-		return nil, fmt.Errorf("content must not be empty")
-	}
-
-	result := &multimodalContent{items: items}
-	promptParts := make([]string, 0, len(items))
-	for index, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("content[%d] must be an object", index)
-		}
-		contentType := strings.ToLower(payloadString(object, "type"))
-		switch contentType {
-		case "text":
-			text := strings.TrimSpace(payloadString(object, "text"))
-			if text == "" {
-				return nil, fmt.Errorf("content[%d].text must not be empty", index)
-			}
-			promptParts = append(promptParts, text)
-		case "image_url":
-			mediaURL, err := multimodalContentURL(object, "image_url")
-			if err != nil {
-				return nil, fmt.Errorf("content[%d] %w", index, err)
-			}
-			result.images = appendUnique(result.images, mediaURL)
-		case "video_url":
-			mediaURL, err := multimodalContentURL(object, "video_url")
-			if err != nil {
-				return nil, fmt.Errorf("content[%d] %w", index, err)
-			}
-			result.videos = appendUnique(result.videos, mediaURL)
-		case "audio_url":
-			mediaURL, err := multimodalContentURL(object, "audio_url")
-			if err != nil {
-				return nil, fmt.Errorf("content[%d] %w", index, err)
-			}
-			result.audios = appendUnique(result.audios, mediaURL)
-		default:
-			return nil, fmt.Errorf("content[%d].type must be text, image_url, video_url, or audio_url", index)
-		}
-	}
-	result.prompt = strings.Join(promptParts, "\n")
-	return result, nil
-}
-
-func multimodalContentURL(item map[string]any, key string) (string, error) {
-	value, exists := item[key]
-	if !exists || value == nil {
-		return "", fmt.Errorf("%s.url is required", key)
-	}
-
-	var mediaURL string
-	switch typed := value.(type) {
-	case string:
-		mediaURL = strings.TrimSpace(typed)
-	case map[string]any:
-		mediaURL = payloadString(typed, "url")
-	default:
-		return "", fmt.Errorf("%s must be a URL string or object", key)
-	}
-	if mediaURL == "" {
-		return "", fmt.Errorf("%s.url is required", key)
-	}
-	return mediaURL, nil
-}
-
-func buildMultimodalContent(prompt string, images, videos, audios []string) []any {
-	content := make([]any, 0, 1+len(images)+len(videos)+len(audios))
-	if prompt != "" {
-		content = append(content, map[string]any{"type": "text", "text": prompt})
-	}
-	for _, imageURL := range images {
-		content = append(content, map[string]any{
-			"type":      "image_url",
-			"image_url": map[string]any{"url": imageURL},
-		})
-	}
-	for _, videoURL := range videos {
-		content = append(content, map[string]any{
-			"type":      "video_url",
-			"video_url": map[string]any{"url": videoURL},
-		})
-	}
-	for _, audioURL := range audios {
-		content = append(content, map[string]any{
-			"type":      "audio_url",
-			"audio_url": map[string]any{"url": audioURL},
-		})
-	}
-	return content
 }
 
 func parseInteger(value any) (int, error) {
@@ -1344,13 +1115,12 @@ func payloadStringSlice(payload map[string]any, keys ...string) ([]string, error
 		default:
 			return nil, fmt.Errorf("%s must be a string or an array of strings", key)
 		}
-		trimmed := make([]string, 0, len(result))
 		for _, item := range result {
-			if item = strings.TrimSpace(item); item != "" {
-				trimmed = append(trimmed, item)
+			if strings.TrimSpace(item) == "" || strings.TrimSpace(item) != item {
+				return nil, fmt.Errorf("%s must contain non-empty URLs without surrounding whitespace", key)
 			}
 		}
-		return trimmed, nil
+		return result, nil
 	}
 	return nil, nil
 }
@@ -1362,9 +1132,7 @@ func collectPayloadStringSlices(payload map[string]any, keys ...string) ([]strin
 		if err != nil {
 			return nil, err
 		}
-		for _, value := range values {
-			result = appendUnique(result, value)
-		}
+		result = append(result, values...)
 	}
 	return result, nil
 }
@@ -1437,64 +1205,6 @@ func payloadBool(payload map[string]any, key string) (bool, bool, error) {
 		return false, true, fmt.Errorf("%s must be a boolean", key)
 	}
 	return false, true, fmt.Errorf("%s must be a boolean", key)
-}
-
-func validateOptionalVideoParameters(payload map[string]any, profile videoProfile) error {
-	if value, exists := payload["bypass_face_check"]; exists && value != nil {
-		if _, _, err := payloadBool(map[string]any{"bypass_face_check": value}, "bypass_face_check"); err != nil {
-			return err
-		}
-	}
-	if value, exists := payload["grid_strength"]; exists && value != nil {
-		strength, err := parseFiniteFloat(value)
-		minStrength := 0.0
-		maxStrength := 1.0
-		if profile.strictGridStrength {
-			minStrength = 0.01
-			maxStrength = 0.5
-		}
-		if err != nil || strength < minStrength || strength > maxStrength {
-			if profile.strictGridStrength {
-				return fmt.Errorf("grid_strength must be a number between 0.01 and 0.5")
-			}
-			return fmt.Errorf("grid_strength must be a number between 0 and 1")
-		}
-	}
-	if profile.validateSeed {
-		if value, exists := payload["seed"]; exists && value != nil {
-			seed, err := parseInteger(value)
-			if err != nil || seed < 0 || uint64(seed) > uint64(4294967295) {
-				return fmt.Errorf("seed must be an integer between 0 and 4294967295")
-			}
-		}
-	}
-	return nil
-}
-
-func parseFiniteFloat(value any) (float64, error) {
-	var parsed float64
-	switch typed := value.(type) {
-	case float64:
-		parsed = typed
-	case float32:
-		parsed = float64(typed)
-	case int:
-		parsed = float64(typed)
-	case int64:
-		parsed = float64(typed)
-	case string:
-		value, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
-		if err != nil {
-			return 0, err
-		}
-		parsed = value
-	default:
-		return 0, fmt.Errorf("number is required")
-	}
-	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
-		return 0, fmt.Errorf("number must be finite")
-	}
-	return parsed, nil
 }
 
 func isFast720Model(modelName string) bool {
