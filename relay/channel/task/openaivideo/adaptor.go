@@ -51,29 +51,25 @@ const (
 var ModelList = []string{"seedance-2.0", "video-v3", "qy-seedance-2.5"}
 
 type videoProfile struct {
-	name                 string
-	defaultDuration      int
-	minDuration          int
-	maxDuration          int
-	allowedDurations     []int
-	maxReferenceImages   int
-	maxReferenceVideos   int
-	maxReferenceAudios   int
-	defaultResolution    string
-	allowedResolutions   []string
-	allowedRatios        []string
-	allowAutoRatio       bool
-	maxDurationWithVideo int
+	name               string
+	defaultDuration    int
+	minDuration        int
+	maxReferenceImages int
+	maxReferenceVideos int
+	maxReferenceAudios int
+	defaultResolution  string
+	allowedResolutions []string
+	allowedRatios      []string
+	allowAutoRatio     bool
 }
 
+// All models using Openai Video share this limit, including custom model names.
+const maxDurationSeconds = 60
+
 var defaultVideoProfile = videoProfile{
-	name:            "default",
-	defaultDuration: 5,
-	minDuration:     5,
-	maxDuration:     30,
-	// Accept any integer duration within the profile's 5-30 second range.
-	// The upstream API does not require the legacy 5/10/15-second grid.
-	allowedDurations:   nil,
+	name:               "default",
+	defaultDuration:    5,
+	minDuration:        5,
 	maxReferenceImages: defaultMaxReferenceImages,
 	maxReferenceVideos: defaultMaxReferenceVideos,
 	maxReferenceAudios: defaultMaxReferenceAudios,
@@ -83,7 +79,6 @@ var seedance25VideoProfile = videoProfile{
 	name:               "seedance-2.5",
 	defaultDuration:    4,
 	minDuration:        4,
-	maxDuration:        30,
 	maxReferenceImages: sd25MaxReferenceImages,
 	maxReferenceVideos: sd25MaxReferenceVideos,
 	maxReferenceAudios: sd25MaxReferenceAudios,
@@ -92,17 +87,15 @@ var seedance25VideoProfile = videoProfile{
 }
 
 var qySeedance25VideoProfile = videoProfile{
-	name:                 "qy-seedance-2.5",
-	defaultDuration:      4,
-	minDuration:          4,
-	maxDuration:          29,
-	maxReferenceImages:   sd25MaxReferenceImages,
-	maxReferenceVideos:   sd25MaxReferenceVideos,
-	maxReferenceAudios:   sd25MaxReferenceAudios,
-	defaultResolution:    "480p",
-	allowedResolutions:   []string{"480p", "720p"},
-	allowedRatios:        []string{"16:9", "1:1", "9:16"},
-	maxDurationWithVideo: 18,
+	name:               "qy-seedance-2.5",
+	defaultDuration:    4,
+	minDuration:        4,
+	maxReferenceImages: sd25MaxReferenceImages,
+	maxReferenceVideos: sd25MaxReferenceVideos,
+	maxReferenceAudios: sd25MaxReferenceAudios,
+	defaultResolution:  "480p",
+	allowedResolutions: []string{"480p", "720p"},
+	allowedRatios:      []string{"16:9", "1:1", "9:16"},
 }
 
 type normalizedVideoRequest struct {
@@ -223,9 +216,6 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	if len(audios) > profile.maxReferenceAudios {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("audios supports at most %d reference audios", profile.maxReferenceAudios), "invalid_audios", http.StatusBadRequest)
-	}
-	if profile.maxDurationWithVideo > 0 && len(videos) > 0 && duration > profile.maxDurationWithVideo {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("duration with reference videos must be at most %d seconds", profile.maxDurationWithVideo), "invalid_duration", http.StatusBadRequest)
 	}
 
 	fast720 := isFast720Model(mappedModelName)
@@ -746,16 +736,8 @@ func normalizeDuration(payload map[string]any, profile videoProfile) (int, error
 	if err != nil {
 		return 0, fmt.Errorf("duration must be an integer")
 	}
-	if len(profile.allowedDurations) > 0 {
-		for _, allowedDuration := range profile.allowedDurations {
-			if duration == allowedDuration {
-				return duration, nil
-			}
-		}
-		return 0, fmt.Errorf("duration must be one of 5, 10, or 15 seconds")
-	}
-	if duration < profile.minDuration || duration > profile.maxDuration {
-		return 0, fmt.Errorf("duration must be between %d and %d seconds", profile.minDuration, profile.maxDuration)
+	if duration < profile.minDuration || duration > maxDurationSeconds {
+		return 0, fmt.Errorf("duration must be between %d and %d seconds", profile.minDuration, maxDurationSeconds)
 	}
 	return duration, nil
 }

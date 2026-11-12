@@ -418,8 +418,8 @@ func TestQYSeedance25RejectsUnsupportedCompatibilityValues(t *testing.T) {
 		body map[string]any
 		code string
 	}{
-		{name: "duration above 29", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "duration": 30}, code: "invalid_duration"},
-		{name: "reference video duration above 18", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "duration": 19, "videos": []string{"https://videos.example/reference.mp4"}}, code: "invalid_duration"},
+		{name: "duration above 60", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "duration": 61}, code: "invalid_duration"},
+		{name: "reference video duration above 60", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "duration": 61, "videos": []string{"https://videos.example/reference.mp4"}}, code: "invalid_duration"},
 		{name: "frame with images", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "images": []string{"https://images.example/reference.png"}, "start_frame_url": "https://images.example/start.png"}, code: "invalid_frame_parameters"},
 		{name: "end frame without start", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "end_frame_url": "https://images.example/end.png"}, code: "invalid_frame_parameters"},
 		{name: "2K is unsupported", body: map[string]any{"model": "qy-seedance-2.5", "prompt": "x", "size": "2K"}, code: "invalid_video_format"},
@@ -563,7 +563,7 @@ func TestVideoV3RejectsOutOfRangeDurationAndReferenceCounts(t *testing.T) {
 		code string
 	}{
 		{name: "duration below minimum", body: map[string]any{"model": "video-v3", "prompt": "x", "duration": 3}, code: "invalid_duration"},
-		{name: "duration above maximum", body: map[string]any{"model": "video-v3", "prompt": "x", "duration": 31}, code: "invalid_duration"},
+		{name: "duration above maximum", body: map[string]any{"model": "video-v3", "prompt": "x", "duration": 61}, code: "invalid_duration"},
 		{name: "too many images", body: map[string]any{"model": "video-v3", "prompt": "x", "images": images}, code: "invalid_images"},
 		{name: "too many videos", body: map[string]any{"model": "video-v3", "prompt": "x", "videos": videos}, code: "invalid_videos"},
 		{name: "too many audios", body: map[string]any{"model": "video-v3", "prompt": "x", "audios": audios}, code: "invalid_audios"},
@@ -684,8 +684,8 @@ func TestFast720pRejectsUnsupportedInputs(t *testing.T) {
 	}
 }
 
-func TestValidateRequestAcceptsWholeSecondsFromFiveThroughThirty(t *testing.T) {
-	for _, duration := range []int{5, 8, 10, 14, 15, 16, 29, 30} {
+func TestValidateRequestAcceptsWholeSecondsFromFiveThroughSixty(t *testing.T) {
+	for _, duration := range []int{5, 8, 10, 14, 15, 16, 29, 30, 31, 59, 60} {
 		requestBody, err := common.Marshal(map[string]any{
 			"model": "seedance-2.0", "prompt": "animate this", "duration": duration,
 		})
@@ -694,7 +694,7 @@ func TestValidateRequestAcceptsWholeSecondsFromFiveThroughThirty(t *testing.T) {
 		require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 	}
 
-	for _, duration := range []any{0, 4, 31, 6.5, "5.5"} {
+	for _, duration := range []any{0, 4, 61, 3601, 6.5, "5.5", "18446744073709551615"} {
 		requestBody, err := common.Marshal(map[string]any{
 			"model": "seedance-2.0", "prompt": "animate this", "duration": duration,
 		})
@@ -703,6 +703,72 @@ func TestValidateRequestAcceptsWholeSecondsFromFiveThroughThirty(t *testing.T) {
 		taskErr := adaptor.ValidateRequestAndSetAction(c, info)
 		require.NotNil(t, taskErr, "duration %v", duration)
 		assert.Equal(t, "invalid_duration", taskErr.Code)
+	}
+}
+
+func TestOpenAIVideoSharesSixtySecondLimitAcrossModelsAndProfiles(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		profile     string
+		mapping     string
+		durationKey string
+		reference   bool
+		nested      bool
+	}{
+		{name: "default", model: "seedance-2.0"},
+		{name: "seedance 2.5", model: "seedance-2.5"},
+		{name: "video v3", model: "video-v3"},
+		{name: "qy seedance 2.5", model: "qy-seedance-2.5"},
+		{name: "qy reference video", model: "qy-seedance-2.5", reference: true},
+		{name: "future model", model: "future-video-model", durationKey: "seconds"},
+		{name: "custom default profile", model: "custom-video", profile: "default"},
+		{name: "custom seedance profile", model: "custom-video", profile: "seedance-2.5"},
+		{name: "custom qy profile", model: "custom-video", profile: "qy-seedance-2.5", reference: true},
+		{name: "mapped qy alias", model: "custom-video", mapping: `{"custom-video":"qy-seedance-2.5"}`, reference: true, nested: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, duration := range []int{60, 61} {
+				payload := map[string]any{"model": test.model, "prompt": "animate this"}
+				durationKey := test.durationKey
+				if durationKey == "" {
+					durationKey = "duration"
+				}
+				if test.nested {
+					payload["params"] = map[string]any{durationKey: duration}
+				} else {
+					payload[durationKey] = duration
+				}
+				if test.reference {
+					payload["videos"] = []string{"https://videos.example/reference.mp4"}
+				}
+				requestBody, err := common.Marshal(payload)
+				require.NoError(t, err)
+				c, adaptor, info := newOpenAIVideoRequestContext(t, "/v1/videos", "application/json", bytes.NewReader(requestBody))
+				info.ChannelSetting.OpenAIVideoProfile = test.profile
+				c.Set("model_mapping", test.mapping)
+				taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+				if duration == 61 {
+					require.NotNil(t, taskErr)
+					assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+					assert.Equal(t, "invalid_duration", taskErr.Code)
+					assert.Nil(t, adaptor.EstimateBilling(c, info))
+					continue
+				}
+				require.Nil(t, taskErr)
+				body, err := adaptor.BuildRequestBody(c, info)
+				require.NoError(t, err)
+				var upstreamPayload map[string]any
+				require.NoError(t, common.DecodeJson(body, &upstreamPayload))
+				assert.Equal(t, float64(60), upstreamPayload["duration"])
+				request, err := relaycommon.GetTaskRequest(c)
+				require.NoError(t, err)
+				assert.Equal(t, 60, request.Duration)
+				assert.Equal(t, "60", request.Seconds)
+				assert.Equal(t, float64(60), adaptor.EstimateBilling(c, info)["seconds"])
+			}
+		})
 	}
 }
 
