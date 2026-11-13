@@ -60,6 +60,7 @@ func TestMain(m *testing.M) {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&UserAccessToken{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -78,6 +79,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM two_fa_backup_codes")
 		DB.Exec("DELETE FROM two_fas")
 		DB.Exec("DELETE FROM tokens")
+		DB.Exec("DELETE FROM user_access_tokens")
 		DB.Exec("DELETE FROM user_oauth_bindings")
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM logs")
@@ -239,16 +241,16 @@ func TestTaskPrivateData_EffectiveMediaDeliveryNodeDefaultsToUS(t *testing.T) {
 func TestSnapshotEqual_MediaDeliveryState(t *testing.T) {
 	base := taskSnapshot{
 		Status:                  TaskStatusSuccess,
-		MediaDeliveryNode:      "hk",
-		HongKongMediaURL:       "https://cdn.example/video.mp4",
+		MediaDeliveryNode:       "hk",
+		HongKongMediaURL:        "https://cdn.example/video.mp4",
 		HongKongMediaUploadedAt: 123,
-		HongKongMediaLastError: "",
+		HongKongMediaLastError:  "",
 	}
 	assert.True(t, base.Equal(base))
 	assert.False(t, base.Equal(taskSnapshot{
 		Status:                  TaskStatusSuccess,
-		MediaDeliveryNode:      "us",
-		HongKongMediaURL:       base.HongKongMediaURL,
+		MediaDeliveryNode:       "us",
+		HongKongMediaURL:        base.HongKongMediaURL,
 		HongKongMediaUploadedAt: base.HongKongMediaUploadedAt,
 	}))
 }
@@ -442,10 +444,10 @@ func TestUpdateVideoCacheMetadataPreservesTaskAndPrivateState(t *testing.T) {
 		Quota:  1234,
 		Data:   json.RawMessage(`{"prompt":"keep"}`),
 		PrivateData: TaskPrivateData{
-			UpstreamTaskID: "upstream-task",
-			PluginState:    json.RawMessage(`{"plugin":"keep"}`),
-			BillingSource:  "wallet",
-			ResultURL:      "https://old.example/video.mp4",
+			UpstreamTaskID:    "upstream-task",
+			PluginState:       json.RawMessage(`{"plugin":"keep"}`),
+			BillingSource:     "wallet",
+			ResultURL:         "https://old.example/video.mp4",
 			MediaDeliveryNode: "hk",
 		},
 	}

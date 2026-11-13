@@ -62,6 +62,8 @@ func (b *taskSubmissionTestBilling) Reserve(int) error {
 	return b.reserveErr
 }
 
+func (b *taskSubmissionTestBilling) ReserveBeforeSubmit(quota int) error { return b.Reserve(quota) }
+
 func TestPresentTaskSubmissionUsesNativePresenterAfterPersistence(t *testing.T) {
 	plugin, err := pluginruntime.CompilePlugin(`
 export const meta = {apiVersion:1,key:"presenter-test",name:"Presenter",version:"1.0.0",author:{name:"Test"},models:["model"],fetchMode:"per_task",routes:[{method:"POST",path:"/vendor/jobs",type:"submit",decode:"decode",render:"created"}]};
@@ -91,6 +93,36 @@ export function buildSubmitRequest(){return {}} export function parseSubmitRespo
 		"upstream":{"task_id":"upstream_private"}
 	}`, recorder.Body.String())
 	assert.JSONEq(t, `{"seconds":5}`, recorder.Header().Get("X-New-Api-Other-Ratios"))
+}
+
+// The submit presenter may answer with the vendor's status; a native route that
+// already relayed the vendor's event stream gets nothing more.
+func TestPresentTaskSubmissionHonorsReplyWrapperAndRelayedStreams(t *testing.T) {
+	plugin, err := pluginruntime.CompilePlugin(`
+export const meta = {apiVersion:1,key:"accepted-test",name:"Accepted",version:"1.0.0",author:{name:"Test"},models:["model"],fetchMode:"per_task",routes:[{method:"POST",path:"/vendor/jobs",type:"submit",decode:"decode",render:"created"}]};
+export const native = {decode:function(ctx){return {kind:"submit",model:"model",requestBody:ctx.body.value};},created:function(ctx,task){return {__status:202,__body:{id:task.task_id}};}};
+export function buildSubmitRequest(){return {}} export function parseSubmitResponse(){return {taskId:"upstream"}} export function buildQueryRequest(){return {}} export function parseTaskResult(){return {status:"SUCCESS"}}
+`, pluginruntime.Options{})
+	require.NoError(t, err)
+	present := func(recorder *httptest.ResponseRecorder, written bool) {
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/vendor/jobs", strings.NewReader(`{"model":"model"}`))
+		c.Set(pluginruntime.ContextKeyPinnedRoute, pluginruntime.PinnedRoute{Plugin: plugin, Route: plugin.Meta.Routes[0]})
+		c.Set(pluginruntime.ContextKeyRouteRequest, pluginruntime.RouteRequestContext{Path: "/vendor/jobs", Method: http.MethodPost, Body: map[string]any{"kind": "json", "value": map[string]any{"model": "model"}}})
+		if written {
+			_, _ = c.Writer.WriteString("data: {}\n\n")
+		}
+		presentTaskSubmission(c, &taskSubmissionOutcome{Result: &relay.TaskSubmitResult{}, Task: &model.Task{TaskID: "task_public"}, RelayInfo: &relaycommon.RelayInfo{}})
+	}
+
+	accepted := httptest.NewRecorder()
+	present(accepted, false)
+	assert.Equal(t, http.StatusAccepted, accepted.Code)
+	assert.JSONEq(t, `{"id":"task_public"}`, accepted.Body.String())
+
+	streamed := httptest.NewRecorder()
+	present(streamed, true)
+	assert.Equal(t, "data: {}\n\n", streamed.Body.String())
 }
 
 func TestPresentTaskSubmissionFallbackUsesPersistedPublicID(t *testing.T) {
@@ -393,6 +425,10 @@ func TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund(t *testi
 	assert.False(t, c.Writer.Written())
 }
 
+// setupTaskSubmissionDatabase opens the dialect selected by
+// TEST_TASK_DB_DIALECT (SQLite in memory by default) and records every task
+// INSERT in events so tests can assert the reserve → insert → settle order.
+// Without migrate the task table does not exist and inserts fail.
 func setupTaskSubmissionDatabase(t *testing.T, migrate bool, events *[]string) *gorm.DB {
 	t.Helper()
 	previousDB := model.DB
@@ -407,9 +443,6 @@ func setupTaskSubmissionDatabase(t *testing.T, migrate bool, events *[]string) *
 	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(*gorm.DB) {
 		*events = append(*events, "insert")
 	}))
-	if migrate {
-		require.NoError(t, database.AutoMigrate(&model.Task{}))
-	}
 	model.DB = database
 	t.Cleanup(func() {
 		model.DB = previousDB
@@ -444,7 +477,13 @@ func taskSubmissionRelayInfo(billing relaycommon.BillingSettler) *relaycommon.Re
 // and consume log. Set TEST_TASK_DB_DIALECT plus TEST_MYSQL_DSN or
 // TEST_POSTGRES_DSN to exercise the same contract on an external test database.
 // Unique table prefixes keep the fixture isolated from all existing tables.
-func TestImmediateTaskSettlementDatabase(t *testing.T) {
+// openTaskDialectDatabase opens the engine selected by TEST_TASK_DB_DIALECT
+// (default SQLite in memory; MySQL and PostgreSQL through TEST_MYSQL_DSN and
+// TEST_POSTGRES_DSN) with a unique table prefix, migrates the given models and
+// drops them on cleanup. It logs the engine version so database verification
+// runs leave a record.
+func openTaskDialectDatabase(t *testing.T, models ...any) (*gorm.DB, common.DatabaseType) {
+	t.Helper()
 	dialect := common.DatabaseType(os.Getenv("TEST_TASK_DB_DIALECT"))
 	var driver gorm.Dialector
 	switch dialect {
@@ -476,6 +515,11 @@ func TestImmediateTaskSettlementDatabase(t *testing.T) {
 		require.NoError(t, db.Raw("SELECT version()").Scan(&version).Error)
 	}
 	t.Logf("database: %s %s", dialect, version)
+	return db, dialect
+}
+
+func TestImmediateTaskSettlementDatabase(t *testing.T) {
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{})
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
 	oldRedis, oldMemory, oldBatch, oldConsume, oldExport := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled
@@ -585,7 +629,24 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 
 func TestAcceptedSubmitStreamNeverRetries(t *testing.T) {
 	c := taskSubmissionTestContext()
-	assert.False(t, shouldRetryTaskRelay(c, 1, &dto.TaskError{StatusCode: 502, LocalError: true, NoRetry: true}, 3))
+	assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "task_accepted", Source: "system"}, decideTaskRetry(c, &dto.TaskError{StatusCode: 502, LocalError: true, NoRetry: true}, 3))
+}
+
+// Local task rejections carry a message but no cause; the response and the
+// decision record must still be produced.
+func TestRespondTaskSubmissionErrorWithoutCause(t *testing.T) {
+	previousErrorLog := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = false
+	t.Cleanup(func() { constant.ErrorLogEnabled = previousErrorLog })
+	c := taskSubmissionTestContext()
+	taskErr := &dto.TaskError{Code: "get_channel_failed", Message: "no channel", StatusCode: http.StatusServiceUnavailable, LocalError: true}
+	require.NotPanics(t, func() { respondTaskSubmissionError(c, taskErr) })
+	assert.Equal(t, http.StatusServiceUnavailable, c.Writer.Status())
+	events := service.RequestPolicy(c).Events()
+	require.Len(t, events, 1)
+	assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "request_failed", Source: "system"}, events[0].Decision)
+	assert.Equal(t, http.StatusServiceUnavailable, events[0].Status)
+	assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "system"}, decideTaskRetry(c, &dto.TaskError{StatusCode: http.StatusForbidden, LocalError: true, Message: "billing"}, 2), "local errors stop once the status rules do not force a retry")
 }
 
 func TestExecuteTaskSubmissionRefundsWhenFinalReserveFails(t *testing.T) {

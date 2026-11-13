@@ -1,6 +1,7 @@
 package geminichat
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -28,7 +29,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatPreservesImageOptions(t *testin
 		ChannelMetaAttached: true,
 	}
 
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, info)
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(context.Background(), request, info)
 	require.NoError(t, err)
 	require.NotNil(t, converted)
 	assert.Equal(t, "Nano Banana 2", converted.Model)
@@ -57,7 +58,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatDoesNotPutAspectRatioInSize(t *
 		},
 	}
 
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &convmeta.Values{
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(context.Background(), request, &convmeta.Values{
 		UpstreamModelName:   "Nano Banana 2",
 		ChannelMetaAttached: true,
 	})
@@ -94,7 +95,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatReadsResponseFormatImageOptions
 		ChannelMetaAttached: true,
 	}
 
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, info)
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(context.Background(), request, info)
 	require.NoError(t, err)
 	assert.Equal(t, "3:4", converted.AspectRatio)
 	assert.Equal(t, "4k", converted.Size)
@@ -114,7 +115,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatAcceptsBanana2ExtraRatios(t *te
 		},
 	}
 
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &convmeta.Values{
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(context.Background(), request, &convmeta.Values{
 		UpstreamModelName:   "Nano Banana 2",
 		ChannelMetaAttached: true,
 	})
@@ -136,7 +137,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatAcceptsDocumentedStandardRatios
 				ImageConfig:        json.RawMessage(`{"aspectRatio":"` + ratio + `","imageSize":"1K"}`),
 			},
 		}
-		converted, err := GeminiGenerateContentRequestToOpenAIChat(request, &convmeta.Values{
+		converted, err := GeminiGenerateContentRequestToOpenAIChat(context.Background(), request, &convmeta.Values{
 			UpstreamModelName:   "Nano Banana 2",
 			ChannelMetaAttached: true,
 		})
@@ -171,7 +172,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatDerivesRatioFromDimensions(t *t
 				ChannelMetaAttached: true,
 			}
 
-			converted, err := GeminiGenerateContentRequestToOpenAIChat(request, info)
+			converted, err := GeminiGenerateContentRequestToOpenAIChat(context.Background(), request, info)
 
 			require.NoError(t, err)
 			assert.Equal(t, testCase.wantRatio, converted.AspectRatio)
@@ -192,7 +193,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatLeavesTextModelsUnchanged(t *te
 		ChannelMetaAttached: true,
 	}
 
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(request, info)
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(context.Background(), request, info)
 	require.NoError(t, err)
 	assert.Empty(t, converted.Modalities)
 	assert.Empty(t, converted.ExtraBody)
@@ -211,7 +212,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatNormalizesTopLevelResolution(t 
 	var request dto.GeminiChatRequest
 	require.NoError(t, kitutil.Unmarshal(raw, &request))
 
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &convmeta.Values{
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(context.Background(), &request, &convmeta.Values{
 		UpstreamModelName:   "Nano Banana 2",
 		ChannelMetaAttached: true,
 	})
@@ -237,7 +238,7 @@ func TestGeminiGenerateContentRequestToOpenAIChatMapsQualityAliasToResolution(t 
 
 	var request dto.GeminiChatRequest
 	require.NoError(t, kitutil.Unmarshal(raw, &request))
-	converted, err := GeminiGenerateContentRequestToOpenAIChat(&request, &convmeta.Values{
+	converted, err := GeminiGenerateContentRequestToOpenAIChat(context.Background(), &request, &convmeta.Values{
 		UpstreamModelName:   "Nano Banana Pro",
 		ChannelMetaAttached: true,
 	})

@@ -397,19 +397,14 @@ export function useSecureVerification() {
           }
         )
         if (pending.current !== current) return
-        current.resolve(bundle)
-      } else {
-        const proof = await verify(
-          input,
-          current.request,
-          state.requirements.password_encryption_enabled,
-          current.controller.signal,
-          (domains) => {
-            if (pending.current === current) setPasskeyDomains(domains)
-          }
-        )
-        if (pending.current !== current) return
-        current.resolve(proof)
+        const failure = AuthOperationError.from(error)
+        if (failure.code === 'AUTH_CANCELLED') {
+          cancel()
+          return
+        }
+        dispatch({ type: 'error', error: failure.message })
+      } finally {
+        current.submitting = false
       }
       pending.current = null
       setEmailFlow(null)

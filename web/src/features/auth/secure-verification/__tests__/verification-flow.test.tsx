@@ -33,6 +33,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import type { AuthBundle } from '@/stores/auth-store'
 
+import { OAUTH_POPUP_CALLBACK_MESSAGE } from '../../constants'
 import { SecureVerificationDialog } from '../components/secure-verification-dialog'
 import { useSecureVerification } from '../hooks/use-secure-verification'
 import type {
@@ -46,6 +47,25 @@ const passwordRequirements: VerificationRequirements = {
   methods: [{ method: 'password', available: true }],
   oauth_providers: [],
   password_encryption_enabled: false,
+}
+
+const linkedAccountRequirements: VerificationRequirements = {
+  scope: '2fa.setup',
+  methods: [{ method: 'oauth', available: true }],
+  oauth_providers: [{ slug: 'linuxdo', name: 'Linux DO' }],
+  password_encryption_enabled: false,
+}
+
+function stubOAuthPopup() {
+  const popup = {
+    closed: false,
+    location: { replace: vi.fn() },
+    sessionStorage: window.sessionStorage,
+    close: vi.fn(),
+    postMessage: vi.fn(),
+  }
+  vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+  return popup
 }
 
 function Harness(props: {

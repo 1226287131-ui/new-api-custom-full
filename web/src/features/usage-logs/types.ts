@@ -20,6 +20,8 @@ For commercial licensing, please contact support@quantumnous.com
  * Type definitions for usage logs
  */
 import type { RequestRuleTrace } from '@/features/pricing/lib/billing-expr'
+import type { PolicyEvent } from '@/features/system-settings/request-policies/api'
+import type { LocalizedTextValue } from '@/lib/localized-text'
 
 import type { UsageLog } from './data/schema'
 // ============================================================================
@@ -113,8 +115,94 @@ export interface ToolSurchargeItem {
   price: number
 }
 
+/** One change a request processing plugin made, as the log owner sees it. */
+export type RequestPluginRecordChange = {
+  op: string
+  path: string
+  /** Set for move and copy: where the value came from. */
+  from?: string
+  /** The new value, when it is safe to show. */
+  value?: unknown
+  /** Otherwise the kind of value and its length. */
+  type?: string
+  length?: number
+  /** The channel's own settings ran later and replaced this change. */
+  overridden?: boolean
+}
+
+/**
+ * What a plugin did with one attachment of the request. The record never
+ * holds the file's name or content.
+ */
+export type RequestPluginRecordAttachment = {
+  kind: string
+  mime: string
+  /** checked, truncated (only the first part was read) or unchecked. */
+  status: string
+  /** Why an unchecked attachment was left out, when known. */
+  reason?: string
+  /** The plugin replaced the attachment's text. */
+  rewritten?: boolean
+}
+
+/** What one request processing plugin did to a request, public on the log. */
+export type RequestPluginRecordEntry = {
+  plugin: string
+  name?: LocalizedTextValue
+  stage: string
+  changes?: RequestPluginRecordChange[]
+  more_changes?: number
+  headers?: {
+    set?: string[]
+    remove?: string[]
+    /** Header names the channel's own settings replaced afterwards. */
+    overridden?: string[]
+  }
+  reasoning_effort?: string
+  media?: {
+    index: number
+    from: { mime: string; bytes: number }
+    to: { mime: string; bytes: number }
+    lossless?: boolean
+  }[]
+  findings?: { category: string; count: number }[]
+  notice?: LocalizedTextValue
+  rejected?: { code: string }
+  /** How many parts of the answer a reply check masked. */
+  masked?: number
+  /** The plugin could not read the request body or the answer, so it did not run. */
+  unchecked?: boolean
+  /** With unchecked: the audio input of a Realtime session went unchecked. */
+  audio?: boolean
+  /** The attachments the plugin looked at, in request order. */
+  attachments?: RequestPluginRecordAttachment[]
+  more_attachments?: number
+}
+
+/** The record ends with a count of the entries left out, when it was cut. */
+export type RequestPluginRecordItem =
+  | RequestPluginRecordEntry
+  | { truncated: number }
+
+/** One request processing run as administrators see it. */
+export type RequestPluginAdminStep = {
+  instance: string
+  name?: string
+  plugin: string
+  version?: string
+  stage: string
+  action?: string
+  duration_ms?: number
+  error?: string
+  error_class?: string
+  rule?: string
+  findings?: { rule: string; category?: string; count: number }[]
+}
+
 export interface LogOtherData {
   admin_info?: {
+    request_policy?: PolicyEvent[]
+    request_plugins?: RequestPluginAdminStep[]
     is_multi_key?: boolean
     multi_key_index?: number
     use_channel?: number[]
@@ -151,6 +239,12 @@ export interface LogOtherData {
     upstream_task_id?: string
     node_name?: string
   }
+  // Structured log content: English source keys plus params, rendered in the
+  // viewer's language. `content` keeps the English text for older clients.
+  content_parts?: {
+    key: string
+    params?: Record<string, string | number | boolean>
+  }[]
   // Language-independent operation descriptor (audit/login logs).
   // Frontend renders localized content from action + params via i18n templates.
   op?: {
@@ -183,6 +277,7 @@ export interface LogOtherData {
   cache_creation_tokens?: number
   cache_creation_tokens_5m?: number
   cache_creation_tokens_1h?: number
+  cache_creation_tokens_12h?: number
   claude?: boolean
   model_ratio?: number
   completion_ratio?: number
@@ -232,6 +327,7 @@ export interface LogOtherData {
   image_cache_expires_at?: number
   is_system_prompt_overwritten?: boolean
   po?: string[]
+  request_plugins?: RequestPluginRecordItem[]
   billing_source?: string
   group?: string
   stream_status?: {
@@ -248,6 +344,11 @@ export interface LogOtherData {
   fee_quota?: number
   // Task-related fields (for refund logs, type=6)
   is_task?: boolean
+  // The submitting request returned the task result itself (an immediate
+  // result, or an OpenAI Images request the gateway waited on).
+  task_sync?: boolean
+  // The inline result was not persisted, so no artifact can be retrieved.
+  result_discarded?: boolean
   task_id?: string
   reason?: string
   // Subscription billing fields
@@ -373,9 +474,25 @@ export interface TaskArtifact {
   content_url: string
 }
 
+export interface AudioClip {
+  clip_id?: string
+  id?: string
+  title?: string
+  tags?: string
+  duration?: number
+  audio_url?: string
+  image_url?: string
+  image_large_url?: string
+  metadata?: {
+    tags?: string
+    duration?: number
+  }
+}
+
 export interface TaskArtifactProjection {
   artifacts: TaskArtifact[]
   legacyContentUrl?: string
+  legacyAudioClips?: AudioClip[]
 }
 
 export interface TaskArtifactsResponse {
@@ -385,6 +502,7 @@ export interface TaskArtifactsResponse {
   data?: {
     artifacts?: unknown
     legacy_content_url?: unknown
+    legacy_audio_clips?: unknown
   }
 }
 

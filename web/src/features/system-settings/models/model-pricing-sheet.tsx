@@ -109,6 +109,7 @@ import {
   ratioFieldByLane,
   numericDraftRegex,
   toNumberOrNull,
+  usesTaskModelPricing,
   type LaneKey,
   type ModelPricingFormValues,
   type ModelRatioData,
@@ -133,6 +134,7 @@ type ModelPricingSheetProps = {
   usageSchema?: BillingUsageSchema
   pluginVariants?: ModelPricingPluginVariant[]
   onDirtyChange?: (dirty: boolean) => void
+  scrollHeader?: ReactNode
 }
 
 const taskResolutions: TaskResolution[] = [
@@ -381,7 +383,6 @@ type ModelPricingEditorPanelProps = Omit<
 > & {
   className?: string
   embedded?: boolean
-  scrollHeader?: ReactNode
 }
 
 export type ModelPricingEditorPanelHandle = {
@@ -403,6 +404,7 @@ export const ModelPricingSheet = forwardRef<
     usageSchema,
     pluginVariants,
     onDirtyChange,
+    scrollHeader,
   },
   ref
 ) {
@@ -426,6 +428,7 @@ export const ModelPricingSheet = forwardRef<
           usageSchema={usageSchema}
           pluginVariants={pluginVariants}
           onDirtyChange={onDirtyChange}
+          scrollHeader={scrollHeader}
           onSave={onSave}
           isSaving={isSaving}
           className='h-full rounded-none border-0'
@@ -497,6 +500,9 @@ export const ModelPricingEditorPanel = forwardRef<
     Record<string, string>
   >({})
   const [editorReloadToken, setEditorReloadToken] = useState(0)
+  const [ordinaryPricingModel, setOrdinaryPricingModel] = useState<
+    string | null
+  >(null)
   const autoSwitchedForRef = useRef<string | null>(null)
   const isEditMode = !!editData
   const hasLegacyPricing =
@@ -598,6 +604,9 @@ export const ModelPricingEditorPanel = forwardRef<
   const taskUsageExamples =
     usageExamplesByModel.get(watchedValues.name.trim()) ??
     pluginVariants?.find((variant) => !variant.stale)?.usage_examples
+  const usesTaskPricing =
+    ordinaryPricingModel !== watchedValues.name &&
+    usesTaskModelPricing(editData, taskUsageSchema, pluginVariants)
   const defaultTaskBillingExpr = useMemo(
     () =>
       taskUsageSchema
@@ -609,6 +618,7 @@ export const ModelPricingEditorPanel = forwardRef<
     [taskUsageSchema]
   )
   const resolvedBillingExpr =
+    usesTaskPricing &&
     taskUsageSchema &&
     (!billingExpr || billingExpr === DEFAULT_TOKEN_BILLING_EXPR)
       ? defaultTaskBillingExpr
@@ -618,6 +628,7 @@ export const ModelPricingEditorPanel = forwardRef<
     conversionGeneration.current += 1
     setConversionReason('')
     setPluginExpressions(editData?.pluginBillingExpr ?? {})
+    setOrdinaryPricingModel(null)
     setWasConverted(false)
     setConversionPreview(null)
     const nextLaneState = createInitialLaneState(editData)
@@ -1254,28 +1265,54 @@ export const ModelPricingEditorPanel = forwardRef<
     [form, validatePricingValues, buildSubmitData]
   )
 
-  const expressionEditor = taskUsageSchema ? (
-    <TaskUsagePricingEditor
-      currency={currency}
-      key={`${editorReloadToken}:${watchedValues.name}`}
-      billingExpr={resolvedBillingExpr}
-      requestRuleExpr={requestRuleExpr}
-      usageSchema={taskUsageSchema}
-      usageExamples={taskUsageExamples}
-      onBillingExprChange={setBillingExpr}
-      onRequestRuleExprChange={setRequestRuleExpr}
-    />
-  ) : (
-    <TieredPricingEditor
-      currency={currency}
-      key={editorReloadToken}
-      modelName={watchedValues.name}
-      billingExpr={billingExpr}
-      requestRuleExpr={requestRuleExpr}
-      onBillingExprChange={setBillingExpr}
-      onRequestRuleExprChange={setRequestRuleExpr}
-    />
-  )
+  const configureOrdinaryPricing = () => {
+    const inheritedExpression = combineBillingExpr(
+      resolvedBillingExpr,
+      requestRuleExpr
+    )
+    setPluginExpressions((current) => {
+      const next = { ...current }
+      for (const variant of pluginVariants ?? []) {
+        if (!variant.stale && !Object.hasOwn(next, variant.plugin_key)) {
+          next[variant.plugin_key] = inheritedExpression
+        }
+      }
+      return next
+    })
+    setOrdinaryPricingModel(watchedValues.name)
+    setPricingMode('tiered_expr')
+    setBillingExpr(
+      taskUsageSchema?.image_count?.unit === 'count'
+        ? 'tier("image", fixed(0)) * image_count'
+        : DEFAULT_TOKEN_BILLING_EXPR
+    )
+    setRequestRuleExpr('')
+    setEditorReloadToken((token) => token + 1)
+  }
+
+  const expressionEditor =
+    usesTaskPricing && taskUsageSchema ? (
+      <TaskUsagePricingEditor
+        currency={currency}
+        key={`${editorReloadToken}:${watchedValues.name}`}
+        billingExpr={resolvedBillingExpr}
+        requestRuleExpr={requestRuleExpr}
+        usageSchema={taskUsageSchema}
+        usageExamples={taskUsageExamples}
+        onBillingExprChange={setBillingExpr}
+        onRequestRuleExprChange={setRequestRuleExpr}
+      />
+    ) : (
+      <TieredPricingEditor
+        currency={currency}
+        key={editorReloadToken}
+        modelName={watchedValues.name}
+        billingExpr={billingExpr}
+        requestRuleExpr={requestRuleExpr}
+        onBillingExprChange={setBillingExpr}
+        onRequestRuleExprChange={setRequestRuleExpr}
+      />
+    )
 
   const showActions = Boolean(onSave)
 
@@ -1369,7 +1406,10 @@ export const ModelPricingEditorPanel = forwardRef<
                   modelBillingMode={
                     pricingMode === 'tiered_expr' ? 'tiered_expr' : 'ratio'
                   }
+                  perCallPrice={pricingMode === 'per-request'}
                   currency={currency}
+                  ordinaryPricing={!usesTaskPricing}
+                  onConfigureOrdinaryPricing={configureOrdinaryPricing}
                 >
                   <Tabs
                     key={editorReloadToken}
@@ -1680,7 +1720,12 @@ export const ModelPricingEditorPanel = forwardRef<
                 className='bg-muted/20 min-w-0 rounded-lg border @min-[960px]/pricing-editor:sticky @min-[960px]/pricing-editor:top-0'
               >
                 <div className='border-b px-3 py-2'>
-                  <div className='text-sm font-medium'>{t('Preview')}</div>
+                  <div className='text-sm font-medium'>
+                    {!usesTaskPricing && pluginVariants?.length ? (
+                      <>{t('Default price')} · </>
+                    ) : null}
+                    {t('Preview')}
+                  </div>
                 </div>
                 <div className='divide-y'>
                   {pricingMode === 'per-token' && !effectivePreview && (

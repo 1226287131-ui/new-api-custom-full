@@ -5,25 +5,40 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
 )
 
-func ResolveIncomingBillingExprRequestInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error) {
+// ResolveIncomingBillingExprRequestInput freezes the request context a billing
+// expression reads. Only expressions that call param() read the body; for the
+// others it is not loaded, so a disk-cached body never moves into memory and
+// the snapshot does not keep the whole request alive until settlement.
+func ResolveIncomingBillingExprRequestInput(c *gin.Context, info *relaycommon.RelayInfo, readsBody bool) (billingexpr.RequestInput, error) {
 	if info != nil && info.BillingRequestInput != nil {
 		input := cloneRequestInput(*info.BillingRequestInput)
 		merged := cloneStringMap(info.RequestHeaders)
 		maps.Copy(merged, input.Headers)
 		input.Headers = merged
+		// A later expression, such as compact repricing, may read a body the
+		// first expression did not need.
+		if readsBody && input.Body == nil {
+			bodyBytes, err := readIncomingBillingExprBody(c)
+			if err != nil {
+				return billingexpr.RequestInput{}, err
+			}
+			input.Body = bodyBytes
+		}
 		return input, nil
 	}
 
 	input := billingexpr.RequestInput{}
 	if info != nil {
 		input.Headers = cloneStringMap(info.RequestHeaders)
+	}
+	if !readsBody {
+		return input, nil
 	}
 
 	bodyBytes, err := readIncomingBillingExprBody(c)
@@ -42,19 +57,11 @@ func ResolveImageBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo
 	if !ok {
 		return input, nil
 	}
-	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
-	if info.ChannelMeta != nil {
-		channelType = info.ChannelType
-	}
-	count, err := request.ImageCount(channelType == constant.ChannelTypeAli)
+	count, err := request.ImageCount(false)
 	if err != nil {
 		return input, err
 	}
-	topLevelCount, err := request.ImageCount(false)
-	if err != nil {
-		return input, err
-	}
-	body := map[string]any{"model": request.Model, "n": topLevelCount, "size": request.Size, "quality": request.Quality}
+	body := map[string]any{"model": request.Model, "n": count, "size": request.Size, "quality": request.Quality}
 	if request.BillingParameters != nil {
 		body["parameters"] = request.BillingParameters
 	}

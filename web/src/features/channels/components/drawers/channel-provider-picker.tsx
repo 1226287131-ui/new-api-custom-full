@@ -45,6 +45,7 @@ import {
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_SUB2API,
   CHANNEL_TYPE_OPTIONS,
+  CHANNEL_TYPE_SUB2API,
   CHANNEL_TYPE_TASK_PLUGIN,
   type ChannelProviderPresentation,
 } from '../../constants'

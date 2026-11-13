@@ -28,8 +28,14 @@ import type {
 } from '@/features/pricing/types'
 import type { ModelRatioData } from '@/features/system-settings/models/model-pricing-core'
 import {
+  usesTaskModelPricing,
+  type ModelRatioData,
+} from '@/features/system-settings/models/model-pricing-core'
+import {
+  buildModelRow,
   buildModelSnapshots,
   type ModelPricingSnapshot,
+  type ModelRow,
 } from '@/features/system-settings/models/model-pricing-snapshots'
 import type { PricingSyncValues } from '@/features/system-settings/types'
 
@@ -71,7 +77,7 @@ export type PricingValues = Partial<
 }
 export type PricingOptions = Record<PricingKey, string>
 
-export type CacheWriteMode = 'none' | 'standard' | 'claude_ttl'
+export type CacheWriteMode = 'none' | 'standard' | 'claude_ttl' | 'openai_ttl'
 
 export type LegacyBillingDetails = {
   audio_input_price?: number
@@ -83,7 +89,12 @@ export type LegacyBillingDetails = {
 
 export function modelPricingDisplay(
   entry: Pick<ModelPricingEntry, 'model_name' | 'effective' | 'usage_schema'> &
-    Partial<Pick<ModelPricingEntry, 'configured' | 'cache_write_mode'>>
+    Partial<
+      Pick<
+        ModelPricingEntry,
+        'configured' | 'cache_write_mode' | 'plugin_variants'
+      >
+    >
 ): PricingModel {
   const values = entry.effective
   return {
@@ -108,6 +119,7 @@ export function modelPricingDisplay(
       !(
         entry.cache_write_mode === 'standard' ||
         entry.cache_write_mode === 'claude_ttl' ||
+        entry.cache_write_mode === 'openai_ttl' ||
         entry.configured?.CreateCacheRatio !== undefined
       )
         ? undefined
@@ -153,6 +165,7 @@ export function pricingOptions(
 ): PricingOptions {
   return Object.fromEntries(
     PRICING_KEYS.map((key) => {
+      // Form values also carry the raw option keys; the form field is the draft.
       let value = values[key]
       if (key === 'billing_setting.billing_mode') value ??= values.BillingMode
       if (key === 'billing_setting.billing_expr') value ??= values.BillingExpr
@@ -163,7 +176,7 @@ export function pricingOptions(
         value ??= values.ScheduledDiscount
       }
       if (key === 'billing_setting.plugin_billing_expr') {
-        value ??= values.PluginBillingExpr
+        value = values.PluginBillingExpr ?? value
       }
       return [key, typeof value === 'string' ? value : '{}']
     })
@@ -186,6 +199,21 @@ export function pricingRows(options: PricingOptions): ModelPricingSnapshot[] {
     taskBillingPricing: options['billing_setting.task_billing_pricing'],
     scheduledDiscount: options['billing_setting.scheduled_discount'],
   })
+}
+
+/** Models whose draft price differs from the saved one. */
+export function buildPriceChangeRows(
+  saved: PricingOptions,
+  draft: PricingOptions
+): ModelRow[] {
+  const savedByName = new Map(pricingRows(saved).map((row) => [row.name, row]))
+  const draftByName = new Map(pricingRows(draft).map((row) => [row.name, row]))
+  return [...new Set([...savedByName.keys(), ...draftByName.keys()])]
+    .map((name) =>
+      buildModelRow(name, savedByName.get(name), draftByName.get(name))
+    )
+    .filter((row) => row.isDraftChanged)
+    .sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export function pricingRow(

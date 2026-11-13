@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"gorm.io/gorm"
@@ -116,19 +117,19 @@ func (m Properties) Value() (driver.Value, error) {
 }
 
 type TaskPrivateData struct {
-	Key                   string                 `json:"key,omitempty"`
-	UpstreamTaskID        string                 `json:"upstream_task_id,omitempty"`          // 上游真实 task ID
-	ResultURL             string                 `json:"result_url,omitempty"`                // 任务成功后的结果 URL（视频地址等）
-	UpstreamResultURL     string                 `json:"upstream_result_url,omitempty"`       // 上游结果地址，仅供服务端缓存回源使用
-	MediaDeliveryNode     string                 `json:"media_delivery_node,omitempty"`       // 媒体交付节点快照（us/hk）；空值兼容历史任务并按 us 处理
-	HongKongMediaURL      string                 `json:"hong_kong_media_url,omitempty"`        // 香港节点媒体地址，上传校验成功后写入
-	HongKongMediaUploadedAt int64                `json:"hong_kong_media_uploaded_at,omitempty"` // 香港节点媒体上传完成时间
-	HongKongMediaLastError string                `json:"hong_kong_media_last_error,omitempty"`  // 最近一次香港节点上传错误（仅服务端）
-	VideoCachedAt         int64                  `json:"video_cached_at,omitempty"`           // 本地视频缓存完成时间，用于固定 48 小时保留期
-	VideoCacheAttempts    int                    `json:"video_cache_attempts,omitempty"`      // 本地视频缓存补偿尝试次数
-	VideoCacheNextRetryAt int64                  `json:"video_cache_next_retry_at,omitempty"` // 下次缓存补偿时间
-	VideoCacheLastError   string                 `json:"video_cache_last_error,omitempty"`    // 最近一次缓存补偿错误（仅服务端）
-	Execution             *TaskExecutionSnapshot `json:"execution,omitempty"`
+	Key                     string                 `json:"key,omitempty"`
+	UpstreamTaskID          string                 `json:"upstream_task_id,omitempty"`            // 上游真实 task ID
+	ResultURL               string                 `json:"result_url,omitempty"`                  // 任务成功后的结果 URL（视频地址等）
+	UpstreamResultURL       string                 `json:"upstream_result_url,omitempty"`         // 上游结果地址，仅供服务端缓存回源使用
+	MediaDeliveryNode       string                 `json:"media_delivery_node,omitempty"`         // 媒体交付节点快照（us/hk）；空值兼容历史任务并按 us 处理
+	HongKongMediaURL        string                 `json:"hong_kong_media_url,omitempty"`         // 香港节点媒体地址，上传校验成功后写入
+	HongKongMediaUploadedAt int64                  `json:"hong_kong_media_uploaded_at,omitempty"` // 香港节点媒体上传完成时间
+	HongKongMediaLastError  string                 `json:"hong_kong_media_last_error,omitempty"`  // 最近一次香港节点上传错误（仅服务端）
+	VideoCachedAt           int64                  `json:"video_cached_at,omitempty"`             // 本地视频缓存完成时间，用于固定 48 小时保留期
+	VideoCacheAttempts      int                    `json:"video_cache_attempts,omitempty"`        // 本地视频缓存补偿尝试次数
+	VideoCacheNextRetryAt   int64                  `json:"video_cache_next_retry_at,omitempty"`   // 下次缓存补偿时间
+	VideoCacheLastError     string                 `json:"video_cache_last_error,omitempty"`      // 最近一次缓存补偿错误（仅服务端）
+	Execution               *TaskExecutionSnapshot `json:"execution,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -145,6 +146,38 @@ type TaskPrivateData struct {
 	PluginState json.RawMessage `json:"plugin_state,omitempty"`
 	// PollFailures counts consecutive unrecognized or transient poll outcomes.
 	PollFailures int `json:"poll_failures,omitempty"`
+	// ResultDiscarded marks an immediate terminal result whose submit route
+	// declared retainResult: false. The upstream snapshot was never written
+	// and every retrieval surface treats the task as not found. The zero
+	// value keeps historical rows retained and retrievable.
+	ResultDiscarded bool `json:"result_discarded,omitempty"`
+	// CredentialAccount is the account of the plugin credential that
+	// submitted the task, which polls the task and fetches its content.
+	CredentialAccount string `json:"credential_account,omitempty"`
+	// RequestPlugins is set when a request plugin instance may report the
+	// task: the task reports once, at its final state.
+	RequestPlugins *TaskRequestPlugins `json:"request_plugins,omitempty"`
+}
+
+// TaskRequestPlugins is what the report of a task needs from its
+// submission. The request id and path are in Execution; the model, group,
+// user, channel and token are on the task.
+type TaskRequestPlugins struct {
+	// Instances are the ids of the report instances that matched.
+	Instances   []string `json:"instances"`
+	Format      string   `json:"format"`
+	ChannelType int      `json:"channel_type,omitempty"`
+	Attempt     int      `json:"attempt,omitempty"`
+	Username    string   `json:"username,omitempty"`
+	TokenName   string   `json:"token_name,omitempty"`
+	// StartedAt is when the submission started, in Unix milliseconds.
+	StartedAt int64 `json:"started_at"`
+	// Request is the client body as a report shows it, inline media
+	// replaced by references; null when it is not JSON or too large.
+	Request json.RawMessage           `json:"request,omitempty"`
+	Media   []jsplugin.TransformMedia `json:"media,omitempty"`
+	// Record is the submission's public record.
+	Record []commonRelay.RequestPluginRecord `json:"record,omitempty"`
 }
 
 type TaskExecutionSnapshot struct {
@@ -180,6 +213,12 @@ type TaskBillingContext struct {
 	BillingResolution string                       `json:"billing_resolution,omitempty"` // 选中的分辨率快照
 	PerCallBilling    bool                         `json:"per_call_billing,omitempty"`   // 按次计费：跳过轮询阶段的差额结算
 	TieredSnapshot    *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
+}
+
+// ResultRetrievable reports whether retrieval surfaces (native query routes,
+// protocol retrieve endpoints, artifact projection) may serve this task.
+func (t *Task) ResultRetrievable() bool {
+	return !t.PrivateData.ResultDiscarded
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -232,7 +271,8 @@ func (p TaskPrivateData) Value() (driver.Value, error) {
 		p.HongKongMediaUploadedAt == 0 && p.HongKongMediaLastError == "" &&
 		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
 		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
-		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 {
+		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 &&
+		!p.ResultDiscarded && p.RequestPlugins == nil {
 		return nil, nil
 	}
 	// 同 Properties.Value:string 避免 PG simple protocol 的 bytea 编码。
@@ -260,9 +300,17 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	properties := Properties{}
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
+		// A New API channel may rotate between several gateway tokens, so the
+		// task keeps the key that submitted it and polls with the same identity.
 		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
-			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi {
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi ||
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeNewAPI {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
+		}
+		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeTaskPlugin {
+			if credential, ok := jsplugin.ParseCredential(relayInfo.ChannelMeta.ApiKey); ok {
+				privateData.CredentialAccount = credential.AccountID
+			}
 		}
 		if relayInfo.UpstreamModelName != "" {
 			properties.UpstreamModelName = relayInfo.UpstreamModelName
@@ -323,7 +371,9 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	}
 
 	// 获取数据
-	err = query.Omit("channel_id").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
+	// Task lists never render the persisted upstream snapshot; the dashboard
+	// loads media through the artifacts endpoint instead.
+	err = query.Omit("channel_id", "data").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -368,7 +418,7 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	}
 
 	// 获取数据
-	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
+	err = query.Omit("data").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -529,29 +579,36 @@ func (Task *Task) Insert() error {
 	return Task.InsertWithContext(context.Background())
 }
 
-func (Task *Task) InsertWithContext(ctx context.Context) error {
-	return DB.WithContext(ctx).Create(Task).Error
+// InsertWithContext creates the row. omitColumns are left out of the INSERT
+// (for example "data" when the submit route discards the upstream snapshot)
+// while the in-memory task keeps its values for presentation.
+func (Task *Task) InsertWithContext(ctx context.Context, omitColumns ...string) error {
+	tx := DB.WithContext(ctx)
+	if len(omitColumns) > 0 {
+		tx = tx.Omit(omitColumns...)
+	}
+	return tx.Create(Task).Error
 }
 
 type taskSnapshot struct {
-	Status                TaskStatus
-	Progress              string
-	StartTime             int64
-	FinishTime            int64
-	FailReason            string
-	ResultURL             string
-	UpstreamResultURL     string
-	MediaDeliveryNode     string
-	HongKongMediaURL      string
+	Status                  TaskStatus
+	Progress                string
+	StartTime               int64
+	FinishTime              int64
+	FailReason              string
+	ResultURL               string
+	UpstreamResultURL       string
+	MediaDeliveryNode       string
+	HongKongMediaURL        string
 	HongKongMediaUploadedAt int64
-	HongKongMediaLastError string
-	VideoCachedAt         int64
-	VideoCacheAttempts    int
-	VideoCacheNextRetryAt int64
-	VideoCacheLastError   string
-	Data                  json.RawMessage
-	PluginState           json.RawMessage
-	PollFailures          int
+	HongKongMediaLastError  string
+	VideoCachedAt           int64
+	VideoCacheAttempts      int
+	VideoCacheNextRetryAt   int64
+	VideoCacheLastError     string
+	Data                    json.RawMessage
+	PluginState             json.RawMessage
+	PollFailures            int
 }
 
 func (s taskSnapshot) Equal(other taskSnapshot) bool {
@@ -577,24 +634,24 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 
 func (t *Task) Snapshot() taskSnapshot {
 	return taskSnapshot{
-		Status:                t.Status,
-		Progress:              t.Progress,
-		StartTime:             t.StartTime,
-		FinishTime:            t.FinishTime,
-		FailReason:            t.FailReason,
-		ResultURL:             t.PrivateData.ResultURL,
-		UpstreamResultURL:     t.PrivateData.UpstreamResultURL,
-		MediaDeliveryNode:     t.PrivateData.MediaDeliveryNode,
-		HongKongMediaURL:      t.PrivateData.HongKongMediaURL,
+		Status:                  t.Status,
+		Progress:                t.Progress,
+		StartTime:               t.StartTime,
+		FinishTime:              t.FinishTime,
+		FailReason:              t.FailReason,
+		ResultURL:               t.PrivateData.ResultURL,
+		UpstreamResultURL:       t.PrivateData.UpstreamResultURL,
+		MediaDeliveryNode:       t.PrivateData.MediaDeliveryNode,
+		HongKongMediaURL:        t.PrivateData.HongKongMediaURL,
 		HongKongMediaUploadedAt: t.PrivateData.HongKongMediaUploadedAt,
 		HongKongMediaLastError:  t.PrivateData.HongKongMediaLastError,
-		VideoCachedAt:         t.PrivateData.VideoCachedAt,
-		VideoCacheAttempts:    t.PrivateData.VideoCacheAttempts,
-		VideoCacheNextRetryAt: t.PrivateData.VideoCacheNextRetryAt,
-		VideoCacheLastError:   t.PrivateData.VideoCacheLastError,
-		Data:                  t.Data,
-		PluginState:           t.PrivateData.PluginState,
-		PollFailures:          t.PrivateData.PollFailures,
+		VideoCachedAt:           t.PrivateData.VideoCachedAt,
+		VideoCacheAttempts:      t.PrivateData.VideoCacheAttempts,
+		VideoCacheNextRetryAt:   t.PrivateData.VideoCacheNextRetryAt,
+		VideoCacheLastError:     t.PrivateData.VideoCacheLastError,
+		Data:                    t.Data,
+		PluginState:             t.PrivateData.PluginState,
+		PollFailures:            t.PrivateData.PollFailures,
 	}
 }
 
@@ -622,10 +679,10 @@ func (t *Task) UpdateVideoCacheMetadata(resultURL string, cachedAt int64, attemp
 // path; callers that only update the local cache should use the legacy wrapper.
 func (t *Task) UpdateVideoCacheMetadataWithDelivery(resultURL string, cachedAt int64, attempts int, nextRetryAt int64, lastError string, mediaDeliveryNode string, hongKongMediaURL string, hongKongMediaUploadedAt int64, hongKongMediaLastError string) error {
 	return t.updateVideoCacheMetadata(resultURL, cachedAt, attempts, nextRetryAt, lastError, &videoDeliveryMetadata{
-		mediaDeliveryNode:     mediaDeliveryNode,
-		hongKongMediaURL:      hongKongMediaURL,
+		mediaDeliveryNode:       mediaDeliveryNode,
+		hongKongMediaURL:        hongKongMediaURL,
 		hongKongMediaUploadedAt: hongKongMediaUploadedAt,
-		hongKongMediaLastError: hongKongMediaLastError,
+		hongKongMediaLastError:  hongKongMediaLastError,
 	})
 }
 

@@ -100,6 +100,69 @@ const model: PricingModel = {
 }
 const clients: QueryClient[] = []
 
+it('shows nested task conditions and prices in detail and group tables without ambiguous log matches', () => {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  const nestedModel: PricingModel = {
+    ...model,
+    billing_expr:
+      'tier("standard", u("seconds") * (hour("Asia/Shanghai") >= 18 && hour("Asia/Shanghai") < 22 ? (u("resolution") == "4K" ? 0.12 : 0.072) : (u("resolution") == "4K" ? 0.15 : 0.09)))',
+    billing_usage_schema: {
+      seconds: { type: 'number', unit: 'second' },
+      resolution: { enum: ['768P', '4K'] },
+    },
+  }
+  render(
+    <QueryClientProvider client={client}>
+      <ModelCard model={nestedModel} onClick={vi.fn()} />
+      <ModelPriceCell model={nestedModel} />
+      <ModelDetailsContent
+        model={nestedModel}
+        groupRatio={{ default: 2 }}
+        usableGroup={{ default: { desc: '', ratio: 2 } }}
+        endpointMap={{}}
+        autoGroups={[]}
+        priceRate={1}
+        usdExchangeRate={1}
+        tokenUnit='M'
+      />
+      <DynamicPricingBreakdown
+        billingExpr={nestedModel.billing_expr}
+        usageSchema={nestedModel.billing_usage_schema}
+        matchedTierLabel='standard'
+        usageFacts={{ seconds: 10, resolution: '4K' }}
+      />
+    </QueryClientProvider>
+  )
+  expect(
+    screen.queryByText('Special billing expression')
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getAllByText(/resolution: 4K · 18:00–22:00 \(Asia\/Shanghai\)/)
+      .length
+  ).toBeGreaterThan(0)
+  expect(
+    screen.getAllByText(/resolution: 768P · Outside these times:/).length
+  ).toBeGreaterThan(0)
+  expect(screen.getByText('$0.072 – $0.15')).toBeVisible()
+  expect(screen.getAllByText('$0.24').length).toBeGreaterThan(0)
+  expect(screen.queryByText('Matched')).not.toBeInTheDocument()
+})
+
+it('explains missing task metadata while retaining the original expression', () => {
+  const expression = 'tier("base", u("seconds") * 0.09)'
+  render(<DynamicPricingBreakdown billingExpr={expression} />)
+  expect(
+    screen.getByText(
+      'Task usage metadata is unavailable. Pricing details cannot be displayed.'
+    )
+  ).toBeVisible()
+  expect(screen.getByText(expression)).toBeVisible()
+})
+
 it('falls back for omitted count labels and preserves canonical units for other quantities', () => {
   expect(taskUsageUnitLabel({ unit: 'count' }, 'zhCN', '次')).toBe('次')
   expect(
@@ -558,6 +621,93 @@ it('switches provider group prices, localized conditions and examples, and shows
   expect(within(panel).getByText('$0.5')).toBeVisible()
 })
 
+function renderModelDetails(target: PricingModel) {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  render(
+    <QueryClientProvider client={client}>
+      <ModelDetailsContent
+        model={target}
+        groupRatio={{ default: 2 }}
+        usableGroup={{ default: { desc: '', ratio: 2 } }}
+        endpointMap={{}}
+        autoGroups={[]}
+        priceRate={1}
+        usdExchangeRate={1}
+        tokenUnit='M'
+      />
+    </QueryClientProvider>
+  )
+}
+
+it('shows the chat token price beside a plugin that cannot use it when ordinary requests still pay it', async () => {
+  renderModelDetails({
+    ...model,
+    model_ratio: 1.5,
+    completion_ratio: 4,
+    billing_mode: undefined,
+    billing_expr: undefined,
+    billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
+    ordinary_pricing: true,
+    billing_plugin_variants: [
+      {
+        plugin_key: 'alpha',
+        plugin_name: 'Alpha',
+        billing_mode: 'tiered_expr',
+        billing_expr: '',
+        billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
+      },
+    ],
+  })
+  // Ratio 1.5 is $3 / 1M input tokens; completion ratio 4 makes output $12.
+  expect(screen.getByText('$3')).toBeVisible()
+  expect(screen.getByText('$12')).toBeVisible()
+  expect(screen.queryByText('Not configured')).not.toBeInTheDocument()
+  const ordinary = screen.getByRole('tab', { name: 'Default price' })
+  expect(ordinary).toHaveAttribute('aria-selected', 'true')
+  let panel = screen.getByRole('tabpanel', { name: 'Default price' })
+  expect(within(panel).getByText('$6')).toBeVisible()
+  expect(within(panel).getByText('$24')).toBeVisible()
+  await userEvent.setup().click(screen.getByRole('tab', { name: 'Alpha' }))
+  panel = screen.getByRole('tabpanel', { name: 'Alpha' })
+  expect(
+    within(panel).getByText(
+      'This model is billed by usage, but the administrator has not configured its pricing yet.'
+    )
+  ).toBeVisible()
+})
+
+it('shows the ordinary per-image price beside a plugin price of its own', async () => {
+  renderModelDetails({
+    ...model,
+    billing_expr: 'tier("image", fixed(0.04)) * image_count',
+    billing_usage_schema: { image_count: { type: 'number', unit: 'count' } },
+    ordinary_pricing: true,
+    billing_plugin_variants: [
+      {
+        plugin_key: 'alpha',
+        plugin_name: 'Alpha',
+        billing_expr: 'tier("images", u("image_count") * 0.05)',
+        billing_usage_schema: {
+          image_count: { type: 'number', unit: 'count' },
+        },
+      },
+    ],
+  })
+  expect(screen.getByRole('tab', { name: 'Default price' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  let panel = screen.getByRole('tabpanel', { name: 'Default price' })
+  expect(within(panel).getByText('$0.08')).toBeVisible()
+  await userEvent.setup().click(screen.getByRole('tab', { name: 'Alpha' }))
+  panel = screen.getByRole('tabpanel', { name: 'Alpha' })
+  expect(within(panel).getByText('$0.1')).toBeVisible()
+})
+
 it('shows provider count, price range and missing-price status in both list and card views', () => {
   const shared: PricingModel = {
     ...model,
@@ -600,4 +750,56 @@ it('shows provider count, price range and missing-price status in both list and 
   )
   expect(screen.getByText('0.4 – 0.8/s')).toBeVisible()
   expect(screen.getByText('$0.4 – $0.8')).toBeVisible()
+})
+
+it('summarises the model-level token price in list and card views when ordinary requests still pay it', () => {
+  const dualUse: PricingModel = {
+    ...model,
+    model_ratio: 1.5,
+    completion_ratio: 4,
+    billing_mode: undefined,
+    billing_expr: undefined,
+    billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
+    ordinary_pricing: true,
+    billing_plugin_variants: [
+      {
+        plugin_key: 'alpha',
+        plugin_name: 'Alpha',
+        billing_mode: 'tiered_expr',
+        billing_expr: '',
+        billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
+      },
+    ],
+  }
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  const cell = within(
+    render(
+      <QueryClientProvider client={client}>
+        <ModelPriceCell model={dualUse} />
+      </QueryClientProvider>
+    ).container
+  )
+  const card = within(
+    render(
+      <QueryClientProvider client={client}>
+        <ModelCard model={dualUse} onClick={vi.fn()} />
+      </QueryClientProvider>
+    ).container
+  )
+  // Ratio 1.5 is $3 / 1M input tokens; completion ratio 4 makes output $12.
+  expect(cell.getByText('Input').parentElement).toHaveTextContent(/^Input3$/)
+  expect(cell.getByText('Output').parentElement).toHaveTextContent(/^Output12$/)
+  expect(card.getByText('Input').parentElement).toHaveTextContent(
+    /\$3\s*\/\s*1M/
+  )
+  expect(card.getByText('Output').parentElement).toHaveTextContent(
+    /\$12\s*\/\s*1M/
+  )
+  expect(card.getByText('Token-based')).toBeVisible()
+  expect(screen.queryByText(/Not configured/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/providers/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/price not configured/)).not.toBeInTheDocument()
 })

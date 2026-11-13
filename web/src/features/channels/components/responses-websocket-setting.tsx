@@ -28,15 +28,21 @@ import {
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
 
+import { CHANNEL_TYPE_ADVANCED_CUSTOM } from '../lib/advanced-custom'
 import type { ChannelFormValues } from '../lib/channel-form'
+import { supportsResponsesWebSocket } from '../lib/responses-websocket'
 
 export function ResponsesWebSocketSetting(props: {
   channelType: number
+  /** Overrides the channel type rule, e.g. for a plugin that can serve it. */
+  supported?: boolean
   disabled?: boolean
 }) {
   const { t } = useTranslation()
   const form = useFormContext<ChannelFormValues>()
-  if (props.channelType !== 1 && props.channelType !== 57) return null
+  if (!(props.supported ?? supportsResponsesWebSocket(props.channelType))) {
+    return null
+  }
 
   return (
     <FormField
@@ -49,6 +55,14 @@ export function ResponsesWebSocketSetting(props: {
             <FormDescription>
               {t(
                 'Enable only if the upstream supports Responses WebSocket. HTTP requests are unaffected when disabled.'
+              )}
+              {props.channelType === CHANNEL_TYPE_ADVANCED_CUSTOM && (
+                <>
+                  {' '}
+                  {t(
+                    'For advanced custom channels this applies only to /v1/responses routes without protocol conversion.'
+                  )}
+                </>
               )}
             </FormDescription>
           </div>

@@ -28,6 +28,7 @@ import (
 
 type taskPollingFetchAdaptor struct {
 	mu           sync.Mutex
+	initInfo     *relaycommon.RelayInfo
 	taskIDs      []string
 	fetched      chan string
 	blockTaskID  string
@@ -63,7 +64,19 @@ func (a *batchPollingAdaptor) ParseBatchResult(_ []*model.Task, _ *http.Response
 	return results, nil
 }
 
-func (a *taskPollingFetchAdaptor) Init(_ *relaycommon.RelayInfo) {}
+func (a *taskPollingFetchAdaptor) Init(info *relaycommon.RelayInfo) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.initInfo = info
+}
+func (a *taskPollingFetchAdaptor) initChannelMeta() *relaycommon.ChannelMeta {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.initInfo == nil {
+		return nil
+	}
+	return a.initInfo.ChannelMeta
+}
 
 func (a *taskPollingFetchAdaptor) FetchTask(_ string, _ string, task *model.Task, _ string) (*http.Response, error) {
 	taskID := ""
@@ -162,6 +175,22 @@ func TestRedactVideoResponseBodyPreservesPollingPayloadShape(t *testing.T) {
 	assert.NotContains(t, video, "bytesBase64Encoded")
 	assert.Equal(t, "video/mp4", video["mimeType"])
 	assert.Equal(t, "https://media.example/video.mp4", video["uri"])
+}
+
+func TestRedactVideoResponseBodyDropsInteractionInlineVideo(t *testing.T) {
+	body := []byte(`{"id":"int_1","status":"completed","steps":[{"type":"model_output","content":[{"type":"video","mime_type":"video/mp4","data":"` + strings.Repeat("a", 1024) + `"},{"type":"text","text":"done"}]}]}`)
+
+	var stored map[string]any
+	require.NoError(t, common.Unmarshal(redactVideoResponseBody(body), &stored))
+	content := stored["steps"].([]any)[0].(map[string]any)["content"].([]any)
+	assert.Equal(t, map[string]any{"type": "video", "mime_type": "video/mp4"}, content[0])
+	assert.Equal(t, "done", content[1].(map[string]any)["text"])
+}
+
+func TestRedactVideoResponseBodyKeepsUntouchedBytes(t *testing.T) {
+	body := []byte(`{"name":"op","response":{"videos":[{"uri":"u","bytesBase64Encoded":"x"}],"durationSeconds":8.0,"bytesBase64Encoded":"y"},"done":true}`)
+
+	assert.Equal(t, `{"name":"op","response":{"videos":[{"uri":"u"}],"durationSeconds":8.0},"done":true}`, string(redactVideoResponseBody(body)))
 }
 
 func seedTaskPollingChannel(t *testing.T, id int, disableSleep bool) {
@@ -405,6 +434,40 @@ func TestUpdateVideoTasksDefaultSleepWaitsBetweenTasks(t *testing.T) {
 
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Equal(t, 1, adaptor.fetchCount())
+}
+
+func TestPollingPassesExecutingChannelTypeToAdaptor(t *testing.T) {
+	truncate(t)
+	const channelID = 112
+	baseURL := "https://gateway.example"
+	gateway := &model.Channel{Id: channelID, Type: constant.ChannelTypeNewAPI, Name: "gateway", Key: "sk-gateway", Status: common.ChannelStatusEnabled, BaseURL: &baseURL}
+	gateway.HeaderOverride = common.GetPointer(`{"X-API-Key":"{api_key}"}`)
+	gateway.SetOtherSettings(dto.ChannelOtherSettings{DisableTaskPollingSleep: true})
+	require.NoError(t, model.DB.Create(gateway).Error)
+	task := seedPollingTask(t, channelID, "task_gateway", "upstream_gateway")
+	taskChannels := map[int][]string{channelID: {task.GetUpstreamTaskID()}}
+	tasks := map[string]*model.Task{task.GetUpstreamTaskID(): task}
+
+	perTask := &taskPollingFetchAdaptor{}
+	previousFactory := GetTaskAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return perTask }
+	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
+	require.NoError(t, UpdateVideoTasks(context.Background(), constant.TaskPlatform("kling"), taskChannels, tasks))
+	meta := perTask.initChannelMeta()
+	require.NotNil(t, meta, "per-task polling initializes the adaptor with channel metadata")
+	assert.Equal(t, constant.ChannelTypeNewAPI, meta.ChannelType, "the adaptor derives the upstream kind from the channel type")
+	assert.Equal(t, channelID, meta.ChannelId)
+	assert.Equal(t, baseURL, meta.ChannelBaseUrl)
+	assert.Equal(t, map[string]any{"X-API-Key": "{api_key}"}, meta.HeadersOverride)
+
+	batch := &batchPollingAdaptor{}
+	require.NoError(t, UpdateBatchTasks(context.Background(), batch, taskChannels, tasks))
+	meta = batch.initChannelMeta()
+	require.NotNil(t, meta, "batch polling initializes the adaptor with channel metadata")
+	assert.Equal(t, constant.ChannelTypeNewAPI, meta.ChannelType)
+	assert.Equal(t, channelID, meta.ChannelId)
+	assert.Equal(t, baseURL, meta.ChannelBaseUrl)
+	assert.Equal(t, map[string]any{"X-API-Key": "{api_key}"}, meta.HeadersOverride)
 }
 
 func TestDispatchPlatformUpdateUsesFetchMode(t *testing.T) {
@@ -904,8 +967,8 @@ func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
 	assert.EqualValues(t, model.TaskStatusFailure, reloadedModern.Status)
 	assert.Zero(t, reloadedLegacy.Quota)
 	assert.Zero(t, reloadedModern.Quota)
-	assert.Contains(t, reloadedLegacy.FailReason, "旧系统遗留任务")
-	assert.Contains(t, reloadedModern.FailReason, "任务超时")
+	assert.Contains(t, reloadedLegacy.FailReason, "old system")
+	assert.Equal(t, "Task timed out", reloadedModern.FailReason)
 	assert.Equal(t, initialQuota+modernTaskQuota, getUserQuota(t, userID))
 	assert.Equal(t, int64(1), countLogs(t))
 }
@@ -1022,7 +1085,7 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 			statusCode:    http.StatusNotFound,
 			wantStatus:    model.TaskStatusFailure,
 			wantRefund:    true,
-			wantReason:    "upstream task not found (HTTP 404)",
+			wantReason:    "Upstream task not found",
 			wantUnchanged: false,
 		},
 		{
@@ -1040,7 +1103,7 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 			wantStatus:    model.TaskStatusFailure,
 			wantFailures:  3,
 			wantRefund:    true,
-			wantReason:    "poll failed: transient (HTTP 429)",
+			wantReason:    "Failed to query the upstream task status",
 		},
 		{
 			name:          "UNKNOWN increments",
@@ -1125,7 +1188,7 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 				assert.Empty(t, persisted.FailReason)
 			}
 			if testCase.wantReason != "" {
-				assert.Contains(t, persisted.FailReason, testCase.wantReason)
+				assert.Equal(t, testCase.wantReason, persisted.FailReason)
 			}
 			if testCase.wantState != "" {
 				assert.JSONEq(t, testCase.wantState, string(persisted.PrivateData.PluginState))
@@ -1199,7 +1262,7 @@ func TestUpdateBatchTasksPollClassification(t *testing.T) {
 			statusCode: http.StatusNotFound,
 			wantStatus: model.TaskStatusFailure,
 			wantRefund: true,
-			wantReason: "upstream task not found (HTTP 404)",
+			wantReason: "Upstream task not found",
 		},
 		{
 			name:         "401 increments every task",
@@ -1246,7 +1309,7 @@ func TestUpdateBatchTasksPollClassification(t *testing.T) {
 			assert.EqualValues(t, testCase.wantStatus, persisted.Status)
 			assert.Equal(t, testCase.wantFailures, persisted.PrivateData.PollFailures)
 			if testCase.wantReason != "" {
-				assert.Contains(t, persisted.FailReason, testCase.wantReason)
+				assert.Equal(t, testCase.wantReason, persisted.FailReason)
 			}
 			if testCase.wantRefund {
 				assert.Equal(t, initialQuota+preConsumed, getUserQuota(t, userID))
@@ -1256,4 +1319,70 @@ func TestUpdateBatchTasksPollClassification(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A task reports once, when it reaches its final state: not per poll, not
+// when another poller lost the race, never when no instance may report it.
+func TestTaskReportsOnceAtTheFinalState(t *testing.T) {
+	truncate(t)
+	const userID, tokenID, channelID = 520, 520, 520
+	seedUser(t, userID, 10_000)
+	seedToken(t, tokenID, userID, "sk-poll-report", 7_000)
+	ch := &model.Channel{Id: channelID, Type: constant.ChannelTypeKling, Name: "poll", Key: "sk-test", Status: common.ChannelStatusEnabled}
+
+	var reported []string
+	previous := ReportTaskFunc
+	ReportTaskFunc = func(task *model.Task) { reported = append(reported, task.TaskID+":"+string(task.Status)) }
+	t.Cleanup(func() { ReportTaskFunc = previous })
+
+	newTask := func(id string, plugins bool) *model.Task {
+		task := makeTask(userID, channelID, 1_000, tokenID, BillingSourceWallet, 0)
+		task.TaskID = id
+		task.PrivateData.UpstreamTaskID = "upstream_" + id
+		if plugins {
+			task.PrivateData.RequestPlugins = &model.TaskRequestPlugins{Instances: []string{"audit"}}
+		}
+		require.NoError(t, model.DB.Create(task).Error)
+		return task
+	}
+	reload := func(task *model.Task) *model.Task {
+		var stored model.Task
+		require.NoError(t, model.DB.First(&stored, task.ID).Error)
+		return &stored
+	}
+	poll := func(task *model.Task, status model.TaskStatus) {
+		adaptor := &scriptedPollingAdaptor{parse: &relaycommon.TaskInfo{Status: string(status), Url: "https://cdn.example.com/v.mp4"}}
+		require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, ch, task.GetUpstreamTaskID(), map[string]*model.Task{
+			task.GetUpstreamTaskID(): task,
+		}))
+	}
+
+	task := newTask("report_once", true)
+	stale := reload(task)
+	poll(task, model.TaskStatusInProgress)
+	poll(reload(task), model.TaskStatusInProgress)
+	assert.Empty(t, reported)
+
+	poll(reload(task), model.TaskStatusSuccess)
+	assert.Equal(t, []string{"report_once:SUCCESS"}, reported)
+	// Another poller that read the row before it finished loses the update.
+	poll(stale, model.TaskStatusSuccess)
+	assert.Len(t, reported, 1)
+
+	plain := newTask("no_plugins", false)
+	poll(plain, model.TaskStatusSuccess)
+	assert.Len(t, reported, 1)
+
+	failed := newTask("fails", true)
+	poll(failed, model.TaskStatusFailure)
+	assert.Equal(t, "fails:FAILURE", reported[1])
+
+	previousTimeout := constant.TaskTimeoutMinutes
+	constant.TaskTimeoutMinutes = 1
+	t.Cleanup(func() { constant.TaskTimeoutMinutes = previousTimeout })
+	timedOut := newTask("times_out", true)
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("id = ?", timedOut.ID).Update("submit_time", time.Now().Add(-time.Hour).Unix()).Error)
+	sweepTimedOutTasks(context.Background())
+	sweepTimedOutTasks(context.Background())
+	assert.Equal(t, []string{"report_once:SUCCESS", "fails:FAILURE", "times_out:FAILURE"}, reported)
 }

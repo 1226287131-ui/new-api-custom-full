@@ -21,7 +21,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
   ArrowLeft,
+  ArrowRightLeft,
+  PanelLeftOpen,
   AlertCircle,
+  Puzzle,
   ChevronDown,
   ClipboardPaste,
   Loader2,
@@ -103,6 +106,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SecureVerificationDialog } from '@/features/auth/secure-verification'
+import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
+import type { PluginIconInput } from '@/features/task-plugins/lib/plugin-icon'
+import { fromRequestPluginConfigDraft } from '@/features/task-plugins/lib/request-plugins'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import {
@@ -115,6 +121,7 @@ import {
   type ChannelConnectionInfo,
 } from '@/lib/channel-connection-info'
 import { handleServerError } from '@/lib/handle-server-error'
+import { resolveLocalizedText } from '@/lib/localized-text'
 import { ROLE } from '@/lib/roles'
 import {
   requireServerSuccess,
@@ -159,6 +166,10 @@ import {
 } from '../../hooks/use-channel-model-discovery'
 import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
 import {
+  REDIRECT_PANEL_MIN_VIEWPORT,
+  useRedirectPanelPlacement,
+} from '../../hooks/use-redirect-panel-placement'
+import {
   CHANNEL_FORM_DEFAULT_VALUES,
   CHANNEL_TYPE_ADVANCED_CUSTOM,
   channelFormSchema,
@@ -170,6 +181,8 @@ import {
   getKeyPromptForType,
   parseModelsString,
   formatModelsArray,
+  mergeModelMappingPairs,
+  type ModelMappingPair,
   extractRedirectModels,
   extractMappingSourceModels,
   hasModelConfigChanged,
@@ -186,6 +199,7 @@ import {
 import {
   getChannelPluginExtensions,
   supportsChannelPluginExtensions,
+  supportsNewAPIUpstream,
 } from '../../lib/channel-plugin-extensions'
 import { getChannelTypeConfig } from '../../lib/channel-type-config'
 import {
@@ -198,6 +212,7 @@ import {
 } from '../../lib/task-plugin-base-url'
 import type { Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
+import { ChannelQuickOptions } from '../channel-quick-options'
 import { ChannelTypeLogo } from '../channel-type-badge'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
@@ -207,15 +222,32 @@ import {
   type MissingModelsAction,
 } from '../dialogs/missing-models-confirmation-dialog'
 import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dialog'
+import {
+  PassthroughWarningDialog,
+  type PassthroughKind,
+} from '../dialogs/passthrough-warning-dialog'
+import { PluginLoginDialog } from '../dialogs/plugin-login-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
-import { ModelMappingEditor } from '../model-mapping-editor'
+import {
+  ModelMappingBatchDialog,
+  type ModelMappingBatchResult,
+  type ModelMappingBatchSource,
+} from '../model-mapping-batch-dialog'
+import {
+  ModelMappingEditor,
+  type ModelMappingDraftRequest,
+} from '../model-mapping-editor'
+import { ModelRedirectPanel } from '../model-redirect-panel'
 import { ResponsesWebSocketSetting } from '../responses-websocket-setting'
 import { UpstreamModelSelection } from '../upstream-model-selection'
 import {
   ChannelConfiguration,
   ChannelConfigurationStatusIndicator,
 } from './channel-configuration'
+import { ChannelPluginConfigFields } from './channel-plugin-config-fields'
 import { ChannelProviderPicker } from './channel-provider-picker'
+import { ChannelRequestPluginsField } from './channel-request-plugins-field'
+import { PluginCredentialPanel } from './plugin-credential-panel'
 import {
   ChannelApiAccessSection,
   ChannelAuthSection,
@@ -245,6 +277,35 @@ const createEmptyModelMappingGuardrail = (): ModelMappingGuardrail => ({
   exposedTargetModels: [],
 })
 
+// Mappings already reflected in the model list count as synced, so the
+// redirect sync only reverts changes it made for the channel being edited.
+const getModelMappingSyncBaseline = (
+  mapping: string,
+  modelsValue: string
+): { aliases: Set<string>; targets: Set<string> } => {
+  const aliases = new Set<string>()
+  const targets = new Set<string>()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(mapping.trim() || '{}')
+  } catch {
+    return { aliases, targets }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { aliases, targets }
+  }
+  const models = new Set(parseModelsString(modelsValue))
+  for (const [rawFrom, rawTo] of Object.entries(parsed)) {
+    if (typeof rawTo !== 'string') continue
+    const from = rawFrom.trim()
+    const to = rawTo.trim()
+    if (!from || !to) continue
+    if (models.has(from)) aliases.add(from)
+    if (!models.has(to)) targets.add(to)
+  }
+  return { aliases, targets }
+}
+
 const formatModelNames = (models: string[]): string =>
   models.map((model) => `"${model}"`).join(', ')
 
@@ -269,7 +330,10 @@ const SENSITIVE_FORM_FIELDS = [
   'advanced_custom',
   'is_enterprise_account',
   'vertex_key_type',
+  'vertex_project_id',
+  'vertex_api_version',
   'aws_key_type',
+  'aws_api_type',
   'azure_responses_version',
   'force_format',
   'thinking_to_content',
@@ -281,6 +345,7 @@ const SENSITIVE_FORM_FIELDS = [
   'openai_video_endpoint',
   'http_protocol',
   'http2_connection_shards',
+  'tls_insecure_skip_verify',
   'pass_through_body_enabled',
   'responses_websocket_enabled',
   'system_prompt',
@@ -297,6 +362,8 @@ const SENSITIVE_FORM_FIELDS = [
   'upstream_model_update_check_enabled',
   'upstream_model_update_auto_sync_enabled',
   'upstream_model_update_ignored_models',
+  'plugin_config',
+  'plugin_config_draft',
 ] satisfies (keyof ChannelFormValues)[]
 
 function parseSettingsRecord(
@@ -378,12 +445,15 @@ function SubHeading(props: {
   )
 }
 
+/** Stable empty list so memoized consumers do not re-run on every render. */
+const NO_UPSTREAM_MODELS: string[] = []
+
 export function ChannelMutateDrawer({
   open,
   onOpenChange,
   currentRow,
 }: ChannelMutateDrawerProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const { setOpen } = useChannels()
   const currentUser = useAuthStore((s) => s.auth.user)
@@ -415,6 +485,11 @@ export function ChannelMutateDrawer({
   const statusCodeRiskResolveRef = useRef<
     ((confirmed: boolean) => void) | null
   >(null)
+  const [passthroughWarningKind, setPassthroughWarningKind] =
+    useState<PassthroughKind | null>(null)
+  const passthroughWarningResolveRef = useRef<
+    ((confirmed: boolean) => void) | null
+  >(null)
   const [missingModelsDialogOpen, setMissingModelsDialogOpen] = useState(false)
   const [missingModelsList, setMissingModelsList] = useState<string[]>([])
   const missingModelsResolveRef = useRef<
@@ -429,6 +504,13 @@ export function ChannelMutateDrawer({
     useState(false)
   const [clipboardConnectionInfo, setClipboardConnectionInfo] =
     useState<ChannelConnectionInfo | null>(null)
+  // Outlives the drawer: "Save and log in" closes it, then logs in.
+  const [loginRequest, setLoginRequest] = useState<{
+    channelId: number
+    keyIndex: number | null
+    add?: boolean
+    plugin: PluginIconInput
+  } | null>(null)
 
   const isEditing = Boolean(currentRow)
   const requestedSide = isEditing ? 'left' : 'right'
@@ -448,6 +530,43 @@ export function ChannelMutateDrawer({
   const [pendingErrorFocus, setPendingErrorFocus] = useState<string | null>(
     null
   )
+  const [mappingDraftRequest, setMappingDraftRequest] =
+    useState<ModelMappingDraftRequest | null>(null)
+  const mappingDraftTokenRef = useRef(0)
+  const [batchMapping, setBatchMapping] = useState<{
+    source: ModelMappingBatchSource
+  } | null>(null)
+  const [redirectPanelOpen, setRedirectPanelOpen] = useState(false)
+  const [redirectSyncModels, setRedirectSyncModels] = useState(true)
+  const syncedAliasesRef = useRef(new Set<string>())
+  const syncedTargetsRef = useRef(new Set<string>())
+  // The drawer stays mounted between channels, so the sync baseline must be
+  // rebuilt whenever another channel is loaded.
+  const resetModelMappingSync = useCallback(
+    (mapping = '', modelsValue = '') => {
+      const baseline = getModelMappingSyncBaseline(mapping, modelsValue)
+      syncedAliasesRef.current = baseline.aliases
+      syncedTargetsRef.current = baseline.targets
+    },
+    []
+  )
+  const [viewportWide, setViewportWide] = useState(
+    () => window.innerWidth >= REDIRECT_PANEL_MIN_VIEWPORT
+  )
+  useEffect(() => {
+    const update = () =>
+      setViewportWide(window.innerWidth >= REDIRECT_PANEL_MIN_VIEWPORT)
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+  const redirectPanelPlacement = useRedirectPanelPlacement(
+    channelFormRef,
+    redirectPanelOpen && viewportWide,
+    drawerSide
+  )
+  const redirectPanelActive =
+    redirectPanelOpen && viewportWide && redirectPanelPlacement !== null
   const showProviderPicker =
     choosingProvider && (!isEditing || Boolean(providerTarget))
   const providerControlRef = useRef<HTMLButtonElement>(null)
@@ -538,6 +657,7 @@ export function ChannelMutateDrawer({
   const currentStatus = formValues.status
   const currentBaseUrl = formValues.base_url
   const currentTaskPluginKey = formValues.task_plugin_key
+  const currentTaskExtendPluginKeys = formValues.task_extend_plugin_keys
   const currentKey = formValues.key
   const currentModels = formValues.models
   const currentModelMapping = formValues.model_mapping
@@ -715,10 +835,15 @@ export function ChannelMutateDrawer({
   const canHavePluginExtensions = supportsChannelPluginExtensions(currentType)
   const pluginExtensions = useMemo(() => {
     if (!canBindTaskPlugin || !taskPluginOptionsQuery.isSuccess) return []
-    return getChannelPluginExtensions(currentType, taskPluginOptionsQuery.data)
+    return getChannelPluginExtensions(
+      currentType,
+      taskPluginOptionsQuery.data,
+      currentTaskExtendPluginKeys
+    )
   }, [
     canBindTaskPlugin,
     currentType,
+    currentTaskExtendPluginKeys,
     taskPluginOptionsQuery.isSuccess,
     taskPluginOptionsQuery.data,
   ])
@@ -732,6 +857,34 @@ export function ChannelMutateDrawer({
     boundTaskPlugin?.name ||
     (currentType === CHANNEL_TYPE_TASK_PLUGIN && currentTaskPluginKey) ||
     t(currentTypeLabel)
+  // Credentials of a plugin with its own login come from that login, so a
+  // credential panel replaces the key input.
+  const pluginLogin = boundTaskPlugin?.login === true
+  // Login acts on the saved channel, so a plugin picked in this edit waits
+  // for the save.
+  const loginChannelId =
+    isEditing &&
+    !form.formState.dirtyFields.type &&
+    !form.formState.dirtyFields.task_plugin_key
+      ? channelId
+      : null
+  const pluginConfigSchema =
+    boundTaskPlugin?.channelConfig &&
+    Object.keys(boundTaskPlugin.channelConfig.properties ?? {}).length > 0
+      ? boundTaskPlugin.channelConfig
+      : undefined
+  const pluginKeyHint = resolveLocalizedText(
+    boundTaskPlugin?.keyHint,
+    i18n.language
+  )
+  const responsesWebsocketSupported =
+    currentType === CHANNEL_TYPE_TASK_PLUGIN
+      ? boundTaskPlugin?.responsesWebsocket === true
+      : undefined
+  // Batch mode makes one channel per key line, and a login plugin has none.
+  const keyAddModeOptions = pluginLogin
+    ? addModeOptions.filter((option) => option.value !== 'batch')
+    : addModeOptions
 
   const selectProvider = useCallback(
     (target: ChannelProviderTarget) => {
@@ -753,11 +906,25 @@ export function ChannelMutateDrawer({
           (item) => item.key === target.key
         )
         if (!plugin) return
+        const previousKey = form.getValues('task_plugin_key')
         const previousPlugin = taskPluginOptionsQuery.data?.find(
-          (item) => item.key === form.getValues('task_plugin_key')
+          (item) => item.key === previousKey
         )
         form.setValue('type', CHANNEL_TYPE_TASK_PLUGIN, { shouldDirty: true })
         form.setValue('task_plugin_key', plugin.key, { shouldDirty: true })
+        // Settings belong to the plugin that declared them.
+        if (previousKey !== plugin.key) {
+          form.setValue('plugin_config', {}, { shouldDirty: true })
+          form.setValue('plugin_config_draft', null, { shouldDirty: true })
+        }
+        if (!plugin.responsesWebsocket) {
+          form.setValue('responses_websocket_enabled', false, {
+            shouldDirty: true,
+          })
+        }
+        if (plugin.login && form.getValues('multi_key_mode') === 'batch') {
+          form.setValue('multi_key_mode', 'single', { shouldDirty: true })
+        }
         if (!isEditing && !providerTarget && !form.getValues('name').trim()) {
           form.setValue('name', plugin.name)
         }
@@ -818,7 +985,8 @@ export function ChannelMutateDrawer({
   const configuration = getChannelConfigurationState(
     formValues,
     formErrors,
-    isEditing
+    isEditing || pluginLogin,
+    boundTaskPlugin
   )
 
   // Extract redirect models from model_mapping (target values)
@@ -832,19 +1000,6 @@ export function ChannelMutateDrawer({
     () => extractMappingSourceModels(currentModelMapping || ''),
     [currentModelMapping]
   )
-
-  // Transform models to multi-select options
-  const modelOptions = useMemo(() => {
-    const allModels = new Set([
-      ...allModelsList,
-      ...currentModelsArray,
-      ...pluginExtensions.flatMap((plugin) => plugin.models),
-    ])
-    return [...allModels].map((model) => ({
-      value: model,
-      label: model,
-    }))
-  }, [allModelsList, currentModelsArray, pluginExtensions])
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -914,6 +1069,43 @@ export function ChannelMutateDrawer({
     modelMappingGuardrail.entries.length > 3
       ? modelMappingGuardrail.entries.length - 3
       : 0
+  const mappingCount = modelMappingGuardrail.entries.length
+  const upstreamAliases = useMemo(() => {
+    const aliases: Record<string, string> = {}
+    for (const entry of modelMappingGuardrail.entries) {
+      aliases[entry.target] ??= entry.source
+    }
+    return aliases
+  }, [modelMappingGuardrail.entries])
+
+  // Transform models to multi-select options. Redirected models carry their
+  // upstream target as a hint so the picker shows which names are aliases.
+  const modelOptions = useMemo(() => {
+    const targetBySource = new Map(
+      modelMappingGuardrail.entries.map((entry) => [entry.source, entry.target])
+    )
+    const allModels = new Set([
+      ...allModelsList,
+      ...currentModelsArray,
+      ...pluginExtensions.flatMap((plugin) => plugin.models),
+    ])
+    return [...allModels].map((model) => {
+      const target = targetBySource.get(model)
+      return {
+        value: model,
+        label: model,
+        hint: target
+          ? t('Redirects to {{model}}', { model: target })
+          : undefined,
+      }
+    })
+  }, [
+    allModelsList,
+    currentModelsArray,
+    pluginExtensions,
+    modelMappingGuardrail.entries,
+    t,
+  ])
 
   const upstreamUpdateMeta = useMemo(() => {
     const settings = parseSettingsRecord(currentSettings)
@@ -949,6 +1141,7 @@ export function ChannelMutateDrawer({
       setChoosingProvider(true)
       setConfigurationSection('connection')
       setPendingErrorFocus(null)
+      resetModelMappingSync()
       return
     }
     if (isEditing && channelData?.data) {
@@ -963,6 +1156,7 @@ export function ChannelMutateDrawer({
       }
       const defaults = transformChannelToFormDefaults(channelData.data)
       form.reset(defaults)
+      resetModelMappingSync(defaults.model_mapping, defaults.models)
       loadedForm.current = {
         channelId: channelData.data.id,
         snapshot: JSON.stringify(form.getValues()),
@@ -987,11 +1181,12 @@ export function ChannelMutateDrawer({
         channelData.data.status_code_mapping || ''
     } else if (!isEditing) {
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+      resetModelMappingSync()
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [isEditing, channelId, channelData, form, open])
+  }, [isEditing, channelId, channelData, form, open, resetModelMappingSync])
 
   // Handle type change - set default values for specific types
   useEffect(() => {
@@ -1115,6 +1310,11 @@ export function ChannelMutateDrawer({
     !isEditing ||
     (currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && canEditSensitive)
   const canDiscoverModels = previewModels ? canEditSensitive : canOperateChannel
+  // A plugin channel lists models when its plugin has relay routes. A plugin
+  // that logs in has no credential before the channel is saved.
+  const modelFetchable =
+    MODEL_FETCHABLE_TYPES.has(currentType) ||
+    (boundTaskPlugin?.provider === true && (isEditing || !pluginLogin))
   const previewKey = isEditing ? undefined : currentKey
   const previewRequest = useMemo<ChannelModelDiscoveryRequest>(
     () => ({
@@ -1123,6 +1323,10 @@ export function ChannelMutateDrawer({
         type: currentType,
         key: previewKey,
         channel_id: isEditing ? channelId || undefined : undefined,
+        task_plugin_key:
+          currentType === CHANNEL_TYPE_TASK_PLUGIN
+            ? currentTaskPluginKey
+            : undefined,
         base_url: currentBaseUrl || '',
         advanced_custom: currentAdvancedCustom,
         header_override: currentHeaderOverride,
@@ -1134,6 +1338,7 @@ export function ChannelMutateDrawer({
       previewKey,
       isEditing,
       channelId,
+      currentTaskPluginKey,
       currentBaseUrl,
       currentAdvancedCustom,
       currentHeaderOverride,
@@ -1148,14 +1353,20 @@ export function ChannelMutateDrawer({
     enabled:
       open &&
       canDiscoverModels &&
-      MODEL_FETCHABLE_TYPES.has(currentType) &&
+      modelFetchable &&
       (!isEditing || Boolean(channelData?.data)),
     request: previewModels ? previewRequest : savedRequest,
   })
+  const upstreamModelList =
+    discovery.status === 'success' ? discovery.models : NO_UPSTREAM_MODELS
+  const batchMappingSource: ModelMappingBatchSource =
+    upstreamModelList.length > 0 ? 'upstream' : 'channel'
+  const canBatchMap =
+    currentModelsArray.length > 0 || upstreamModelList.length > 0
   const fetchDiscoveredModels = discovery.fetch
   const handleFetchModels = useCallback(async () => {
     const type = form.getValues('type')
-    if (!MODEL_FETCHABLE_TYPES.has(type)) {
+    if (!modelFetchable) {
       toast.error(t('This channel type does not support fetching models'))
       return
     }
@@ -1177,7 +1388,14 @@ export function ChannelMutateDrawer({
       return
     }
     await fetchDiscoveredModels()
-  }, [isEditing, canDiscoverModels, form, t, fetchDiscoveredModels])
+  }, [
+    isEditing,
+    canDiscoverModels,
+    modelFetchable,
+    form,
+    t,
+    fetchDiscoveredModels,
+  ])
 
   // Handle model operations
   const handleFillRelatedModels = useCallback(() => {
@@ -1239,6 +1457,173 @@ export function ChannelMutateDrawer({
     [form]
   )
 
+  const taskPluginExtensionOptions = useMemo(
+    () =>
+      (taskPluginOptionsQuery.data ?? [])
+        .filter(supportsNewAPIUpstream)
+        .map((plugin) => ({
+          value: plugin.key,
+          label: plugin.name,
+          hint: plugin.key,
+          icon: <PluginIcon plugin={plugin} size={16} />,
+        })),
+    [taskPluginOptionsQuery.data]
+  )
+
+  // Binding an upstream plugin publishes its models like the type-61 prefill;
+  // unbinding removes the models that no remaining bound plugin declares.
+  const handleTaskExtendPluginKeysChange = useCallback(
+    (keys: string[]) => {
+      const plugins = taskPluginOptionsQuery.data ?? []
+      const declaredBy = (bound: readonly string[]) =>
+        new Set(
+          plugins
+            .filter((plugin) => bound.includes(plugin.key))
+            .flatMap((plugin) => plugin.models)
+        )
+      const previous = form.getValues('task_extend_plugin_keys') ?? []
+      const added = declaredBy(keys.filter((key) => !previous.includes(key)))
+      const kept = declaredBy(keys)
+      const dropped = declaredBy(previous.filter((key) => !keys.includes(key)))
+      const models = parseModelsString(form.getValues('models') || '').filter(
+        (model) => kept.has(model) || !dropped.has(model)
+      )
+      for (const model of added) {
+        if (!models.includes(model)) models.push(model)
+      }
+      form.setValue('task_extend_plugin_keys', keys, { shouldDirty: true })
+      form.setValue('models', models.join(','), { shouldDirty: true })
+    },
+    [form, taskPluginOptionsQuery.data]
+  )
+
+  const raiseMappingDraft = useCallback(
+    (from: string, to: string, focus?: 'from' | 'to') => {
+      mappingDraftTokenRef.current += 1
+      setMappingDraftRequest({
+        from,
+        to,
+        focus,
+        token: mappingDraftTokenRef.current,
+      })
+    },
+    []
+  )
+
+  // Open a mapping row for a model the user picked elsewhere and hand focus to
+  // the editor on the routing tab. Drafts are saved once both names are set.
+  const requestMappingDraft = useCallback(
+    (from: string, to: string) => {
+      setConfigurationSection('routing')
+      raiseMappingDraft(from, to)
+    },
+    [raiseMappingDraft]
+  )
+
+  // Keep the model list in step with mappings edited from the redirect panel:
+  // complete pairs publish the request name and hide the raw upstream name,
+  // deleting a pair reverses that. The refs remember what this sync changed so
+  // only its own additions and removals are undone.
+  const syncModelsWithMapping = useCallback(
+    (mapping: string) => {
+      const aliasSet = new Set<string>()
+      const targetSet = new Set<string>()
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(mapping.trim() || '{}')
+      } catch {
+        return
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
+      for (const [from, to] of Object.entries(parsed)) {
+        if (typeof to !== 'string' || !from.trim() || !to.trim()) continue
+        aliasSet.add(from.trim())
+        targetSet.add(to.trim())
+      }
+      let models = parseModelsString(form.getValues('models') || '')
+      models = models.filter(
+        (model) =>
+          !(syncedAliasesRef.current.has(model) && !aliasSet.has(model))
+      )
+      for (const target of syncedTargetsRef.current) {
+        if (!targetSet.has(target) && !models.includes(target)) {
+          models.push(target)
+        }
+      }
+      models = models.filter((model) => !targetSet.has(model))
+      for (const alias of aliasSet) {
+        if (!models.includes(alias)) models.push(alias)
+      }
+      syncedAliasesRef.current = aliasSet
+      syncedTargetsRef.current = targetSet
+      form.setValue('models', formatModelsArray(models))
+    },
+    [form]
+  )
+
+  const applyMappingPairs = useCallback(
+    (pairs: ModelMappingPair[], sync: boolean) => {
+      const current = form.getValues('model_mapping') || ''
+      const merged = mergeModelMappingPairs(current, pairs)
+      if (merged === null) return
+      form.setValue('model_mapping', merged, { shouldDirty: true })
+      if (sync) {
+        // Mapping edits made outside the redirect panel are not synced, so
+        // rebase on the current values and revert only this batch's changes.
+        resetModelMappingSync(current, form.getValues('models') || '')
+        syncModelsWithMapping(merged)
+      }
+    },
+    [form, resetModelMappingSync, syncModelsWithMapping]
+  )
+
+  const handleBatchMappingApply = useCallback(
+    (result: ModelMappingBatchResult) =>
+      applyMappingPairs(result.pairs, result.syncModels),
+    [applyMappingPairs]
+  )
+
+  const handlePanelMappingChange = useCallback(
+    (value: string) => {
+      form.setValue('model_mapping', value, { shouldDirty: true })
+    },
+    [form]
+  )
+
+  const handlePanelMappingCommit = useCallback(
+    (value: string) => {
+      if (redirectSyncModels) syncModelsWithMapping(value)
+    },
+    [redirectSyncModels, syncModelsWithMapping]
+  )
+
+  const openRedirectPanel = useCallback(() => {
+    // Pre-existing mappings count as already synced, so opening the panel
+    // never rewrites the model list on its own.
+    resetModelMappingSync(
+      form.getValues('model_mapping') || '',
+      form.getValues('models') || ''
+    )
+    setRedirectPanelOpen(true)
+  }, [form, resetModelMappingSync])
+
+  const closeRedirectPanel = useCallback(() => {
+    setRedirectPanelOpen(false)
+  }, [])
+
+  // Open a draft without guessing or publishing a request name.
+  const handleFetchedRedirect = useCallback(
+    (model: string) => {
+      if (window.innerWidth < REDIRECT_PANEL_MIN_VIEWPORT) {
+        requestMappingDraft('', model)
+        return
+      }
+      openRedirectPanel()
+      raiseMappingDraft('', model, 'from')
+    },
+    [requestMappingDraft, openRedirectPanel, raiseMappingDraft]
+  )
+
   // Handle successful submission
   const handleSuccess = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
@@ -1294,6 +1679,34 @@ export function ChannelMutateDrawer({
     }
   }, [])
 
+  // Passthrough bypasses model redirect, overrides and conversion, so every
+  // control that enables it (quick options, request section, header template)
+  // routes through this single confirmation before the value changes.
+  const confirmEnablePassthrough = useCallback(
+    (kind: PassthroughKind): Promise<boolean> =>
+      new Promise((resolve) => {
+        passthroughWarningResolveRef.current?.(false)
+        passthroughWarningResolveRef.current = resolve
+        setPassthroughWarningKind(kind)
+      }),
+    []
+  )
+
+  const handlePassthroughWarningAction = useCallback((confirmed: boolean) => {
+    setPassthroughWarningKind(null)
+    if (passthroughWarningResolveRef.current) {
+      passthroughWarningResolveRef.current(confirmed)
+      passthroughWarningResolveRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      passthroughWarningResolveRef.current?.(false)
+      passthroughWarningResolveRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     return () => {
       if (statusCodeRiskResolveRef.current) {
@@ -1318,7 +1731,7 @@ export function ChannelMutateDrawer({
       if (isEditing && !channelData?.data) return
       if (!isEditing && (!providerTarget || !canEditSensitive)) return
       // Validate key is required when creating
-      if (!isEditing && !data.key?.trim()) {
+      if (!isEditing && !pluginLogin && !data.key?.trim()) {
         form.setError('key', {
           type: 'manual',
           message: ERROR_MESSAGES.REQUIRED_KEY,
@@ -1341,6 +1754,26 @@ export function ChannelMutateDrawer({
           )
           return
         }
+      }
+
+      // Edited plugin settings are saved as values; untouched ones stay as
+      // they were saved.
+      if (
+        data.type === CHANNEL_TYPE_TASK_PLUGIN &&
+        pluginConfigSchema &&
+        data.plugin_config_draft
+      ) {
+        const parsed = fromRequestPluginConfigDraft(
+          pluginConfigSchema,
+          data.plugin_config_draft
+        )
+        if (Object.keys(parsed.errors).length > 0) {
+          setConfigurationSection('connection')
+          setPendingErrorFocus('plugin_config')
+          toast.error(t('Please fix the highlighted fields before saving'))
+          return
+        }
+        data.plugin_config = parsed.config
       }
 
       // Validate status_code_mapping entries
@@ -1429,14 +1862,29 @@ export function ChannelMutateDrawer({
         }
       }
 
+      // A login plugin never takes a typed key, even one left over from
+      // another provider.
+      const loginPlugin = pluginLogin ? boundTaskPlugin : undefined
+      if (loginPlugin) data.key = ''
+
       try {
-        await channelMutation.mutateAsync(data)
+        const result = await channelMutation.mutateAsync(data)
+        if (!isEditing && loginPlugin && result.channelId) {
+          setLoginRequest({
+            channelId: result.channelId,
+            keyIndex: null,
+            plugin: loginPlugin,
+          })
+        }
       } catch {
         // The mutation reports the server error; keep the draft open for correction.
       }
     },
     [
       isEditing,
+      pluginLogin,
+      boundTaskPlugin,
+      pluginConfigSchema,
       providerTarget,
       canEditSensitive,
       sensitiveLocked,
@@ -1585,14 +2033,24 @@ export function ChannelMutateDrawer({
           <div className='space-y-0.5'>
             <FormLabel>{t('Pass Through Body')}</FormLabel>
             <FormDescription>
-              {t('Pass request body directly to upstream')}
+              {t(
+                'Preserve upstream-specific fields when API formats match; bypasses model redirect, parameter override and format conversion'
+              )}
             </FormDescription>
           </div>
           <FormControl>
             <Switch
               disabled={sensitiveLocked}
               checked={field.value}
-              onCheckedChange={field.onChange}
+              onCheckedChange={(value) => {
+                if (!value) {
+                  field.onChange(false)
+                  return
+                }
+                void confirmEnablePassthrough('body').then((confirmed) => {
+                  if (confirmed) field.onChange(true)
+                })
+              }}
             />
           </FormControl>
         </FormItem>
@@ -2040,6 +2498,32 @@ export function ChannelMutateDrawer({
     />
   )
 
+  const tlsInsecureSkipVerifyFields = (
+    <FormField
+      control={form.control}
+      name='tls_insecure_skip_verify'
+      render={({ field }) => (
+        <FormItem className='flex items-center justify-between px-4 py-3'>
+          <div className='space-y-0.5'>
+            <FormLabel>{t('Skip Upstream TLS Verification')}</FormLabel>
+            <FormDescription>
+              {t(
+                'Accept upstream certificates that fail validation, such as self-signed ones. Only enable for trusted internal upstreams.'
+              )}
+            </FormDescription>
+          </div>
+          <FormControl>
+            <Switch
+              disabled={sensitiveLocked}
+              checked={field.value}
+              onCheckedChange={field.onChange}
+            />
+          </FormControl>
+        </FormItem>
+      )}
+    />
+  )
+
   const routingFields = (
     <div
       role='group'
@@ -2142,9 +2626,7 @@ export function ChannelMutateDrawer({
     </div>
   )
 
-  const upstreamModelDetectionFields = MODEL_FETCHABLE_TYPES.has(
-    currentType
-  ) && (
+  const upstreamModelDetectionFields = modelFetchable && (
     <div
       role='group'
       aria-label={t('Upstream Model Detection Settings')}
@@ -2348,6 +2830,16 @@ export function ChannelMutateDrawer({
                 disabled={isSubmitting}
                 sourceModelOptions={currentModelsArray}
                 targetModelOptions={modelOptions.map((option) => option.value)}
+                onBatchAdd={
+                  canBatchMap
+                    ? () =>
+                        setBatchMapping({
+                          source: batchMappingSource,
+                        })
+                    : undefined
+                }
+                draftRequest={redirectPanelActive ? null : mappingDraftRequest}
+                onDraftRequestHandled={() => setMappingDraftRequest(null)}
               />
             </FormControl>
             {modelMappingGuardrail.invalidJson && (
@@ -2371,19 +2863,29 @@ export function ChannelMutateDrawer({
                       'to the Models list so users can use them before the mapping sends traffic upstream.'
                     )}
                   </span>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='sm'
-                    onClick={() => {
-                      updateModels([
-                        ...currentModelsArray,
-                        ...modelMappingGuardrail.missingSourceModels,
-                      ])
-                    }}
-                  >
-                    {t('Add missing models')}
-                  </Button>
+                  <div className='flex shrink-0 flex-wrap gap-2'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() => {
+                        updateModels([
+                          ...currentModelsArray,
+                          ...modelMappingGuardrail.missingSourceModels,
+                        ])
+                      }}
+                    >
+                      {t('Add missing models')}
+                    </Button>
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='sm'
+                      onClick={() => setConfigurationSection('connection')}
+                    >
+                      {t('View models')}
+                    </Button>
+                  </div>
                 </AlertDescription>
               </Alert>
             )}
@@ -2392,6 +2894,24 @@ export function ChannelMutateDrawer({
         )}
       />
     </div>
+  )
+
+  const redirectPanelNotice = (
+    <Alert>
+      <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+        <span>
+          {t('Model mappings are being edited in the floating panel.')}
+        </span>
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          onClick={closeRedirectPanel}
+        >
+          {t('Close the panel to edit here')}
+        </Button>
+      </AlertDescription>
+    </Alert>
   )
 
   const basicSection = (
@@ -2599,10 +3119,42 @@ export function ChannelMutateDrawer({
                   )}
                 />
               </FormControl>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Rules for all channels are set on the Request processing page'
+                )}
+              </p>
               <FormMessage />
             </FormItem>
           )}
         />
+
+        {canBindTaskPlugin && (
+          <FormField
+            control={form.control}
+            name='request_plugins'
+            render={({ field }) => (
+              <FormItem className='space-y-3 border-t pt-4'>
+                <div className='space-y-1'>
+                  <FormLabel>{t('Request processing plugins')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      "Instances for all requests or for this channel's groups also apply."
+                    )}
+                  </FormDescription>
+                </div>
+                <FormControl>
+                  <ChannelRequestPluginsField
+                    value={field.value ?? []}
+                    onChange={field.onChange}
+                    disabled={sensitiveLocked || isSubmitting}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
 
         <FormField
           control={form.control}
@@ -2642,9 +3194,14 @@ export function ChannelMutateDrawer({
                     type='button'
                     variant='outline'
                     size='sm'
-                    onClick={() =>
-                      field.onChange(JSON.stringify({ '*': true }, null, 2))
-                    }
+                    onClick={() => {
+                      void confirmEnablePassthrough('headers').then(
+                        (confirmed) => {
+                          if (!confirmed) return
+                          field.onChange(JSON.stringify({ '*': true }, null, 2))
+                        }
+                      )
+                    }}
                   >
                     {t('Passthrough Template')}
                   </Button>
@@ -2689,7 +3246,12 @@ export function ChannelMutateDrawer({
     </div>
   )
 
-  const fieldPassthroughFields = FIELD_PASSTHROUGH_TYPES.has(currentType) && (
+  // A plugin channel without relay routes relays no client fields.
+  const fieldPassthroughSupported =
+    FIELD_PASSTHROUGH_TYPES.has(currentType) &&
+    (currentType !== CHANNEL_TYPE_TASK_PLUGIN ||
+      boundTaskPlugin?.provider === true)
+  const fieldPassthroughFields = fieldPassthroughSupported && (
     <div
       role='group'
       aria-label={t('Field passthrough controls')}
@@ -2929,6 +3491,38 @@ export function ChannelMutateDrawer({
       <ChannelModelsSection>
         <div className='space-y-5'>
           <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+            {currentType === CHANNEL_TYPE_NEW_API &&
+              canBindTaskPlugin &&
+              taskPluginOptionsQuery.isSuccess &&
+              !showProviderPicker && (
+                <FormField
+                  control={form.control}
+                  name='task_extend_plugin_keys'
+                  render={({ field }) => (
+                    <FormItem className='mb-4'>
+                      <FormLabel>{t('Upstream task plugins')}</FormLabel>
+                      <FormControl>
+                        <MultiSelect
+                          options={taskPluginExtensionOptions}
+                          selected={field.value ?? []}
+                          onChange={handleTaskExtendPluginKeysChange}
+                          placeholder={t(
+                            'Select the task plugins installed on the upstream gateway'
+                          )}
+                          maxVisibleChips={8}
+                          disabled={!canEditSensitive}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          'This channel serves the models of every selected plugin. The upstream New API gateway must have the same plugins installed.'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
             <FormField
               control={form.control}
               name='models'
@@ -2973,6 +3567,27 @@ export function ChannelMutateDrawer({
                       copyChipOnClick
                     />
                   </FormControl>
+                  <div className='text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs'>
+                    <Route className='size-3.5 shrink-0' aria-hidden='true' />
+                    {mappingCount > 0 && (
+                      <span>
+                        {t('{{count}} model(s) redirected', {
+                          count: mappingCount,
+                        })}
+                      </span>
+                    )}
+                    <Button
+                      type='button'
+                      variant='link'
+                      size='sm'
+                      className='h-auto p-0 text-xs'
+                      onClick={() => setConfigurationSection('routing')}
+                    >
+                      {mappingCount > 0
+                        ? t('Edit mapping')
+                        : t('Set up model redirects')}
+                    </Button>
+                  </div>
                   {canBindTaskPlugin &&
                     canHavePluginExtensions &&
                     !showProviderPicker && (
@@ -3013,23 +3628,33 @@ export function ChannelMutateDrawer({
                             'are also listed here. Remove them from Models to keep the `/v1/models` response user-friendly and hide vendor-specific names.'
                           )}
                         </span>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='sm'
-                          onClick={() => {
-                            const hiddenTargets = new Set(
-                              modelMappingGuardrail.exposedTargetModels
-                            )
-                            updateModels(
-                              currentModelsArray.filter(
-                                (model) => !hiddenTargets.has(model)
+                        <div className='flex shrink-0 flex-wrap gap-2'>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() => {
+                              const hiddenTargets = new Set(
+                                modelMappingGuardrail.exposedTargetModels
                               )
-                            )
-                          }}
-                        >
-                          {t('Remove mapped targets')}
-                        </Button>
+                              updateModels(
+                                currentModelsArray.filter(
+                                  (model) => !hiddenTargets.has(model)
+                                )
+                              )
+                            }}
+                          >
+                            {t('Remove mapped targets')}
+                          </Button>
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='sm'
+                            onClick={() => setConfigurationSection('routing')}
+                          >
+                            {t('View mapping')}
+                          </Button>
+                        </div>
                       </AlertDescription>
                     </Alert>
                   )}
@@ -3038,7 +3663,7 @@ export function ChannelMutateDrawer({
               )}
             />
 
-            {MODEL_FETCHABLE_TYPES.has(currentType) && (
+            {modelFetchable && (
               <div aria-live='polite' className='mt-4 space-y-3'>
                 {discovery.status === 'loading' && (
                   <LoadingState
@@ -3098,19 +3723,62 @@ export function ChannelMutateDrawer({
                   )}
                 {discovery.status === 'success' &&
                   discovery.models.length > 0 && (
-                    <UpstreamModelSelection
-                      models={discovery.models}
-                      selected={currentModelsArray}
-                      existingModels={
-                        isEditing
-                          ? initialModelsRef.current
-                          : currentModelsArray
-                      }
-                      onChange={handleModelsChange}
-                      showChanges={isEditing}
-                      redirectModels={redirectModelList}
-                      redirectSourceModels={redirectModelKeyList}
-                    />
+                    <div className='space-y-3'>
+                      <UpstreamModelSelection
+                        models={discovery.models}
+                        selected={currentModelsArray}
+                        existingModels={
+                          isEditing
+                            ? initialModelsRef.current
+                            : currentModelsArray
+                        }
+                        onChange={handleModelsChange}
+                        showChanges={isEditing}
+                        redirectModels={redirectModelList}
+                        redirectSourceModels={redirectModelKeyList}
+                        onRedirectModel={handleFetchedRedirect}
+                        aliases={upstreamAliases}
+                      />
+                      <div className='flex flex-wrap items-center justify-between gap-2'>
+                        <p className='text-muted-foreground text-xs'>
+                          {t(
+                            'Redirect fetched upstream names to the names your users call.'
+                          )}
+                        </p>
+                        <div className='flex flex-wrap gap-2'>
+                          {viewportWide && (
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={
+                                redirectPanelOpen
+                                  ? closeRedirectPanel
+                                  : openRedirectPanel
+                              }
+                            >
+                              <PanelLeftOpen aria-hidden='true' />
+                              {redirectPanelOpen
+                                ? t('Hide redirect panel')
+                                : t('Redirect panel')}
+                            </Button>
+                          )}
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              setBatchMapping({
+                                source: 'upstream',
+                              })
+                            }
+                          >
+                            <ArrowRightLeft aria-hidden='true' />
+                            {t('Batch redirect')}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
                   )}
                 {isEditing && !previewModels && (
                   <p className='text-muted-foreground text-xs'>
@@ -3151,7 +3819,7 @@ export function ChannelMutateDrawer({
                   <FileText className='mr-2 h-4 w-4' aria-hidden='true' />
                   {t('Fill Related Models')}
                 </Button>
-                {MODEL_FETCHABLE_TYPES.has(currentType) && (
+                {modelFetchable && (
                   <>
                     <Button
                       type='button'
@@ -3422,6 +4090,54 @@ export function ChannelMutateDrawer({
             {currentType === 33 && (
               <FormField
                 control={form.control}
+                name='aws_api_type'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('AWS API')}</FormLabel>
+                    <Select
+                      disabled={sensitiveLocked}
+                      items={[
+                        {
+                          value: 'invoke_model',
+                          label: t('InvokeModel (legacy)'),
+                        },
+                        {
+                          value: 'mantle',
+                          label: t('Mantle (Messages API)'),
+                        },
+                      ]}
+                      onValueChange={field.onChange}
+                      value={field.value ?? 'invoke_model'}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          <SelectItem value='invoke_model'>
+                            {t('InvokeModel (legacy)')}
+                          </SelectItem>
+                          <SelectItem value='mantle'>
+                            {t('Mantle (Messages API)')}
+                          </SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      {t(
+                        'Use Mantle for supported Claude models and automatic prompt caching. Keep InvokeModel for older models and Amazon Nova.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            {currentType === 33 && (
+              <FormField
+                control={form.control}
                 name='aws_key_type'
                 render={({ field }) => (
                   <FormItem>
@@ -3623,6 +4339,56 @@ export function ChannelMutateDrawer({
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name='vertex_api_version'
+                  render={({ field }) => (
+                    <FormItem className='flex items-center justify-between'>
+                      <div className='space-y-0.5'>
+                        <FormLabel>
+                          {t('Use Vertex AI v1beta1 endpoint')}
+                        </FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Switches Gemini and Imagen requests on this Vertex channel from v1 to v1beta1. Some features require v1beta1; check the Vertex AI documentation.'
+                          )}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          disabled={sensitiveLocked}
+                          checked={field.value === 'v1beta1'}
+                          onCheckedChange={(checked) =>
+                            field.onChange(checked ? 'v1beta1' : 'v1')
+                          }
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                {vertexKeyType === 'api_key' && (
+                  <FormField
+                    control={form.control}
+                    name='vertex_project_id'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Vertex AI Project ID')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder={t('e.g., my-project-123')}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Optional. Without it, Google picks the region; with it, requests go to the deployment region below.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
                 {vertexKeyType === 'json' && (
                   <FormItem>
                     <FormLabel>{t('Service account JSON file(s)')}</FormLabel>
@@ -3847,7 +4613,7 @@ export function ChannelMutateDrawer({
                       !boundTaskPlugin?.baseUrl && (
                         <FormDescription>
                           {t(
-                            'The upstream address this plugin sends requests to. The plugin declares no default, so it must be filled in.'
+                            'Required. The upstream address this plugin sends requests to.'
                           )}
                         </FormDescription>
                       )}
@@ -3975,7 +4741,7 @@ export function ChannelMutateDrawer({
                       </FormLabel>
                       <Select
                         disabled={sensitiveLocked}
-                        items={addModeOptions.map((option) => ({
+                        items={keyAddModeOptions.map((option) => ({
                           value: option.value,
                           label: t(option.label),
                         }))}
@@ -3989,7 +4755,7 @@ export function ChannelMutateDrawer({
                         </FormControl>
                         <SelectContent alignItemWithTrigger={false}>
                           <SelectGroup>
-                            {addModeOptions.map((option) => (
+                            {keyAddModeOptions.map((option) => (
                               <SelectItem
                                 key={option.value}
                                 value={option.value}
@@ -4006,151 +4772,183 @@ export function ChannelMutateDrawer({
                 />
               )}
 
-              <FormField
-                control={form.control}
-                name='key'
-                render={({ field }) => {
-                  let keyPlaceholder = t(getKeyPromptForType(currentType))
-                  if (isEditing) {
-                    keyPlaceholder = t('Leave empty to keep existing key')
-                  } else if (
-                    currentType === 33 &&
-                    awsKeyType === 'api_key' &&
-                    isBatchMode
-                  ) {
-                    keyPlaceholder = t(
-                      'Enter API Key, one per line, format: APIKey|Region'
-                    )
-                  } else if (currentType === 33 && awsKeyType === 'api_key') {
-                    keyPlaceholder = t('Enter API Key, format: APIKey|Region')
-                  } else if (currentType === 33 && isBatchMode) {
-                    keyPlaceholder = t(
-                      'Enter key, one per line, format: AccessKey|SecretAccessKey|Region'
-                    )
-                  } else if (currentType === 33) {
-                    keyPlaceholder = t(
-                      'Enter key, format: AccessKey|SecretAccessKey|Region'
-                    )
-                  } else if (isBatchMode) {
-                    keyPlaceholder = t(
-                      'Enter one key per line for batch creation'
-                    )
-                  }
-
-                  let keyDescription: ReactNode = t(FIELD_DESCRIPTIONS.KEY)
-                  if (isEditing) {
-                    let keyModeDescription = t(
-                      'Append mode: New keys will be added to the end of the existing key list'
-                    )
-                    if (keyMode === 'replace') {
-                      keyModeDescription = t(
-                        'Replace mode: Will completely replace all existing keys'
+              {pluginLogin ? (
+                <PluginCredentialPanel
+                  channelId={loginChannelId}
+                  multiKey={isMultiKeyChannel}
+                  disabled={!canEditSensitive}
+                  onLogin={(keyIndex, add) => {
+                    if (loginChannelId === null || !boundTaskPlugin) return
+                    setLoginRequest({
+                      channelId: loginChannelId,
+                      keyIndex,
+                      add,
+                      plugin: boundTaskPlugin,
+                    })
+                  }}
+                />
+              ) : (
+                <FormField
+                  control={form.control}
+                  name='key'
+                  render={({ field }) => {
+                    let keyPlaceholder = t(getKeyPromptForType(currentType))
+                    if (isEditing) {
+                      keyPlaceholder = t('Leave empty to keep existing key')
+                    } else if (pluginKeyHint && isBatchMode) {
+                      keyPlaceholder = t(
+                        'Enter one key per line, format: {{format}}',
+                        { format: pluginKeyHint }
+                      )
+                    } else if (pluginKeyHint) {
+                      keyPlaceholder = pluginKeyHint
+                    } else if (
+                      currentType === 33 &&
+                      awsKeyType === 'api_key' &&
+                      isBatchMode
+                    ) {
+                      keyPlaceholder = t(
+                        'Enter API Key, one per line, format: APIKey|Region'
+                      )
+                    } else if (currentType === 33 && awsKeyType === 'api_key') {
+                      keyPlaceholder = t('Enter API Key, format: APIKey|Region')
+                    } else if (currentType === 33 && isBatchMode) {
+                      keyPlaceholder = t(
+                        'Enter key, one per line, format: AccessKey|SecretAccessKey|Region'
+                      )
+                    } else if (currentType === 33) {
+                      keyPlaceholder = t(
+                        'Enter key, format: AccessKey|SecretAccessKey|Region'
+                      )
+                    } else if (isBatchMode) {
+                      keyPlaceholder = t(
+                        'Enter one key per line for batch creation'
                       )
                     }
-                    keyDescription = (
-                      <>
-                        {t(
-                          'Enter new key to update, or leave empty to keep current key'
-                        )}
-                        {isMultiKeyChannel && (
-                          <span className='text-warning mt-1 block'>
-                            {keyModeDescription}
-                          </span>
-                        )}
-                      </>
-                    )
-                  } else if (isBatchMode) {
-                    keyDescription = t(
-                      'Enter one API key per line for batch creation'
-                    )
-                  }
-                  return (
-                    <FormItem>
-                      <FormLabel required>{t('API Key')}</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder={keyPlaceholder}
-                          rows={isBatchMode ? 8 : 4}
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        <span className='flex flex-col gap-2'>
-                          <span>{keyDescription}</span>
-                          {!isEditing && isBatchMode && (
-                            <Button
-                              type='button'
-                              variant='outline'
-                              size='sm'
-                              onClick={handleDeduplicateKeys}
-                              className='w-fit'
-                            >
-                              <Trash2 className='mr-2 h-4 w-4' />
-                              {t('Remove Duplicates')}
-                            </Button>
+
+                    let keyDescription: ReactNode = t(FIELD_DESCRIPTIONS.KEY)
+                    if (isEditing) {
+                      let keyModeDescription = t(
+                        'Append mode: New keys will be added to the end of the existing key list'
+                      )
+                      if (keyMode === 'replace') {
+                        keyModeDescription = t(
+                          'Replace mode: Will completely replace all existing keys'
+                        )
+                      }
+                      keyDescription = (
+                        <>
+                          {t(
+                            'Enter new key to update, or leave empty to keep current key'
                           )}
-                        </span>
-                      </FormDescription>
-                      {isEditing && canRevealChannelKey && (
-                        <div className='border-border/60 mt-4 flex flex-col gap-3 border-y border-dashed py-4'>
-                          <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                            <div>
-                              <p className='text-sm font-medium'>
-                                {t('Current key')}
-                              </p>
-                              <p className='text-muted-foreground text-xs'>
-                                {t(
-                                  'Verification required to reveal the saved key.'
-                                )}
-                              </p>
-                            </div>
-                            <div className='flex items-center gap-2'>
+                          {isMultiKeyChannel && (
+                            <span className='text-warning mt-1 block'>
+                              {keyModeDescription}
+                            </span>
+                          )}
+                        </>
+                      )
+                    } else if (isBatchMode) {
+                      keyDescription = t(
+                        'Enter one API key per line for batch creation'
+                      )
+                    }
+                    return (
+                      <FormItem>
+                        <FormLabel required>{t('API Key')}</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder={keyPlaceholder}
+                            rows={isBatchMode ? 8 : 4}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          <span className='flex flex-col gap-2'>
+                            <span>{keyDescription}</span>
+                            {pluginKeyHint && (
+                              <span>
+                                {t('Key format')}:{' '}
+                                <span className='font-mono break-all'>
+                                  {pluginKeyHint}
+                                </span>
+                              </span>
+                            )}
+                            {!isEditing && isBatchMode && (
                               <Button
                                 type='button'
                                 variant='outline'
                                 size='sm'
-                                onClick={handleRevealKey}
-                                disabled={
-                                  isChannelKeyLoading || verification.isActive
-                                }
+                                onClick={handleDeduplicateKeys}
+                                className='w-fit'
                               >
-                                {isChannelKeyLoading ||
-                                verification.isActive ? (
-                                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                ) : (
-                                  <Eye className='mr-2 h-4 w-4' />
-                                )}
-                                {t('Reveal key')}
+                                <Trash2 className='mr-2 h-4 w-4' />
+                                {t('Remove Duplicates')}
                               </Button>
-                              <Button
-                                type='button'
-                                variant='ghost'
-                                size='sm'
-                                onClick={async () => {
-                                  if (channelKey) {
-                                    await copyToClipboard(channelKey)
+                            )}
+                          </span>
+                        </FormDescription>
+                        {isEditing && canRevealChannelKey && (
+                          <div className='border-border/60 mt-4 flex flex-col gap-3 border-y border-dashed py-4'>
+                            <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                              <div>
+                                <p className='text-sm font-medium'>
+                                  {t('Current key')}
+                                </p>
+                                <p className='text-muted-foreground text-xs'>
+                                  {t(
+                                    'Verification required to reveal the saved key.'
+                                  )}
+                                </p>
+                              </div>
+                              <div className='flex items-center gap-2'>
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={handleRevealKey}
+                                  disabled={
+                                    isChannelKeyLoading || verification.isActive
                                   }
-                                }}
-                                disabled={!channelKey}
-                              >
-                                <Copy className='mr-2 h-4 w-4' />
-                                {t('Copy')}
-                              </Button>
+                                >
+                                  {isChannelKeyLoading ||
+                                  verification.isActive ? (
+                                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                  ) : (
+                                    <Eye className='mr-2 h-4 w-4' />
+                                  )}
+                                  {t('Reveal key')}
+                                </Button>
+                                <Button
+                                  type='button'
+                                  variant='ghost'
+                                  size='sm'
+                                  onClick={async () => {
+                                    if (channelKey) {
+                                      await copyToClipboard(channelKey)
+                                    }
+                                  }}
+                                  disabled={!channelKey}
+                                >
+                                  <Copy className='mr-2 h-4 w-4' />
+                                  {t('Copy')}
+                                </Button>
+                              </div>
                             </div>
+                            <Input
+                              readOnly
+                              value={channelKey ?? ''}
+                              placeholder={t('Hidden — verify to reveal')}
+                              className='font-mono'
+                            />
                           </div>
-                          <Input
-                            readOnly
-                            value={channelKey ?? ''}
-                            placeholder={t('Hidden — verify to reveal')}
-                            className='font-mono'
-                          />
-                        </div>
-                      )}
-                      <FormMessage />
-                    </FormItem>
-                  )
-                }}
-              />
+                        )}
+                        <FormMessage />
+                      </FormItem>
+                    )
+                  }}
+                />
+              )}
 
               {currentType === 57 && (
                 <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
@@ -4193,7 +4991,7 @@ export function ChannelMutateDrawer({
                 </div>
               )}
 
-              {isEditing && isMultiKeyChannel && (
+              {isEditing && isMultiKeyChannel && !pluginLogin && (
                 <FormField
                   control={form.control}
                   name='key_mode'
@@ -4306,9 +5104,41 @@ export function ChannelMutateDrawer({
             </ChannelAuthSection>
           </fieldset>
         </div>
+
+        {pluginConfigSchema && currentTaskPluginKey && (
+          <div
+            role='group'
+            aria-label={t('Plugin settings')}
+            className='space-y-3'
+          >
+            <SubHeading
+              title={t('Plugin settings')}
+              icon={<Puzzle />}
+              iconTone='info'
+            />
+            <fieldset
+              disabled={sensitiveLocked}
+              className='disabled:opacity-60'
+            >
+              <ChannelPluginConfigFields
+                pluginKey={currentTaskPluginKey}
+                schema={pluginConfigSchema}
+                models={currentModelsArray}
+                disabled={sensitiveLocked || isSubmitting}
+              />
+            </fieldset>
+          </div>
+        )}
       </ChannelApiAccessSection>
     </div>
   )
+
+  let submitLabel = t('Create Channel')
+  if (isEditing) {
+    submitLabel = t('Update Channel')
+  } else if (pluginLogin) {
+    submitLabel = t('Save and log in')
+  }
 
   let formContent: ReactNode
   if (!isEditing && !providerTarget) {
@@ -4334,6 +5164,12 @@ export function ChannelMutateDrawer({
         section={configurationSection}
         onSectionChange={setConfigurationSection}
         statuses={configuration.sections}
+        badges={{
+          routing: {
+            count: mappingCount,
+            label: t('{{count}} model mapping(s)', { count: mappingCount }),
+          },
+        }}
         connection={
           <>
             {basicSection}
@@ -4341,9 +5177,21 @@ export function ChannelMutateDrawer({
           </>
         }
         models={modelsSection}
+        quickOptions={
+          viewportWide ? null : (
+            <ChannelQuickOptions
+              channelType={currentType}
+              modelFetchable={modelFetchable}
+              responsesWebsocket={responsesWebsocketSupported}
+              sensitiveLocked={sensitiveLocked}
+              disabled={isSubmitting}
+              confirmEnablePassthrough={confirmEnablePassthrough}
+            />
+          )
+        }
         routing={
           <>
-            {modelMappingFields}
+            {redirectPanelActive ? redirectPanelNotice : modelMappingFields}
             {routingFields}
           </>
         }
@@ -4369,6 +5217,7 @@ export function ChannelMutateDrawer({
               >
                 <ResponsesWebSocketSetting
                   channelType={currentType}
+                  supported={responsesWebsocketSupported}
                   disabled={sensitiveLocked || isSubmitting}
                 />
                 {formatFields}
@@ -4407,6 +5256,7 @@ export function ChannelMutateDrawer({
                 {customEgressFields}
                 {httpProtocolFields}
                 {httpShardsFields}
+                {tlsInsecureSkipVerifyFields}
               </fieldset>
             </div>
             {upstreamModelDetectionFields}
@@ -4437,8 +5287,8 @@ export function ChannelMutateDrawer({
           className={sideDrawerContentClassName('sm:max-w-7xl')}
         >
           <SheetHeader className={sideDrawerHeaderClassName('pr-12 sm:pr-14')}>
-            <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
-              <div className='min-w-0 flex-1'>
+            <div className='flex flex-col gap-2'>
+              <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
                 <div className='flex min-w-0 items-center gap-2 sm:gap-3'>
                   <SheetTitle className='flex shrink-0 items-center gap-2 sm:gap-3'>
                     <IconBadge tone='info' size='title'>
@@ -4498,41 +5348,60 @@ export function ChannelMutateDrawer({
                     </Button>
                   )}
                 </div>
-                {isEditing && channelData?.data && (
-                  <Badge variant='secondary' className='mt-2'>
-                    {t(
-                      CHANNEL_STATUS_LABELS[
-                        currentStatus as keyof typeof CHANNEL_STATUS_LABELS
-                      ] || 'Unknown'
-                    )}
-                  </Badge>
+                {!isEditing && !showProviderPicker && (
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    className='shrink-0'
+                    onClick={pasteConnectionInfoFromClipboard}
+                  >
+                    <ClipboardPaste className='size-4' />
+                    <span>{t('Paste Connection Info')}</span>
+                  </Button>
                 )}
-                <SheetDescription
-                  className={cn(
-                    'mt-1',
-                    showProviderPicker && providerTarget && 'truncate'
-                  )}
-                  title={
-                    showProviderPicker && providerTarget
-                      ? description
-                      : undefined
-                  }
-                >
-                  {description}
-                </SheetDescription>
               </div>
-              {!isEditing && !showProviderPicker && (
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  className='shrink-0'
-                  onClick={pasteConnectionInfoFromClipboard}
-                >
-                  <ClipboardPaste className='size-4' />
-                  <span>{t('Paste Connection Info')}</span>
-                </Button>
-              )}
+              <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                <div className='flex min-w-0 flex-wrap items-center gap-2 sm:flex-1'>
+                  {isEditing && channelData?.data && (
+                    <Badge variant='secondary' className='shrink-0'>
+                      {t(
+                        CHANNEL_STATUS_LABELS[
+                          currentStatus as keyof typeof CHANNEL_STATUS_LABELS
+                        ] || 'Unknown'
+                      )}
+                    </Badge>
+                  )}
+                  <SheetDescription
+                    className={cn(
+                      showProviderPicker && providerTarget && 'truncate'
+                    )}
+                    title={
+                      showProviderPicker && providerTarget
+                        ? description
+                        : undefined
+                    }
+                  >
+                    {description}
+                  </SheetDescription>
+                </div>
+                {viewportWide &&
+                  !showProviderPicker &&
+                  !channelError &&
+                  !isChannelDetailLoading && (
+                    <ChannelQuickOptions
+                      form={form}
+                      layout='inline'
+                      channelType={currentType}
+                      modelFetchable={modelFetchable}
+                      responsesWebsocket={responsesWebsocketSupported}
+                      sensitiveLocked={sensitiveLocked}
+                      disabled={isSubmitting}
+                      className='sm:justify-end'
+                      confirmEnablePassthrough={confirmEnablePassthrough}
+                    />
+                  )}
+              </div>
             </div>
           </SheetHeader>
 
@@ -4640,10 +5509,41 @@ export function ChannelMutateDrawer({
                 {isSubmitting && (
                   <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                 )}
-                {isEditing ? t('Update Channel') : t('Create Channel')}
+                {submitLabel}
               </Button>
             )}
           </SheetFooter>
+          {redirectPanelActive && redirectPanelPlacement && (
+            <ModelRedirectPanel
+              defaultPosition={{
+                x: redirectPanelPlacement.x,
+                y: redirectPanelPlacement.y,
+              }}
+              width={redirectPanelPlacement.width}
+              onClose={closeRedirectPanel}
+              mappingCount={mappingCount}
+              mappingValue={formValues.model_mapping || ''}
+              onMappingChange={handlePanelMappingChange}
+              onMappingCommit={handlePanelMappingCommit}
+              onBatchAdd={() =>
+                setBatchMapping({
+                  source: batchMappingSource,
+                })
+              }
+              syncModels={redirectSyncModels}
+              onSyncModelsChange={setRedirectSyncModels}
+              sourceModelOptions={modelOptions.map((option) => option.value)}
+              targetModelOptions={[
+                ...new Set([
+                  ...upstreamModelList,
+                  ...modelOptions.map((option) => option.value),
+                ]),
+              ]}
+              draftRequest={mappingDraftRequest}
+              onDraftRequestHandled={() => setMappingDraftRequest(null)}
+              disabled={isSubmitting}
+            />
+          )}
         </SheetContent>
       </Sheet>
 
@@ -4657,6 +5557,20 @@ export function ChannelMutateDrawer({
             if (!nextOpen) setModelConfiguration(null)
           }}
           onApply={handleModelsChange}
+          onRedirect={(model) => requestMappingDraft(model, '')}
+        />
+      )}
+
+      {open && batchMapping && (
+        <ModelMappingBatchDialog
+          open
+          upstreamModels={upstreamModelList}
+          channelModels={currentModelsArray}
+          initialSource={batchMapping.source}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setBatchMapping(null)
+          }}
+          onApply={handleBatchMappingApply}
         />
       )}
 
@@ -4706,6 +5620,37 @@ export function ChannelMutateDrawer({
         detailItems={statusCodeRiskDetailItems}
         onConfirm={() => handleStatusCodeRiskAction(true)}
       />
+      <PassthroughWarningDialog
+        channelType={currentType}
+        open={passthroughWarningKind !== null}
+        kind={passthroughWarningKind}
+        onOpenChange={(v) => {
+          if (!v) handlePassthroughWarningAction(false)
+        }}
+        handleConfirm={() => handlePassthroughWarningAction(true)}
+      />
+
+      {loginRequest && (
+        <PluginLoginDialog
+          open
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setLoginRequest(null)
+          }}
+          channelId={loginRequest.channelId}
+          keyIndex={loginRequest.keyIndex}
+          add={loginRequest.add}
+          plugin={loginRequest.plugin}
+          onDone={() => {
+            // A login can enable the channel, so the list refreshes too.
+            void queryClient.invalidateQueries({
+              queryKey: channelsQueryKeys.detail(loginRequest.channelId),
+            })
+            void queryClient.invalidateQueries({
+              queryKey: channelsQueryKeys.lists(),
+            })
+          }}
+        />
+      )}
     </>
   )
 }

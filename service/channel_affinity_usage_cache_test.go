@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -10,6 +11,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+var channelAffinityTestSeq atomic.Int64
+
+func affinityTestKeys(t *testing.T) (string, string) {
+	t.Helper()
+	key := fmt.Sprintf("%s:%d", t.Name(), channelAffinityTestSeq.Add(1))
+	return key, key
+}
 
 func buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP string) *gin.Context {
 	rec := httptest.NewRecorder()

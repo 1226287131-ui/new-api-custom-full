@@ -19,6 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'The adjusted price is outside the supported range.',
+  'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
+  'Task usage metadata is unavailable. Pricing details cannot be displayed.',
+  'This expression cannot be expanded into a price table. View the original expression below.',
   'This operation is only supported for vLLM or SGLang channels',
   'Invalid inference server address',
   'Channel type does not match the status endpoint',
@@ -72,7 +76,7 @@ export const STATIC_I18N_KEYS = [
   'Connect to Jimeng image and video generation services',
   'Connect to Vidu video generation services',
   'Connect to Submodel model services',
-  'Generate Doubao Seedance videos through Volcengine Ark',
+  'Connect to Doubao Seedance video and Seedream image generation through Volcengine Ark',
   'Connect to OpenAI Sora video generation services',
   'Access hosted model predictions through Replicate',
   'Access Codex using ChatGPT subscription credentials',
@@ -80,7 +84,7 @@ export const STATIC_I18N_KEYS = [
   "New API's flexible channel lets you configure upstream addresses and authentication per endpoint, choose native forwarding or supported protocol conversions, and configure model listing and balance queries independently",
   'Flexible integration',
   'Connect to model services through a Sub2API gateway',
-  'Connect to model services from another New API instance',
+  'Connect to New API model services with support for multiple task plugins',
   'SGLang',
   'Connect to self-hosted models served by SGLang',
   'SGLang server address, without /v1',
@@ -97,7 +101,6 @@ export const STATIC_I18N_KEYS = [
   'Realtime pricing must be converted manually.',
   'This OpenRouter Claude price derives cache-write usage from upstream cost and must be converted manually.',
   'Gemini and OpenAI audio prices differ for this model. Use separate billing model names to convert them.',
-  'This model has different image request multipliers across channels. Use separate billing model names to convert them.',
   // Image cache billing and legacy price conversion.
   'Image cache input price',
   'Image Cache',
@@ -227,8 +230,12 @@ export const STATIC_I18N_KEYS = [
 
   // Pricing constants
   'Name',
-  'Price: Low to High',
-  'Price: High to Low',
+  'Input Price: Low to High',
+  'Input Price: High to Low',
+  'Output Price: Low to High',
+  'Output Price: High to Low',
+  'Per-request Price: Low to High',
+  'Per-request Price: High to Low',
   'All Models',
   'Token-based',
   'Per Request',
@@ -851,6 +858,11 @@ export const STATIC_I18N_KEYS = [
   'Account binding',
   'Account unlinking',
   'Email confirmation code resend',
+  // Administrative step-up titles keyed by ManageUser action.
+  'Verify to disable user',
+  'Verify to enable user',
+  'Verify to promote user',
+  'Verify to demote user',
   // Model and vendor management labels.
   'Vendors',
   'Vendor management',

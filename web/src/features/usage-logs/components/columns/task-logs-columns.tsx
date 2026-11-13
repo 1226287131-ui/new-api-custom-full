@@ -21,13 +21,14 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { FileJson } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
+import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
@@ -69,7 +70,7 @@ function TaskDetailsCell(props: {
         </button>
         {props.log.fail_reason ? (
           <span className='max-w-full truncate text-xs text-red-600 dark:text-red-400'>
-            {props.log.fail_reason}
+            {translateServerText(t, props.log.fail_reason)}
           </span>
         ) : null}
       </div>
@@ -119,80 +120,32 @@ export function useTaskLogsColumns(
   isRoot: boolean
 ): ColumnDef<TaskLog>[] {
   const { t } = useTranslation()
-  const columns: ColumnDef<TaskLog>[] = [
-    {
-      accessorKey: 'submit_time',
-      header: t('Submit Time'),
-      cell: ({ row }) => {
-        const log = row.original
-        const submitTime = row.getValue('submit_time') as number
-
-        return (
-          <div className='flex min-w-0 flex-col gap-0.5'>
-            <span className='truncate font-mono text-xs tabular-nums'>
-              {formatTimestampToDate(submitTime, 'seconds')}
-            </span>
-            {log.finish_time ? (
-              <span className='text-muted-foreground/60 truncate font-mono text-[11px] tabular-nums'>
-                {formatTimestampToDate(log.finish_time, 'seconds')}
-              </span>
-            ) : (
-              <span className='text-muted-foreground/50 text-[11px]'>-</span>
-            )}
-          </div>
-        )
-      },
-      size: 180,
-    },
-  ]
-
-  if (isAdmin) {
-    columns.push(
-      createChannelColumn<TaskLog>({ headerLabel: t('Channel') }),
+  return useMemo(() => {
+    const columns: ColumnDef<TaskLog>[] = [
       {
-        id: 'user',
-        header: t('User'),
-        accessorFn: (row) => row.username || row.user_id,
-        cell: function UserCell({ row }) {
-          const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
-            useUsageLogsContext()
+        accessorKey: 'submit_time',
+        header: t('Submit Time'),
+        cell: ({ row }) => {
           const log = row.original
-          const displayName = log.username || String(log.user_id || '?')
+          const submitTime = row.getValue('submit_time') as number
 
           return (
-            <button
-              type='button'
-              className='flex items-center gap-1.5 text-left'
-              onClick={(e) => {
-                e.stopPropagation()
-                setSelectedUserId(log.user_id)
-                setUserInfoDialogOpen(true)
-              }}
-            >
-              <Avatar className='ring-border/60 size-6 ring-1 max-sm:hidden'>
-                <AvatarFallback
-                  className={cn(
-                    'text-[11px] font-semibold',
-                    !sensitiveVisible && 'bg-muted text-muted-foreground'
-                  )}
-                  style={
-                    sensitiveVisible
-                      ? getUserAvatarStyle(displayName)
-                      : undefined
-                  }
-                >
-                  {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}
-                </AvatarFallback>
-              </Avatar>
-              <span className='text-muted-foreground truncate text-sm hover:underline'>
-                {sensitiveVisible ? displayName : '••••'}
+            <div className='flex min-w-0 flex-col gap-0.5'>
+              <span className='truncate font-mono text-xs tabular-nums'>
+                {formatTimestampToDate(submitTime, 'seconds')}
               </span>
-            </button>
+              {log.finish_time ? (
+                <span className='text-muted-foreground/60 truncate font-mono text-[11px] tabular-nums'>
+                  {formatTimestampToDate(log.finish_time, 'seconds')}
+                </span>
+              ) : (
+                <span className='text-muted-foreground/50 text-[11px]'>-</span>
+              )}
+            </div>
           )
         },
       }
     )
-  }
 
   columns.push(
     {
