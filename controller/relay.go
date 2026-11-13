@@ -24,7 +24,8 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
-	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -639,6 +640,7 @@ func executeTaskSubmissionWith(
 	const maxRecordedTaskRequestBodyBytes int64 = 1 << 20
 
 	diagnostics := newTaskPluginSubmitDiagnostics(c)
+	policy := service.RequestPolicy(c)
 	diagnostics.start(relayInfo)
 	var result *relay.TaskSubmitResult
 	var taskErr *taskdto.TaskError
@@ -854,8 +856,8 @@ func executeTaskSubmissionWith(
 	task := model.InitTask(result.Platform, relayInfo)
 	if constant.IsVideoTaskChannelType(relayInfo.ChannelType) {
 		node := strings.TrimSpace(relayInfo.UserSetting.MediaDeliveryNode)
-		if !service.MediaDeliveryEnabled() || node != kitdto.MediaDeliveryNodeHK {
-			node = kitdto.MediaDeliveryNodeUS
+		if !service.MediaDeliveryEnabled() || node != dto.MediaDeliveryNodeHK {
+			node = dto.MediaDeliveryNodeUS
 		}
 		task.PrivateData.MediaDeliveryNode = node
 	}
@@ -951,7 +953,7 @@ func executeTaskSubmissionWith(
 		}
 	}
 	diagnostics.insertStart(task)
-	if insertErr := task.InsertWithContext(durableContext); insertErr != nil {
+	if insertErr := task.InsertWithContext(durableContext, insertOmits...); insertErr != nil {
 		common.SysError("insert task error: " + insertErr.Error())
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
 		diagnostics.failed("insert", "database_error", taskErr, false)

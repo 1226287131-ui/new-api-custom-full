@@ -99,16 +99,12 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	imageGenerationCount := float64(0)
 	_, useImageResolutionPrice := ratio_setting.GetImageResolutionPrice(billingModelName)
 	if useImageResolutionPrice {
-		requestInput, err := ResolveIncomingBillingExprRequestInput(c, info)
+		requestInput, err := ResolveIncomingBillingExprRequestInput(c, info, true)
 		if err != nil {
 			return hosttypes.PriceData{}, err
 		}
 		if request, image := info.Request.(*dto.ImageRequest); image {
-			channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
-			if info.ChannelMeta != nil {
-				channelType = info.ChannelType
-			}
-			count, err := request.ImageCount(channelType == constant.ChannelTypeAli)
+			count, err := request.ImageCount(false)
 			if err != nil {
 				return hosttypes.PriceData{}, err
 			}
@@ -211,22 +207,23 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	}
 
 	priceData := hosttypes.PriceData{
-		FreeModel:            freeModel,
-		ModelPrice:           modelPrice,
-		ModelRatio:           modelRatio,
-		CompletionRatio:      completionRatio,
-		GroupRatioInfo:       groupRatioInfo,
-		UsePrice:             usePrice,
-		CacheRatio:           cacheRatio,
-		ImageRatio:           imageRatio,
-		ImageResolutionTier:  imageResolutionTier,
-		ImageGenerationCount: imageGenerationCount,
-		AudioRatio:           audioRatio,
-		AudioCompletionRatio: audioCompletionRatio,
-		CacheCreationRatio:   cacheCreationRatio,
-		CacheCreation5mRatio: cacheCreationRatio5m,
-		CacheCreation1hRatio: cacheCreationRatio1h,
-		QuotaToPreConsume:    preConsumedQuota,
+		FreeModel:             freeModel,
+		ModelPrice:            modelPrice,
+		ModelRatio:            modelRatio,
+		CompletionRatio:       completionRatio,
+		GroupRatioInfo:        groupRatioInfo,
+		UsePrice:              usePrice,
+		CacheRatio:            cacheRatio,
+		ImageRatio:            imageRatio,
+		ImageResolutionTier:   imageResolutionTier,
+		ImageGenerationCount:  imageGenerationCount,
+		AudioRatio:            audioRatio,
+		AudioCompletionRatio:  audioCompletionRatio,
+		CacheCreationRatio:    cacheCreationRatio,
+		CacheCreation5mRatio:  cacheCreationRatio5m,
+		CacheCreation1hRatio:  cacheCreationRatio1h,
+		CacheCreation12hRatio: cacheCreationRatio12h,
+		QuotaToPreConsume:     preConsumedQuota,
 	}
 	if scheduledDiscount != 1 {
 		priceData.AddOtherRatio(billing_setting.ScheduledDiscountRatioKey, scheduledDiscount)
@@ -534,6 +531,9 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 	// of its time window settles at the same price it was accepted with.
 	scheduledDiscount := billing_setting.ScheduledDiscountMultiplier(info.OriginModelName, time.Now())
 	quotaBeforeGroup := rawCost / 1_000_000 * common.QuotaPerUnit * scheduledDiscount
+	if trace.BillingUnit == billingexpr.BillingUnitToken {
+		quotaBeforeGroup *= preConsumeMultiplier
+	}
 	preConsumedQuota, err := billingexpr.QuotaRoundStrict(quotaBeforeGroup * groupRatioInfo.GroupRatio)
 	if err != nil {
 		return hosttypes.PriceData{}, err

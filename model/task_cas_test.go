@@ -463,7 +463,7 @@ func TestUpdateVideoCacheMetadataPreservesTaskAndPrivateState(t *testing.T) {
 
 	var reloaded Task
 	require.NoError(t, DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, TaskStatusSuccess, reloaded.Status)
+	assert.Equal(t, TaskStatus(TaskStatusSuccess), reloaded.Status)
 	assert.Equal(t, 1234, reloaded.Quota)
 	assert.JSONEq(t, `{"prompt":"keep"}`, string(reloaded.Data))
 	assert.Equal(t, "https://new.example/video.mp4", reloaded.PrivateData.ResultURL)

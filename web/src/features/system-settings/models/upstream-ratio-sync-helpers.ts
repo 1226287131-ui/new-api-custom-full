@@ -19,6 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { createContext, useContext } from 'react'
 
 import {
+  formatPricingAmount,
+  USD_PRICING_CURRENCY,
+  type PricingCurrency,
+} from '@/features/model-pricing/currency'
+import {
   BILLING_PRICING_VARS,
   splitBillingExprAndRequestRules,
 } from '@/features/pricing/lib/billing-expr'
@@ -120,12 +125,12 @@ export function getSyncPriceLines(
       values.image_resolution_price ?? task?.resolution_prices ?? {}
     const lines = Object.entries(prices).map(([resolution, price]) => ({
       label: resolution === '1440p' ? '2K' : resolution,
-      value: `$${formatPricingNumber(price)} / ${values.image_resolution_price ? t('image') : unit}`,
+      value: `${formatSyncPriceAmount(price, currency)} / ${values.image_resolution_price ? t('image') : unit}`,
     }))
     if (!values.image_resolution_price && task?.default_price !== undefined) {
       lines.unshift({
         label: t('Default'),
-        value: `$${formatPricingNumber(task.default_price)} / ${unit}`,
+        value: `${formatSyncPriceAmount(task.default_price, currency)} / ${unit}`,
       })
     }
     return lines
@@ -135,7 +140,7 @@ export function getSyncPriceLines(
     return [
       {
         label: kind === 'second' ? t('Per-second') : t('Per-request'),
-        value: `$${formatPricingNumber(values.model_price)}`,
+        value: formatSyncPriceAmount(Number(values.model_price), currency),
       },
     ]
   }
@@ -178,7 +183,8 @@ export function getSyncPriceLines(
 
 export function getSyncExpressionPricing(
   expression: string,
-  t: (key: string) => string
+  t: (key: string) => string,
+  currency = USD_PRICING_CURRENCY
 ) {
   const { billingExpr, requestRuleExpr } =
     splitBillingExprAndRequestRules(expression)
@@ -213,7 +219,10 @@ export function getSyncExpressionPricing(
         return [
           {
             label: t(field.shortLabel),
-            value: `$${formatPricingNumber(Number(tier[field.tierField]))}`,
+            value: formatSyncPriceAmount(
+              Number(tier[field.tierField]),
+              currency
+            ),
           },
         ]
       }),
@@ -251,9 +260,9 @@ export function describeSyncPrice(
     return `${t('Expression pricing')}\n${values.billing_expr}`
   }
   if (kind === 'unset') return t('Unset price')
-  let unit = `USD / ${t('1M token')}`
-  if (kind === 'request') unit = `USD / ${t('request')}`
-  if (kind === 'second') unit = `USD / ${t('second')}`
+  let unit = `${currency.label} / ${t('1M token')}`
+  if (kind === 'request') unit = `${currency.label} / ${t('request')}`
+  if (kind === 'second') unit = `${currency.label} / ${t('second')}`
   if (kind === 'resolution') unit = t('Resolution pricing')
   return [
     unit,

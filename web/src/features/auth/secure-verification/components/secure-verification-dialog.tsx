@@ -44,7 +44,7 @@ interface SecureVerificationDialogProps {
   emailResendSeconds?: number
   emailExpired?: boolean
   onSendEmail?: () => void | Promise<void>
-  onVerify: () => void | Promise<void>
+  onVerify: (input?: VerificationInput) => void | Promise<void>
   onCancel: () => void
   onRetry: () => void
   onInputChange: (input: VerificationInput) => void
@@ -95,12 +95,12 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
   const needsEnrollment =
     teamVerificationUnavailable && ready?.requirements.methods.length === 0
 
-  let footerAction = (
+  let footerAction = showSubmit ? (
     <Button type='submit' form={formId} disabled={!canVerify}>
       {verifying && <Loader2 className='size-4 animate-spin' />}
       {t('Verify')}
     </Button>
-  )
+  ) : null
   if (state.phase === 'error') {
     footerAction = (
       <Button type='button' onClick={props.onRetry}>

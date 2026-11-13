@@ -11,7 +11,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/common/limiter"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
@@ -188,6 +190,7 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 			group = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 		}
 
+		subject := strconv.Itoa(c.GetInt("id"))
 		groups := model.ParseTokenGroups(group)
 		if len(groups) <= 1 {
 			if len(groups) == 1 {
@@ -197,6 +200,7 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 			if found {
 				totalMaxCount = groupTotalCount
 				successMaxCount = groupSuccessCount
+				subject += ":" + group
 			}
 		} else {
 			// A multi-group token may be routed through any selected group. Apply

@@ -27,6 +27,7 @@ import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { TaskPluginOption } from '../../api'
+import { CHANNEL_TYPE_TASK_PLUGIN } from '../../constants'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelsProvider, useChannels } from '../channels-provider'
 import { ChannelTestDialog } from '../dialogs/channel-test-dialog'
@@ -101,7 +102,12 @@ test('a plugin channel offers only the endpoints its plugin relays', async () =>
   render(
     <QueryClientProvider client={new QueryClient()}>
       <ChannelsProvider>
-        <OpenDialog channel={channel(61, '{"task_plugin_key":"relay-x"}')} />
+        <OpenDialog
+          channel={channel(
+            CHANNEL_TYPE_TASK_PLUGIN,
+            '{"task_plugin_key":"relay-x"}'
+          )}
+        />
       </ChannelsProvider>
     </QueryClientProvider>
   )

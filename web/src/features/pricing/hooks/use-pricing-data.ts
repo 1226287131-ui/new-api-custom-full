@@ -92,8 +92,25 @@ export function usePricingData(enabled = true) {
     })
   }, [data, taskSuccess.data, taskSuccessStatus])
 
+  // Task success statistics refresh independently of the model definitions.
+  // Keep this set stable so metadata consumers do not rebuild their columns.
+  const taskModelNames = useMemo(
+    () =>
+      new Set(
+        (data?.data ?? [])
+          .filter(
+            (model) =>
+              model.billing_usage_schema &&
+              Object.keys(model.billing_usage_schema).length > 0
+          )
+          .map((model) => model.model_name)
+      ),
+    [data]
+  )
+
   return {
     models,
+    taskModelNames,
     vendors: data?.vendors ?? [],
     groupRatio: data?.group_ratio ?? {},
     usableGroup: data?.usable_group ?? {},

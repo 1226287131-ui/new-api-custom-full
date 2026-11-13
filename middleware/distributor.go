@@ -59,38 +59,8 @@ func Distribute() func(c *gin.Context) {
 				return
 			}
 		}
-		if pin, found, overridden := constraints.ResolvedPin(); found {
-			for _, lost := range overridden {
-				logger.LogWarn(c, fmt.Sprintf(
-					"channel pin overridden: winning_source=%s winning_channel_id=%d overridden_source=%s overridden_channel_id=%d",
-					pin.Source, pin.ChannelId, lost.Source, lost.ChannelId,
-				))
-			}
-			channel, err = model.CacheGetChannel(pin.ChannelId)
-			if err != nil {
-				if pin.Source == taskdto.PinSourceOriginTask {
-					abortWithOpenAiMessage(c, http.StatusBadRequest, "origin_task_channel_disabled", types.ErrorCode("origin_task_channel_disabled"))
-				} else {
-					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
-				}
-				return
-			}
-			if channel.Status != common.ChannelStatusEnabled {
-				if pin.Source == taskdto.PinSourceOriginTask {
-					abortWithOpenAiMessage(c, http.StatusBadRequest, "origin_task_channel_disabled", types.ErrorCode("origin_task_channel_disabled"))
-				} else {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
-				}
-				return
-			}
-			if ok, kind := model.ChannelSatisfiesFilters(channel, selectionModel, constraints.Filters); !ok {
-				if kind == taskdto.FilterTaskPluginIdentity {
-					logTaskPluginChannelDecision(c, channel, modelRequest.Model, "channel_rejected", "identity_mismatch")
-				}
-				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup), "Model": modelRequest.Model}), types.ErrorCode(kind))
-				return
-			}
-		} else {
+		_, pinned, _ := constraints.ResolvedPin()
+		if !pinned {
 			// Select a channel for the user
 			// check token model mapping
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
@@ -131,94 +101,33 @@ func Distribute() func(c *gin.Context) {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
-						usingGroup = playgroundRequest.Group
-						common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
+						common.SetContextKey(c, constant.ContextKeyUsingGroup, playgroundRequest.Group)
 					}
 				}
-
-				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, selectionModel, usingGroup); found {
-					affinityUsable := false
-					preferred, err := model.CacheGetChannel(preferredChannelID)
-					affinitySatisfied := false
-					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled {
-						affinitySatisfied, _ = model.ChannelSatisfiesFilters(preferred, selectionModel, constraints.Filters)
-					}
-					if affinitySatisfied {
-						if usingGroup == "auto" {
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetRequestAutoGroups(c, userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, selectionModel, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									affinityUsable = true
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
-									break
-								}
-							}
-						} else {
-							for _, group := range model.ParseTokenGroups(usingGroup) {
-								if !model.IsChannelEnabledForGroupModel(group, selectionModel, preferred.Id) {
-									continue
-								}
-								channel = preferred
-								selectGroup = group
-								affinityUsable = true
-								service.MarkChannelAffinityUsed(c, group, preferred.Id)
-								break
-							}
-						}
-					}
-					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
-						service.ClearCurrentChannelAffinityCache(c)
-					}
-				}
-
-				if channel == nil {
-					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-						Ctx:         c,
-						ModelName:   selectionModel,
-						TokenGroup:  usingGroup,
-						RequestPath: c.Request.URL.Path,
-						Retry:       common.GetPointer(0),
-					})
-					if err != nil {
-						showGroup := usingGroup
-						if usingGroup == "auto" {
-							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
-						}
-						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
-						// 如果错误，但是渠道不为空，说明是数据库一致性问题
-						//if channel != nil {
-						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
-						//	message = "数据库一致性已被破坏，请联系管理员"
-						//}
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
-						return
-					}
-					if channel == nil {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, noAvailableChannelMessage(c, usingGroup, modelRequest.Model), types.ErrorCodeModelNotFound)
-						return
-					}
-				}
-				common.SetContextKey(c, constant.ContextKeyUsingGroup, selectGroup)
 			}
 		}
-		if channel != nil {
-			if ok, kind := model.ChannelSatisfiesFilters(channel, selectionModel, constraints.Filters); !ok {
-				if kind == taskdto.FilterTaskPluginIdentity {
-					logTaskPluginChannelDecision(c, channel, modelRequest.Model, "channel_rejected", "identity_mismatch")
+		if pinned || shouldSelectChannel {
+			usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+			var selectErr *service.ChannelSelectError
+			if value, exists := c.Get(contextKeyTaskPluginEndpointSelection); exists && !pinned {
+				if selected, ok := value.(taskPluginEndpointSelection); ok && selected.Model == selectionModel && selected.Channel != nil && selected.Channel.Status == common.ChannelStatusEnabled {
+					if matches, _ := model.ChannelSatisfiesFilters(selected.Channel, selectionModel, constraints.Filters); matches {
+						channel = selected.Channel
+					}
 				}
 			}
 			if channel == nil {
-				channel, _, selectErr = service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
+				var selectGroup string
+				channel, selectGroup, selectErr = service.SelectChannelForRequest(c, selectionModel, &service.RetryParam{
 					Ctx:         c,
-					ModelName:   modelRequest.Model,
+					ModelName:   selectionModel,
 					TokenGroup:  usingGroup,
 					RequestPath: c.Request.URL.Path,
 					Retry:       common.GetPointer(0),
 				})
+				if selectErr == nil && selectGroup != "" {
+					common.SetContextKey(c, constant.ContextKeyUsingGroup, selectGroup)
+				}
 			}
 			if selectErr != nil {
 				if selectErr.FilterKind == taskdto.FilterTaskPluginIdentity {

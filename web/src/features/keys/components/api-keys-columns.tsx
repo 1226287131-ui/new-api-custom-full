@@ -21,15 +21,8 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { BadgeCell } from '@/components/data-table'
-import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks'
 import { toIntlLocale } from '@/i18n/languages'
 import { getUserGroups } from '@/lib/api'
@@ -97,108 +90,13 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
             aria-label={t('Select all')}
             className='translate-y-[2px]'
           />
-        )
-      },
-      filterFn: (row, id, value) => value.includes(String(row.getValue(id))),
-      size: 120,
-      meta: { mobileBadge: true },
-    },
-    {
-      id: 'key',
-      accessorKey: 'key',
-      header: t('API Key'),
-      cell: ({ row }) => <ApiKeyCell apiKey={row.original} />,
-      enableSorting: false,
-      size: 260,
-    },
-    {
-      id: 'quota',
-      accessorKey: 'remain_quota',
-      header: `${t('Quota')} (${quotaUnit})`,
-      cell: ({ row }) => <ApiKeyQuotaCell apiKey={row.original} now={now} />,
-      size: 260,
-      minSize: 260,
-    },
-    {
-      accessorKey: 'group',
-      header: t('Group'),
-      cell: ({ row }) => {
-        const apiKey = row.original
-        const rawGroup = row.getValue('group')
-        const group = typeof rawGroup === 'string' ? rawGroup : ''
-        const groups = group
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean)
-
-        if (group === 'auto') {
-          return (
-            <Tooltip>
-              <TooltipTrigger
-                render={<BadgeCell className='gap-1.5 text-xs' />}
-              >
-                <GroupBadge group='auto' />
-                {apiKey.cross_group_retry && (
-                  <StatusBadge
-                    label={t('Cross-group')}
-                    variant='info'
-                    copyable={false}
-                  />
-                )}
-              </TooltipTrigger>
-              <TooltipContent>
-                <span className='text-xs'>
-                  {t(
-                    'Automatically selects the best available group with circuit breaker mechanism'
-                  )}
-                </span>
-              </TooltipContent>
-            </Tooltip>
-          )
-        }
-        if (groups.length > 1) {
-          return (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <BadgeCell className='max-w-full flex-nowrap gap-1 overflow-hidden text-xs' />
-                }
-              >
-                {groups.map((groupName) => (
-                  <GroupBadge
-                    key={groupName}
-                    group={groupName}
-                    ratio={
-                      typeof groupRatios[groupName] === 'number'
-                        ? groupRatios[groupName]
-                        : undefined
-                    }
-                  />
-                ))}
-              </TooltipTrigger>
-              <TooltipContent className='max-w-xs'>
-                <div className='space-y-1 text-xs'>
-                  {groups.map((groupName) => (
-                    <div key={groupName} className='flex items-center gap-2'>
-                      <span>{groupName}</span>
-                      {groupRatios[groupName] !== undefined && (
-                        <span className='text-muted-foreground font-mono'>
-                          {groupRatios[groupName]}x
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          )
-        }
-        return (
-          <ApiKeyGroupCell
-            group={group}
-            ratio={groupRatios[group]}
-            crossGroupRetry={apiKey.cross_group_retry}
-            shouldReduceMotion={shouldReduceMotion}
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label={t('Select row')}
+            className='translate-y-[2px]'
           />
         ),
         enableSorting: false,

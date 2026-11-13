@@ -659,9 +659,10 @@ func TestUpdateUserSettingKeepsWhatTheRequestLeavesOut(t *testing.T) {
 		Language:                         "zhCN",
 		SidebarModules:                   `{"chat":{"enabled":true}}`,
 		BillingPreference:                "wallet_only",
+		MediaDeliveryNode:                "us",
 	}
 	kept := func(setting dto.UserSetting) dto.UserSetting {
-		setting.Language, setting.SidebarModules, setting.BillingPreference = stored.Language, stored.SidebarModules, stored.BillingPreference
+		setting.Language, setting.SidebarModules, setting.BillingPreference, setting.MediaDeliveryNode = stored.Language, stored.SidebarModules, stored.BillingPreference, stored.MediaDeliveryNode
 		return setting
 	}
 	switchesChanged := `{"notify_type":"email","quota_warning_threshold":0,"quota_warning_enabled":true,"channel_notify_enabled":false,"upstream_model_update_notify_enabled":false}`

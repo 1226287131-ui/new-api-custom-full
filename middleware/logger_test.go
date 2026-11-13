@@ -66,6 +66,8 @@ func TestAccessAndPanicLogsFollowLogRotation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	*common.LogDir = t.TempDir()
 	t.Cleanup(func() {
+		*common.LogDir = ""
+		logger.SetupLogger()
 		gin.SetMode(previousMode)
 		gin.DefaultWriter, gin.DefaultErrorWriter = previousWriter, previousErrorWriter
 		*common.LogDir = previousLogDir

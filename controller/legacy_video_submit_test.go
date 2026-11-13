@@ -85,7 +85,7 @@ func TestLegacyVideoSubmitThirtySecondsPersistsOnceBeforePublication(t *testing.
 	require.Nil(t, taskErr)
 	require.NotNil(t, outcome)
 	assert.Equal(t, int32(1), calls.Load())
-	assert.Equal(t, []string{"reserve", "insert", "settle"}, events)
+	assert.Equal(t, []string{"reserve", "reserve", "insert", "settle"}, events)
 	assert.False(t, c.Writer.Written())
 	var persisted model.Task
 	require.NoError(t, database.Where("task_id = ?", "task_public").First(&persisted).Error)
@@ -264,7 +264,7 @@ func TestLegacyVideoDisconnectBeforeSendDoesNotSubmitOrRetry(t *testing.T) {
 	assert.Equal(t, "request_cancelled", taskErr.Code)
 	assert.Equal(t, 1, attempts)
 	assert.Zero(t, calls.Load())
-	assert.Equal(t, []string{"refund"}, events)
+	assert.Equal(t, []string{"reserve", "refund"}, events)
 }
 
 func TestLegacyVideoSubmissionDeadlineStopsBodyReadWithoutRetry(t *testing.T) {
@@ -302,7 +302,7 @@ func TestLegacyVideoSubmissionDeadlineStopsBodyReadWithoutRetry(t *testing.T) {
 	assert.Equal(t, http.StatusGatewayTimeout, taskErr.StatusCode)
 	assert.NoError(t, c.Request.Context().Err(), "the operation deadline must not cancel the client")
 	assert.Equal(t, int32(1), calls.Load(), "an uncertain accepted submission must not be retried")
-	assert.Equal(t, []string{"refund"}, events)
+	assert.Equal(t, []string{"reserve", "refund"}, events)
 	var taskCount int64
 	require.NoError(t, database.Model(&model.Task{}).Count(&taskCount).Error)
 	assert.Zero(t, taskCount)

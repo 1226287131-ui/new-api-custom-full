@@ -288,6 +288,14 @@ export interface LogOtherData {
   cache_creation_ratio?: number
   cache_creation_ratio_5m?: number
   cache_creation_ratio_1h?: number
+  cache_creation_ratio_12h?: number
+  is_model_mapped?: boolean
+  upstream_model_name?: string
+  response_model?: {
+    requested_model: string
+    upstream_model: string
+    returned_model: string
+  }
   audio_ratio?: number
   audio_completion_ratio?: number
   frt?: number
@@ -404,6 +412,7 @@ export interface MidjourneyLog {
 // ============================================================================
 
 export interface TaskLog {
+  result_discarded?: boolean
   id: number
   user_id: number
   username?: string

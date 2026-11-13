@@ -26,6 +26,18 @@ type UserBase struct {
 	Setting          string `json:"setting"`
 	AuthVersion      int64  `json:"-"`
 	CacheSchema      int    `json:"-"`
+	CacheExpiresAt   int64  `json:"-"`
+	CacheMAC         string `json:"-"`
+}
+
+func (user UserBase) cacheMAC() (string, error) {
+	user.Quota = 0
+	return authCacheMAC(getUserCacheKey(user.Id), struct {
+		User           UserBase
+		AuthVersion    int64
+		CacheSchema    int
+		CacheExpiresAt int64
+	}{user, user.AuthVersion, user.CacheSchema, user.CacheExpiresAt})
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {

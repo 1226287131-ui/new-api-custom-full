@@ -3,18 +3,9 @@ package controller
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/jsplugin"
-	relaychannel "github.com/QuantumNous/new-api/relay/channel"
-	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/system_setting"
-	"github.com/gin-gonic/gin"
-	"golang.org/x/net/http/httpguts"
 	"io"
 	"net"
 	"net/http"
@@ -25,6 +16,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/MoeForge/moego/ojson"
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relaychannel "github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/gin-gonic/gin"
+	"golang.org/x/net/http/httpguts"
 )
 
 var errTaskMediaRequestRejected = errors.New("task media request rejected")
@@ -226,7 +229,7 @@ func proxyTaskMedia(c *gin.Context, task *model.Task, descriptor *relaychannel.T
 
 	client := service.GetSSRFProtectedHTTPClient()
 	if proxy != "" {
-		client, err = service.GetHttpClientWithProxySettings(proxy, setting)
+		client, err = service.GetHttpClientWithProxySettings(proxy, channel.GetSetting())
 		if err != nil {
 			return &taskMediaProxyError{
 				status: http.StatusInternalServerError, code: "artifact_internal_error",
@@ -688,7 +691,7 @@ func writeTaskMediaBase64(c *gin.Context, mimeType, payload string) error {
 	var encoding *base64.Encoding
 	var contentLength int64
 	for _, candidate := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
-		decodedLength, err := candidate.ValidateString(payload)
+		decodedLength, err := io.Copy(io.Discard, base64.NewDecoder(candidate, strings.NewReader(payload)))
 		if err == nil {
 			encoding = candidate
 			contentLength = int64(decodedLength)
@@ -960,7 +963,7 @@ func cachePluginTaskVideo(c *gin.Context, task *model.Task, channel *model.Chann
 	if !ok {
 		return "", fmt.Errorf("plugin does not provide video content requests")
 	}
-	descriptor, err := provider.BuildContentRequest(task, artifactKey, relaychannel.TaskArtifactClientRequest{
+	descriptor, err := provider.BuildContentRequest(c.Request.Context(), task, artifactKey, relaychannel.TaskArtifactClientRequest{
 		Method: http.MethodGet,
 	})
 	if err != nil || descriptor == nil {

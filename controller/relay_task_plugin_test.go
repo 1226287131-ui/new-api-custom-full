@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -432,20 +433,24 @@ func TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund(t *testi
 func setupTaskSubmissionDatabase(t *testing.T, migrate bool, events *[]string) *gorm.DB {
 	t.Helper()
 	previousDB := model.DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
 	previousLogConsumeEnabled := common.LogConsumeEnabled
 	common.LogConsumeEnabled = false
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	connection, err := database.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, connection.Close()) })
-	require.NoError(t, database.AutoMigrate(&model.User{}, &model.Channel{}, &model.GroupUserRatio{}))
-	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(*gorm.DB) {
-		*events = append(*events, "insert")
+	models := []any{&model.User{}, &model.Channel{}, &model.GroupUserRatio{}}
+	if migrate {
+		models = append(models, &model.Task{})
+	}
+	database, dialect := openTaskDialectDatabase(t, models...)
+	common.SetDatabaseTypes(dialect, dialect)
+	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.ModelType == reflect.TypeFor[model.Task]() {
+			*events = append(*events, "insert")
+		}
 	}))
 	model.DB = database
 	t.Cleanup(func() {
 		model.DB = previousDB
+		common.SetDatabaseTypes(previousMain, previousLog)
 		common.LogConsumeEnabled = previousLogConsumeEnabled
 	})
 	return database
@@ -505,7 +510,6 @@ func openTaskDialectDatabase(t *testing.T, models ...any) (*gorm.DB, common.Data
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	models := []any{&model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.GroupUserRatio{}}
 	require.NoError(t, db.AutoMigrate(models...))
 	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(models...)) })
 	var version string

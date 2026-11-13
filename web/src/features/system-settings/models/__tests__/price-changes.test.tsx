@@ -54,6 +54,10 @@ const saved = {
   BillingMode: '{}',
   BillingExpr: '{}',
   PluginBillingExpr: '{}',
+  ImageResolutionPrice: '{}',
+  ImageResolutionModelMap: '{}',
+  TaskBillingPricing: '{}',
+  ScheduledDiscount: '{}',
   ExposeRatioEnabled: false,
 }
 
@@ -62,11 +66,13 @@ const raisedDeepseek = { ModelRatio: '{"deepseek-v4":0.15}' }
 
 function PriceChangesFixture(props: {
   draft?: Partial<typeof saved>
+  saved?: Partial<typeof saved>
   onSave: (values: typeof saved) => Promise<void>
 }) {
   const [actions, setActions] = useState<HTMLDivElement | null>(null)
   const [titleStatus, setTitleStatus] = useState<HTMLSpanElement | null>(null)
-  const form = useForm({ defaultValues: { ...saved, ...props.draft } })
+  const baseline = { ...saved, ...props.saved }
+  const form = useForm({ defaultValues: { ...baseline, ...props.draft } })
   return (
     <SettingsPageProvider
       actionsContainer={actions}
@@ -78,7 +84,7 @@ function PriceChangesFixture(props: {
       </header>
       <ModelRatioForm
         form={form}
-        savedValues={saved}
+        savedValues={baseline}
         onSave={props.onSave}
         onReset={() => undefined}
         isSaving={false}
@@ -89,7 +95,11 @@ function PriceChangesFixture(props: {
 }
 
 async function renderForm(
-  fixture: { draft?: Partial<typeof saved>; issues?: ModelPricingIssue[] } = {}
+  fixture: {
+    draft?: Partial<typeof saved>
+    saved?: Partial<typeof saved>
+    issues?: ModelPricingIssue[]
+  } = {}
 ) {
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/option/model_pricing/issues') {
@@ -118,7 +128,11 @@ async function renderForm(
   const queryClient = client
   render(
     <QueryClientProvider client={queryClient}>
-      <PriceChangesFixture draft={fixture.draft} onSave={onSave} />
+      <PriceChangesFixture
+        draft={fixture.draft}
+        saved={fixture.saved}
+        onSave={onSave}
+      />
     </QueryClientProvider>
   )
   await waitFor(() => expect(queryClient.isFetching()).toBe(0))
@@ -171,6 +185,70 @@ it('restores the saved price into the draft when a pending deletion is undone', 
   expect(within(row).queryByText('Pending deletion')).not.toBeInTheDocument()
   expect(within(row).getByRole('button', { name: 'Open menu' })).toBeVisible()
   expect(saveButton()).toBeDisabled()
+})
+
+it('preserves image resolution prices and unrelated task settings when editing a model price', async () => {
+  const user = userEvent.setup()
+  const extra = {
+    ImageResolutionPrice: '{"gpt-image-2":{"1K":0.01,"4K":0.04}}',
+    TaskBillingPricing:
+      '{"custom-video":{"mode":"per-second","default_price":0.2}}',
+    ScheduledDiscount:
+      '{"custom-video":{"enabled":true,"discount":0.5,"start":"01:00","end":"05:00"}}',
+  }
+  const { onSave } = await renderForm({ saved: extra })
+  await user.click(
+    within(screen.getByRole('row', { name: /gpt-image-2/ })).getByText(
+      'gpt-image-2'
+    )
+  )
+  const price = await screen.findByRole('textbox', { name: 'Fixed price' })
+  await user.clear(price)
+  await user.type(price, '0.05')
+  await user.click(saveButton())
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'Confirm price changes',
+  })
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Confirm and save' })
+  )
+  await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+  for (const key of Object.keys(extra) as (keyof typeof extra)[]) {
+    expect(JSON.parse(onSave.mock.calls[0][0][key])).toEqual(
+      JSON.parse(extra[key])
+    )
+  }
+})
+
+it('removes and restores task prices and discounts together without changing image resolution prices', async () => {
+  const user = userEvent.setup()
+  const extra = {
+    ImageResolutionPrice: '{"gpt-image-2":{"1K":0.01}}',
+    TaskBillingPricing:
+      '{"gpt-image-2":{"mode":"per-second","default_price":0.2}}',
+    ScheduledDiscount:
+      '{"gpt-image-2":{"enabled":true,"discount":0.5,"start":"01:00","end":"05:00"}}',
+  }
+  const { onSave } = await renderForm({ saved: extra })
+  await deleteRow(user, 'gpt-image-2')
+  const row = screen.getByRole('row', { name: /gpt-image-2/ })
+  await user.click(within(row).getByRole('button', { name: 'Undo' }))
+  expect(saveButton()).toBeDisabled()
+  await deleteRow(user, 'gpt-image-2')
+  await user.click(saveButton())
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'Confirm price changes',
+  })
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Confirm and save' })
+  )
+  await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+  const result = onSave.mock.calls[0][0]
+  expect(JSON.parse(result.TaskBillingPricing)).toEqual({})
+  expect(JSON.parse(result.ScheduledDiscount)).toEqual({})
+  expect(JSON.parse(result.ImageResolutionPrice)).toEqual(
+    JSON.parse(extra.ImageResolutionPrice)
+  )
 })
 
 it('offers only the edit action for a model without a saved price', async () => {

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	taskdto "github.com/QuantumNous/new-api/dto"
@@ -22,7 +23,6 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
-	"github.com/MoeForge/moego/ojson"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/lo"
 )
@@ -93,6 +93,25 @@ func reportFailedTasks(tasks []*model.Task, reason string) {
 		}
 		reportFinalTask(task)
 	}
+}
+
+// finalizeTerminalTask settles billing and reports a task after its terminal state is stored.
+func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
+	perfmetrics.RecordTaskResult(task, taskResult)
+	billingSettled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
+		RefundTaskQuota(ctx, task, task.FailReason)
+	}
+	reportFinalTask(task)
+}
+
+// bulkFailedTasks returns the tasks associated with upstream IDs in a failed bulk update.
+func bulkFailedTasks(upstreamIDs []string, tasks map[string]*model.Task) []*model.Task {
+	failed := make([]*model.Task, 0, len(upstreamIDs))
+	for _, upstreamID := range upstreamIDs {
+		failed = append(failed, tasks[upstreamID])
+	}
+	return failed
 }
 
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
@@ -525,8 +544,11 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	info := &relaycommon.RelayInfo{}
 	info.ChannelMeta = &relaycommon.ChannelMeta{
-		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
-		ChannelSetting: cacheGetChannel.GetSetting(),
+		ChannelType:     cacheGetChannel.Type,
+		ChannelId:       cacheGetChannel.Id,
+		ChannelBaseUrl:  cacheGetChannel.GetBaseURL(),
+		ChannelSetting:  cacheGetChannel.GetSetting(),
+		HeadersOverride: cacheGetChannel.GetHeaderOverride(),
 	}
 	info.ApiKey = cacheGetChannel.Key
 	adaptor.Init(info)
@@ -600,7 +622,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if !legacyTask {
 		switch classifyPollHTTP(resp.StatusCode) {
 		case pollClassNotFound:
-			return failTaskFromPoll(ctx, adaptor, task, snap.Status, fmt.Sprintf("upstream task not found (HTTP %d)", resp.StatusCode))
+			return failTaskFromPoll(ctx, adaptor, task, snap.Status, "Upstream task not found")
 		case pollClassAuth:
 			logger.LogWarn(ctx, fmt.Sprintf("task poll auth failure channel_id=%d task=%s http=%d", ch.Id, task.TaskID, resp.StatusCode))
 			return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassAuth, resp.StatusCode, "")
@@ -706,7 +728,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			logger.LogError(ctx, fmt.Sprintf("Failed to cache video task %s locally: %s", task.TaskID, cacheErr.Error()))
 			MarkVideoCacheFailure(task, cacheErr)
 			taskResult.TerminalError = false
-			task.PrivateData.ResultURL = ""
+			localVideoURL = taskcommon.BuildPublicVideoURL(task.TaskID)
 		} else {
 			MarkVideoTaskCached(task)
 			var deliveryErr error
@@ -804,23 +826,35 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 }
 
 func redactVideoResponseBody(body []byte, localVideoURL string, hideVideoURLs bool) []byte {
-	var m map[string]any
-	if err := common.Unmarshal(body, &m); err != nil {
+	if !ojson.ValidBytes(body) {
 		return body
 	}
 	doc := ojson.NewDoc(body)
-	if resp := ojson.GetBytesNoCopy(body, "response"); resp.IsObject() {
+	if response := doc.Get("response"); response.IsObject() {
 		_ = doc.Delete("response.bytesBase64Encoded")
-		if video := resp.Get("video"); video.Type == ojson.String {
-			_ = doc.Set("response.video", truncateBase64(video.Str))
+		if video := response.Get("video"); video.Type == ojson.String {
+			_ = doc.Set("response.video", truncateBase64(video.String()))
 		}
-		if videos := resp.Get("videos"); videos.IsArray() {
-			for i, video := range videos.Array() {
-				if video.IsObject() {
-					_ = doc.Delete(fmt.Sprintf("response.videos.%d.bytesBase64Encoded", i))
-				}
+		for i, video := range response.Get("videos").Array() {
+			if video.IsObject() {
+				_ = doc.Delete(fmt.Sprintf("response.videos.%d.bytesBase64Encoded", i))
 			}
 		}
+	}
+	for i, step := range doc.Get("steps").Array() {
+		for j, part := range step.Get("content").Array() {
+			if part.Get("type").String() == "video" {
+				_ = doc.Delete(fmt.Sprintf("steps.%d.content.%d.data", i, j))
+			}
+		}
+	}
+	redacted := doc.Bytes()
+	if localVideoURL == "" && !hideVideoURLs {
+		return redacted
+	}
+	var m map[string]any
+	if err := common.Unmarshal(redacted, &m); err != nil {
+		return redacted
 	}
 	if localVideoURL != "" {
 		replaceVideoResultURLs(m, localVideoURL)
@@ -831,7 +865,7 @@ func redactVideoResponseBody(body []byte, localVideoURL string, hideVideoURLs bo
 	if err != nil {
 		return body
 	}
-	return doc.Bytes()
+	return b
 }
 
 // SanitizeVideoTaskData keeps provider response details useful without

@@ -30,6 +30,7 @@ const (
 	AuthFlowPurposeTwoFASetup        = "2fa_setup"
 	AuthFlowPurposeSecurityProof     = "security_proof"
 	AuthFlowPurposeEmailBinding      = "email_binding"
+	AuthFlowPurposePluginLogin       = "plugin_login"
 	AuthFlowPurposeSecurityEmail     = "security_email"
 	AuthFlowPurposeSecurityEmailRate = "security_email_rate"
 	AuthFlowTokenBytes               = 32

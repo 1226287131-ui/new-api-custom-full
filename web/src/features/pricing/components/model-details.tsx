@@ -83,7 +83,11 @@ import {
   getConfiguredGroupRatio,
   isTokenBasedModel,
 } from '../lib/model-helpers'
-import { withPluginPricing } from '../lib/plugin-pricing'
+import {
+  withBasePricing,
+  withOrdinaryPricing,
+  withPluginPricing,
+} from '../lib/plugin-pricing'
 import {
   formatFixedPrice,
   formatGroupPrice,

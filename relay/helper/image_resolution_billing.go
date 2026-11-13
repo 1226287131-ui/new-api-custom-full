@@ -426,6 +426,16 @@ func resolveImageResolutionBilling(input billingexpr.RequestInput, meta *kittype
 		if rawCount == "" || rawCount == "0" {
 			continue
 		}
+		// The OpenAI-compatible top-level n is the billable quantity. Some
+		// providers also echo a different parameters.n; validate that value's
+		// shape and bounds, but never let it replace the already selected
+		// top-level quantity or create a false conflict.
+		if path == "parameters.n" && gjson.GetBytes(input.Body, "n").Exists() {
+			if _, err := parseImageBillingCount(rawCount); err != nil {
+				return imageResolutionBilling{}, fmt.Errorf("image count at %s is invalid: %w", path, err)
+			}
+			continue
+		}
 		if err := addImageCountSignal(&billing, &countSource, path, rawCount); err != nil {
 			return imageResolutionBilling{}, err
 		}

@@ -133,6 +133,7 @@ async function renderTeamVerification(
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  window.sessionStorage.clear()
   vi.useRealTimers()
 })
 
@@ -889,4 +890,124 @@ it('retains the existing unavailable-method state for non-team actions', async (
     screen.queryByRole('button', { name: 'Open Security & Access' })
   ).not.toBeInTheDocument()
   expect(result).not.toHaveBeenCalled()
+})
+
+it('starts linked-account verification from the provider button without a separate Verify button', async () => {
+  const popup = stubOAuthPopup()
+  const proof: SecurityProof = {
+    proof_token: 'oauth-proof',
+    method: 'oauth',
+    scope: '2fa.setup',
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+  }
+  vi.spyOn(api, 'get').mockImplementation((url) => {
+    if (url === '/api/verify/methods') {
+      return Promise.resolve({
+        data: { success: true, data: linkedAccountRequirements },
+      })
+    }
+    if (url === '/api/oauth/linuxdo') {
+      return Promise.resolve({ data: { success: true, data: proof } })
+    }
+    return Promise.resolve({ data: { success: true, data: {} } })
+  })
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        flow_token: 'verification-state',
+        authorization_url: 'https://connect.linux.do/oauth2/authorize?s=1',
+      },
+    },
+  })
+  const result = vi.fn()
+  const user = userEvent.setup()
+  render(<Harness operation={{ scope: '2fa.setup' }} onResult={result} />)
+  await user.click(screen.getByText('Protected action'))
+  const providerButton = await screen.findByRole('button', {
+    name: 'Continue with Linux DO',
+  })
+  expect(
+    screen.queryByRole('button', { name: 'Verify' })
+  ).not.toBeInTheDocument()
+  expect(window.open).not.toHaveBeenCalled()
+  await user.click(providerButton)
+  expect(window.open).toHaveBeenCalledTimes(1)
+  expect(providerButton).toBeDisabled()
+  await waitFor(() =>
+    expect(popup.location.replace).toHaveBeenCalledWith(
+      'https://connect.linux.do/oauth2/authorize?s=1'
+    )
+  )
+  expect(post).toHaveBeenCalledExactlyOnceWith(
+    '/api/oauth/state',
+    expect.objectContaining({
+      provider: 'linuxdo',
+      intent: 'verify',
+      scope: '2fa.setup',
+    }),
+    expect.anything()
+  )
+  const event = new MessageEvent('message', {
+    origin: window.location.origin,
+    data: {
+      type: OAUTH_POPUP_CALLBACK_MESSAGE,
+      intent: 'verify',
+      provider: 'linuxdo',
+      state: 'verification-state',
+      code: 'code',
+    },
+  })
+  Object.defineProperty(event, 'source', { value: popup })
+  window.dispatchEvent(event)
+  await waitFor(() => expect(result).toHaveBeenCalledExactlyOnceWith(proof))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
+it('verifies with the clicked provider when several linked accounts are available', async () => {
+  const popup = stubOAuthPopup()
+  vi.spyOn(api, 'get').mockImplementation((url) =>
+    url === '/api/verify/methods'
+      ? Promise.resolve({
+          data: {
+            success: true,
+            data: {
+              ...linkedAccountRequirements,
+              oauth_providers: [
+                { slug: 'linuxdo', name: 'Linux DO' },
+                { slug: 'github', name: 'GitHub' },
+              ],
+            },
+          },
+        })
+      : Promise.resolve({ data: { success: true, data: {} } })
+  )
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        flow_token: 'github-state',
+        authorization_url: 'https://github.com/login/oauth/authorize?s=1',
+      },
+    },
+  })
+  const user = userEvent.setup()
+  render(<Harness operation={{ scope: '2fa.setup' }} onResult={vi.fn()} />)
+  await user.click(screen.getByText('Protected action'))
+  await user.click(
+    await screen.findByRole('button', { name: 'Continue with GitHub' })
+  )
+  await waitFor(() =>
+    expect(popup.location.replace).toHaveBeenCalledWith(
+      'https://github.com/login/oauth/authorize?s=1'
+    )
+  )
+  expect(post).toHaveBeenCalledExactlyOnceWith(
+    '/api/oauth/state',
+    expect.objectContaining({ provider: 'github' }),
+    expect.anything()
+  )
+  expect(
+    screen.getByRole('button', { name: 'Continue with Linux DO' })
+  ).toBeDisabled()
 })

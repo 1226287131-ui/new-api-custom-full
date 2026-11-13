@@ -78,7 +78,7 @@ export function buildContentRequest(ctx) {checkAuth(ctx);return {url:ctx.baseUrl
 			result, err := adaptor.ParseTaskResult(task, nil, []byte(`{}`))
 			require.NoError(t, err)
 			assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
-			content, err := adaptor.BuildContentRequest(task, "video", channel.TaskArtifactClientRequest{Method: http.MethodGet})
+			content, err := adaptor.BuildContentRequest(ctx, task, "video", channel.TaskArtifactClientRequest{Method: http.MethodGet})
 			require.NoError(t, err)
 			assert.Equal(t, "Bearer access-token", content.Headers["Authorization"])
 			assert.Equal(t, []string{tc.want}, tokenProxies, "submit, immediate completion, polling, and artifacts must share the selected OAuth egress")

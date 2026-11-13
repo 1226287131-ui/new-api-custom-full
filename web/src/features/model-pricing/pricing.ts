@@ -26,7 +26,6 @@ import type {
   TaskBillingPriceConfig,
   ScheduledDiscountConfig,
 } from '@/features/pricing/types'
-import type { ModelRatioData } from '@/features/system-settings/models/model-pricing-core'
 import {
   usesTaskModelPricing,
   type ModelRatioData,
@@ -142,7 +141,13 @@ export function modelPricingDisplay(
       typeof values['billing_setting.billing_expr'] === 'string'
         ? values['billing_setting.billing_expr']
         : undefined,
-    billing_usage_schema: entry.usage_schema,
+    billing_usage_schema: usesTaskModelPricing(
+      pricingRow(entry.model_name, values),
+      entry.usage_schema,
+      entry.plugin_variants
+    )
+      ? entry.usage_schema
+      : undefined,
     image_resolution_prices: values.ImageResolutionPrice,
     task_billing_pricing: values['billing_setting.task_billing_pricing'],
     scheduled_discount: values['billing_setting.scheduled_discount'],
@@ -167,13 +172,17 @@ export function pricingOptions(
     PRICING_KEYS.map((key) => {
       // Form values also carry the raw option keys; the form field is the draft.
       let value = values[key]
-      if (key === 'billing_setting.billing_mode') value ??= values.BillingMode
-      if (key === 'billing_setting.billing_expr') value ??= values.BillingExpr
+      if (key === 'billing_setting.billing_mode') {
+        value = values.BillingMode ?? value
+      }
+      if (key === 'billing_setting.billing_expr') {
+        value = values.BillingExpr ?? value
+      }
       if (key === 'billing_setting.task_billing_pricing') {
-        value ??= values.TaskBillingPricing
+        value = values.TaskBillingPricing ?? value
       }
       if (key === 'billing_setting.scheduled_discount') {
-        value ??= values.ScheduledDiscount
+        value = values.ScheduledDiscount ?? value
       }
       if (key === 'billing_setting.plugin_billing_expr') {
         value = values.PluginBillingExpr ?? value

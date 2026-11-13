@@ -1433,7 +1433,7 @@ func UpdateUserSetting(c *gin.Context) {
 		mediaDeliveryNode = dto.MediaDeliveryNodeUS
 	}
 	if mediaDeliveryNode != dto.MediaDeliveryNodeUS && mediaDeliveryNode != dto.MediaDeliveryNodeHK {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
 	upstreamModelUpdateNotifyEnabled := existingSettings.UpstreamModelUpdateNotifyEnabled
@@ -1450,20 +1450,11 @@ func UpdateUserSetting(c *gin.Context) {
 	settings.AcceptUnsetRatioModel = req.AcceptUnsetModelRatioModel
 	settings.RecordIpLog = req.RecordIpLog
 	settings.MediaDeliveryNode = mediaDeliveryNode
-	settings.WebhookUrl = ""
-	settings.WebhookSecret = ""
-	settings.NotificationEmail = ""
-	settings.BarkUrl = ""
-	settings.GotifyUrl = ""
-	settings.GotifyToken = ""
-	settings.GotifyPriority = 0
-
-	// 如果是webhook类型,添加webhook相关设置
-	if req.QuotaWarningType == dto.NotifyTypeWebhook {
-		settings.WebhookUrl = req.WebhookUrl
-		if req.WebhookSecret != "" {
-			settings.WebhookSecret = req.WebhookSecret
-		}
+	if req.QuotaWarningEnabled != nil {
+		settings.QuotaWarningEnabled = req.QuotaWarningEnabled
+	}
+	if user.Role >= common.RoleAdminUser && req.ChannelNotifyEnabled != nil {
+		settings.ChannelNotifyEnabled = req.ChannelNotifyEnabled
 	}
 
 	// 只保留所选通知方式的配置，其他方式的配置清空

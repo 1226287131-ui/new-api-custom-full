@@ -80,6 +80,7 @@ func TestCacheImageDataURLAcceptsRawURLSafeBase64(t *testing.T) {
 }
 
 func TestCacheImageSourcesForNodeUploadsVerifiedImageToHK(t *testing.T) {
+	t.Setenv("MEDIA_DELIVERY_ENABLED", "true")
 	cacheDir := t.TempDir()
 	t.Setenv("IMAGE_CACHE_DIR", cacheDir)
 	t.Setenv("IMAGE_CACHE_PUBLIC_BASE_URL", "https://us.example")
@@ -114,6 +115,7 @@ func TestCacheImageSourcesForNodeUploadsVerifiedImageToHK(t *testing.T) {
 }
 
 func TestCacheImageSourcesForNodeFallsBackToUSWhenHKUploadFails(t *testing.T) {
+	t.Setenv("MEDIA_DELIVERY_ENABLED", "true")
 	t.Setenv("IMAGE_CACHE_DIR", t.TempDir())
 	t.Setenv("IMAGE_CACHE_PUBLIC_BASE_URL", "https://us.example")
 	t.Setenv("MEDIA_HK_INGEST_TOKEN", "test-token")

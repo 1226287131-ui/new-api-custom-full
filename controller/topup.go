@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -501,7 +502,7 @@ func EpayNotify(c *gin.Context) {
 	}
 	if completed {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Epay settled trade_no=%s user_id=%d quota=%d paid_cents=%d", topUp.TradeNo, topUp.UserId, quotaToAdd, paidCents))
-		model.RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%.2f", logger.LogQuota(quotaToAdd), float64(paidCents)/100), c.ClientIP(), topUp.PaymentMethod, model.PaymentProviderEpay)
+		model.RecordTopupLog(topUp.UserId, common.NewMessage(fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%.2f", logger.LogQuota(quotaToAdd), float64(paidCents)/100)), c.ClientIP(), topUp.PaymentMethod, model.PaymentProviderEpay)
 	}
 	// Acknowledgement follows the durable settlement, so failures remain retryable.
 	if _, writeErr := c.Writer.Write([]byte("success")); writeErr != nil {

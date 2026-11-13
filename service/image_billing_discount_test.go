@@ -36,7 +36,7 @@ func TestImageReservationAndSettlementKeepFrozenDiscount(t *testing.T) {
 				BillingRequestInput: &billingexpr.RequestInput{Body: []byte(`{"n":1}`), ImageCount: &originalCount},
 			}
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-			require.Nil(t, PrepareImageBillingForRequest(ctx, info, 3, false))
+			require.Nil(t, PrepareImageBillingForRequest(ctx, info, 3))
 			assert.Equal(t, []int{tc.want}, billing.reserveTargets)
 			assert.Equal(t, tc.want, snap.EstimatedQuotaAfterGroup)
 			assert.Equal(t, tc.want, info.FinalPreConsumedQuota)

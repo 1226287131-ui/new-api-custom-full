@@ -284,15 +284,19 @@ func TestAuthCacheIntegrityDatabaseMatrix(t *testing.T) {
 			})
 
 			t.Run("unreadable_quota_counters", func(t *testing.T) {
-				require.NoError(t, common.RDB.HSet(t.Context(), getUserCacheKey(user.Id), "Quota", "garbage").Err())
+				for _, value := range []string{"garbage", "1.5", "01", "-0", "9223372036854775808", "-9223372036854775809"} {
+					t.Run(value, func(t *testing.T) {
+						require.NoError(t, common.RDB.HSet(t.Context(), getUserCacheKey(user.Id), "Quota", value).Err())
+						_, err := GetUserCache(user.Id)
+						require.NoError(t, err)
+						cachedUser, err := cacheGetUserBase(user.Id)
+						require.NoError(t, err)
+						assert.Equal(t, user.Quota, cachedUser.Quota)
+					})
+				}
 				require.NoError(t, common.RDB.HSet(t.Context(), getTokenCacheKey(token.Key), "RemainQuota", "garbage").Err())
-				_, err := GetUserCache(user.Id)
+				_, err := GetTokenByKey(token.Key, false)
 				require.NoError(t, err)
-				_, err = GetTokenByKey(token.Key, false)
-				require.NoError(t, err)
-				cachedUser, err := cacheGetUserBase(user.Id)
-				require.NoError(t, err)
-				assert.Equal(t, user.Quota, cachedUser.Quota)
 				cachedToken, err := cacheGetTokenByKey(token.Key)
 				require.NoError(t, err)
 				assert.Equal(t, token.RemainQuota, cachedToken.RemainQuota)

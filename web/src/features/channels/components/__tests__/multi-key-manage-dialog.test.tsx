@@ -29,6 +29,7 @@ import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { CHANNEL_TYPE_TASK_PLUGIN } from '../../constants'
 import { channelsQueryKeys } from '../../lib'
 import { channelSchema, type Channel, type KeyStatus } from '../../types'
 import { ChannelsProvider, useChannels } from '../channels-provider'
@@ -42,7 +43,7 @@ afterEach(async () => {
 
 const multiKeyChannel = {
   id: 7,
-  type: 61,
+  type: CHANNEL_TYPE_TASK_PLUGIN,
   key: '',
   name: 'Account Live',
   status: 1,

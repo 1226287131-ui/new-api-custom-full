@@ -169,7 +169,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
   ref
 ) {
   const { t } = useTranslation()
-  const { models: pricingModels } = usePricingData()
+  const { taskModelNames } = usePricingData()
   const isMobile = useMediaQuery('(max-width: 767px)')
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
@@ -237,37 +237,68 @@ const ModelRatioVisualEditorComponent = forwardRef<
     localStorage.setItem(STORAGE_KEY, JSON.stringify(columnVisibility))
   }, [columnVisibility])
 
-  const taskModelNames = useMemo(
-    () =>
-      new Set(
-        pricingModels
-          .filter(
-            (model) =>
-              model.billing_usage_schema &&
-              Object.keys(model.billing_usage_schema).length > 0
-          )
-          .map((model) => model.model_name)
-      ),
-    [pricingModels]
-  )
+  const pricingIssues = useMemo(() => {
+    const byModel = new Map<string, ModelPricingIssue[]>()
+    for (const issue of pricingIssuesQuery.data ?? []) {
+      byModel.set(issue.model_name, [
+        ...(byModel.get(issue.model_name) ?? []),
+        issue,
+      ])
+    }
+    return byModel
+  }, [pricingIssuesQuery.data])
 
-  const models = useMemo(() => {
-    const savedRows = buildModelSnapshots({
-      modelPrice: savedModelPrice,
-      modelRatio: savedModelRatio,
-      cacheRatio: savedCacheRatio,
-      createCacheRatio: savedCreateCacheRatio,
-      completionRatio: savedCompletionRatio,
-      imageRatio: savedImageRatio,
-      audioRatio: savedAudioRatio,
-      audioCompletionRatio: savedAudioCompletionRatio,
-      billingMode: savedBillingMode,
-      billingExpr: savedBillingExpr,
-      taskBillingPricing: savedTaskBillingPricing,
-      scheduledDiscount: savedScheduledDiscount,
-      pluginBillingExpr: savedPluginBillingExpr,
-    })
-    const draftRows = buildModelSnapshots({
+  const savedOptions = useMemo(
+    () =>
+      pricingOptions({
+        ModelPrice: savedModelPrice,
+        ModelRatio: savedModelRatio,
+        CompletionRatio: savedCompletionRatio,
+        CacheRatio: savedCacheRatio,
+        CreateCacheRatio: savedCreateCacheRatio,
+        ImageRatio: savedImageRatio,
+        AudioRatio: savedAudioRatio,
+        AudioCompletionRatio: savedAudioCompletionRatio,
+        BillingMode: savedBillingMode,
+        BillingExpr: savedBillingExpr,
+        TaskBillingPricing: savedTaskBillingPricing,
+        ScheduledDiscount: savedScheduledDiscount,
+        PluginBillingExpr: savedPluginBillingExpr,
+      }),
+    [
+      savedModelPrice,
+      savedModelRatio,
+      savedCompletionRatio,
+      savedCacheRatio,
+      savedCreateCacheRatio,
+      savedImageRatio,
+      savedAudioRatio,
+      savedAudioCompletionRatio,
+      savedBillingMode,
+      savedBillingExpr,
+      savedTaskBillingPricing,
+      savedScheduledDiscount,
+      savedPluginBillingExpr,
+    ]
+  )
+  const draftOptions = useMemo(
+    () =>
+      pricingOptions({
+        ModelPrice: modelPrice,
+        ModelRatio: modelRatio,
+        CompletionRatio: completionRatio,
+        CacheRatio: cacheRatio,
+        CreateCacheRatio: createCacheRatio,
+        ImageRatio: imageRatio,
+        AudioRatio: audioRatio,
+        AudioCompletionRatio: audioCompletionRatio,
+        BillingMode: billingMode,
+        BillingExpr: billingExpr,
+        TaskBillingPricing: taskBillingPricing,
+        ScheduledDiscount: scheduledDiscount,
+        PluginBillingExpr: pluginBillingExpr,
+      }),
+    [
       modelPrice,
       modelRatio,
       completionRatio,
@@ -318,32 +349,9 @@ const ModelRatioVisualEditorComponent = forwardRef<
   }, [
     candidateModelNames,
     filterMode,
-    savedModelPrice,
-    savedModelRatio,
-    savedCacheRatio,
-    savedCreateCacheRatio,
-    savedCompletionRatio,
-    savedImageRatio,
-    savedAudioRatio,
-    savedAudioCompletionRatio,
-    savedBillingMode,
-    savedBillingExpr,
-    savedTaskBillingPricing,
-    savedScheduledDiscount,
-    savedPluginBillingExpr,
-    modelPrice,
-    modelRatio,
-    cacheRatio,
-    createCacheRatio,
-    completionRatio,
-    imageRatio,
-    audioRatio,
-    audioCompletionRatio,
-    billingMode,
-    billingExpr,
-    taskBillingPricing,
-    scheduledDiscount,
-    pluginBillingExpr,
+    pricingIssues,
+    savedOptions,
+    draftOptions,
   ])
 
   const modeCounts = useMemo(() => {
@@ -356,8 +364,8 @@ const ModelRatioVisualEditorComponent = forwardRef<
     }
     for (const model of models) {
       const mode =
-        model.billingMode === 'per-request' ||
         model.billingMode === 'per-second' ||
+        model.billingMode === 'per-request' ||
         model.billingMode === 'tiered_expr'
           ? model.billingMode
           : 'per-token'
@@ -473,128 +481,26 @@ const ModelRatioVisualEditorComponent = forwardRef<
 
   const handleDelete = useCallback(
     (name: string) => {
-      const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
-        fallback: {},
-        silent: true,
-      })
-      const ratioMap = safeJsonParse<Record<string, number>>(modelRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const cacheMap = safeJsonParse<Record<string, number>>(cacheRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const createCacheMap = safeJsonParse<Record<string, number>>(
-        createCacheRatio,
-        { fallback: {}, silent: true }
-      )
-      const completionMap = safeJsonParse<Record<string, number>>(
-        completionRatio,
-        { fallback: {}, silent: true }
-      )
-      const imageMap = safeJsonParse<Record<string, number>>(imageRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const audioMap = safeJsonParse<Record<string, number>>(audioRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const audioCompletionMap = safeJsonParse<Record<string, number>>(
-        audioCompletionRatio,
-        { fallback: {}, silent: true }
-      )
-      const billingModeMap = safeJsonParse<Record<string, string>>(
-        billingMode,
-        { fallback: {}, silent: true }
-      )
-      const billingExprMap = safeJsonParse<Record<string, string>>(
-        billingExpr,
-        { fallback: {}, silent: true }
-      )
-      const taskBillingPricingMap = safeJsonParse<Record<string, unknown>>(
-        taskBillingPricing,
-        { fallback: {}, silent: true }
-      )
-      const scheduledDiscountMap = safeJsonParse<Record<string, unknown>>(
-        scheduledDiscount,
-        { fallback: {}, silent: true }
-      )
-
-      delete priceMap[name]
-      delete ratioMap[name]
-      delete cacheMap[name]
-      delete createCacheMap[name]
-      delete completionMap[name]
-      delete imageMap[name]
-      delete audioMap[name]
-      delete audioCompletionMap[name]
-      delete billingModeMap[name]
-      delete billingExprMap[name]
-      delete taskBillingPricingMap[name]
-      delete scheduledDiscountMap[name]
-      const pluginExprMap = safeJsonParse<Record<string, string>>(
-        pluginBillingExpr,
-        { fallback: {} }
-      )
-      for (const variant of Object.keys(pluginExprMap)) {
-        if (splitPluginBillingExprKey(variant)?.[1] === name) {
-          delete pluginExprMap[variant]
+      for (const key of PRICING_KEYS) {
+        // Resolution prices are managed by the separate image price editor.
+        if (key === 'ImageResolutionPrice') continue
+        const draft = safeJsonParse<Record<string, unknown>>(
+          draftOptions[key],
+          { fallback: {}, silent: true }
+        )
+        for (const entry of Object.keys(draft)) {
+          const model =
+            key === 'billing_setting.plugin_billing_expr'
+              ? splitPluginBillingExprKey(entry)?.[1]
+              : entry
+          if (model === name) delete draft[entry]
         }
+        onChange(key, JSON.stringify(draft, null, 2))
       }
-      onChange(
-        'billing_setting.plugin_billing_expr',
-        JSON.stringify(pluginExprMap)
-      )
-
-      onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
-      onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
-      onChange('CacheRatio', JSON.stringify(cacheMap, null, 2))
-      onChange('CreateCacheRatio', JSON.stringify(createCacheMap, null, 2))
-      onChange('CompletionRatio', JSON.stringify(completionMap, null, 2))
-      onChange('ImageRatio', JSON.stringify(imageMap, null, 2))
-      onChange('AudioRatio', JSON.stringify(audioMap, null, 2))
-      onChange(
-        'AudioCompletionRatio',
-        JSON.stringify(audioCompletionMap, null, 2)
-      )
-      onChange(
-        'billing_setting.billing_mode',
-        JSON.stringify(billingModeMap, null, 2)
-      )
-      onChange(
-        'billing_setting.billing_expr',
-        JSON.stringify(billingExprMap, null, 2)
-      )
-      onChange(
-        'billing_setting.task_billing_pricing',
-        JSON.stringify(taskBillingPricingMap, null, 2)
-      )
-      onChange(
-        'billing_setting.scheduled_discount',
-        JSON.stringify(scheduledDiscountMap, null, 2)
-      )
 
       if (editingModelNameRef.current === name) closeEditor()
     },
-    [
-      closeEditor,
-      modelPrice,
-      modelRatio,
-      cacheRatio,
-      createCacheRatio,
-      completionRatio,
-      imageRatio,
-      audioRatio,
-      audioCompletionRatio,
-      billingMode,
-      billingExpr,
-      taskBillingPricing,
-      scheduledDiscount,
-      pluginBillingExpr,
-      onChange,
-    ]
+    [closeEditor, draftOptions, onChange]
   )
 
   // Puts one model's saved price, provider prices included, back into the
@@ -602,6 +508,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
   const handleRestore = useCallback(
     (name: string) => {
       for (const key of PRICING_KEYS) {
+        if (key === 'ImageResolutionPrice') continue
         const draft = safeJsonParse<Record<string, unknown>>(
           draftOptions[key],
           { fallback: {}, silent: true }
@@ -689,42 +596,12 @@ const ModelRatioVisualEditorComponent = forwardRef<
 
   const persistPricingData = useCallback(
     (data: ModelRatioData, targetNames: string[] = [data.name]) => {
-      const options = pricingOptions({
-        ModelPrice: modelPrice,
-        ModelRatio: modelRatio,
-        CompletionRatio: completionRatio,
-        CacheRatio: cacheRatio,
-        CreateCacheRatio: createCacheRatio,
-        ImageRatio: imageRatio,
-        AudioRatio: audioRatio,
-        AudioCompletionRatio: audioCompletionRatio,
-        BillingMode: billingMode,
-        BillingExpr: billingExpr,
-        PluginBillingExpr: pluginBillingExpr,
-        TaskBillingPricing: taskBillingPricing,
-        ScheduledDiscount: scheduledDiscount,
-      })
-      const updated = applyPricingDraft(options, data, targetNames)
+      const updated = applyPricingDraft(draftOptions, data, targetNames)
       for (const [key, value] of Object.entries(updated)) {
         if (key !== 'ImageResolutionPrice') onChange(key, value)
       }
     },
-    [
-      modelPrice,
-      modelRatio,
-      completionRatio,
-      cacheRatio,
-      createCacheRatio,
-      imageRatio,
-      audioRatio,
-      audioCompletionRatio,
-      billingMode,
-      billingExpr,
-      taskBillingPricing,
-      scheduledDiscount,
-      pluginBillingExpr,
-      onChange,
-    ]
+    [draftOptions, onChange]
   )
 
   const handleBatchCopy = useCallback(async () => {

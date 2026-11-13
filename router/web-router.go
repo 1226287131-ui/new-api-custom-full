@@ -34,9 +34,9 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 			}
 		},
 		middleware.AccessTokenAudit(),
-		middleware.GlobalWebRateLimit(),
+		middleware.GlobalWebRateLimit(frontendFS),
 		middleware.Cache(frontendCacheVersion(assets.IndexPage)),
-		static.Serve("/", frontendFS),
+		middleware.ServeFrontendFiles(frontendFS),
 		func(c *gin.Context) {
 			path := c.Request.URL.Path
 			if strings.HasPrefix(path, "/v1") || strings.HasPrefix(path, "/api") || isFrontendAssetPath(path) {

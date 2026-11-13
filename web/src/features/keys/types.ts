@@ -110,6 +110,7 @@ export function normalizeApiKey(value: unknown): ApiKey | null {
     model_limits_enabled: asBoolean(value.model_limits_enabled),
     model_limits: asString(value.model_limits),
     allow_ips: asString(value.allow_ips),
+    allow_user_quota_query: asBoolean(value.allow_user_quota_query),
   }
 }
 

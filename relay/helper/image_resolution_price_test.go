@@ -34,7 +34,7 @@ func TestHasModelBillingConfigAcceptsImageResolutionPrice(t *testing.T) {
 	require.True(t, HasModelBillingConfig(modelName))
 }
 
-func TestImageResolutionPriceUsesValidatedAliQuantity(t *testing.T) {
+func TestImageResolutionPriceUsesTopLevelQuantity(t *testing.T) {
 	saved := ratio_setting.ImageResolutionPrice2JSONString()
 	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateImageResolutionPriceByJSONString(saved)) })
 	require.NoError(t, ratio_setting.UpdateImageResolutionPriceByJSONString(`{"ali-resolution-test":{"1K":0.02,"2K":0.05,"4K":0.1}}`))
@@ -49,10 +49,11 @@ func TestImageResolutionPriceUsesValidatedAliQuantity(t *testing.T) {
 	}
 	price, err := ModelPriceHelper(ctx, info, 0, request.GetTokenCountMeta())
 	require.NoError(t, err)
-	assert.Equal(t, 3.0, price.ImageGenerationCount)
-	assert.Equal(t, 3.0, price.OtherRatios()["n"])
-	assert.Equal(t, common.QuotaFromFloat(0.02*3*common.QuotaPerUnit*price.GroupRatioInfo.GroupRatio), price.QuotaToPreConsume)
-	assert.NoError(t, ValidateOutboundImageBilling([]byte(`{"size":"1K","n":3,"parameters":{"n":3}}`), price))
+	assert.Equal(t, 1.0, price.ImageGenerationCount)
+	assert.Equal(t, 1.0, price.OtherRatios()["n"])
+	assert.Equal(t, common.QuotaFromFloat(0.02*common.QuotaPerUnit*price.GroupRatioInfo.GroupRatio), price.QuotaToPreConsume)
+	assert.NoError(t, ValidateOutboundImageBilling([]byte(`{"size":"1K","n":1,"parameters":{"n":3}}`), price))
+	assert.Error(t, ValidateOutboundImageBilling([]byte(`{"size":"1K","n":3,"parameters":{"n":3}}`), price))
 	assert.Error(t, ValidateOutboundImageBilling([]byte(`{"size":"4K","n":3}`), price))
 }
 

@@ -364,75 +364,86 @@ export function useSecureVerification() {
     resetDeadline,
   ])
 
-  const executeVerification = useCallback(async () => {
-    const current = pending.current
-    if (
-      !current ||
-      current.submitting ||
-      current.sendingEmail ||
-      state.phase !== 'ready' ||
-      !state.input
-    ) {
-      return
-    }
-    if (
-      state.input.method === 'email' &&
-      (!emailValid ||
-        !state.input.flow_token ||
-        !/^\d{6}$/.test(state.input.code))
-    ) {
-      return
-    }
-    current.submitting = true
-    const input = state.input
-    dispatch({ type: 'submit' })
-    try {
-      if (current.kind === 'login') {
-        const bundle = await verifyLogin(
-          input,
-          current.request.challenge,
-          current.controller.signal,
-          (domains) => {
-            if (pending.current === current) setPasskeyDomains(domains)
-          }
-        )
+  const executeVerification = useCallback(
+    async (override?: VerificationInput) => {
+      const current = pending.current
+      if (
+        !current ||
+        current.submitting ||
+        current.sendingEmail ||
+        state.phase !== 'ready'
+      ) {
+        return
+      }
+      const input = override ?? state.input
+      if (!input) return
+      const available = state.requirements.methods.some(
+        (option) => option.method === input.method && option.available
+      )
+      if (!available) return
+      if (
+        input.method === 'email' &&
+        (!emailValid || !input.flow_token || !/^\d{6}$/.test(input.code))
+      ) {
+        return
+      }
+      current.submitting = true
+      if (override) dispatch({ type: 'input', input })
+      dispatch({ type: 'submit' })
+      try {
+        if (current.kind === 'login') {
+          const bundle = await verifyLogin(
+            input,
+            current.request.challenge,
+            current.controller.signal,
+            (domains) => {
+              if (pending.current === current) setPasskeyDomains(domains)
+            }
+          )
+          if (pending.current !== current) return
+          current.resolve(bundle)
+        } else {
+          const proof = await verify(
+            input,
+            current.request,
+            state.requirements.password_encryption_enabled,
+            current.controller.signal,
+            (domains) => {
+              if (pending.current === current) setPasskeyDomains(domains)
+            }
+          )
+          if (pending.current !== current) return
+          current.resolve(proof)
+        }
+        pending.current = null
+        setEmailFlow(null)
+        resetResend()
+        resetDeadline()
+        dispatch({ type: 'reset' })
+      } catch (error) {
         if (pending.current !== current) return
         const failure = AuthOperationError.from(error)
         if (failure.code === 'AUTH_CANCELLED') {
           cancel()
           return
         }
+        if (
+          input.method === 'email' &&
+          [
+            'EMAIL_VERIFICATION_LOCKED',
+            'AUTH_FLOW_INVALID',
+            'ACCOUNT_SECURITY_STATE_CHANGED',
+          ].includes(failure.code ?? '')
+        ) {
+          resetDeadline()
+        }
         dispatch({ type: 'error', error: failure.message })
       } finally {
         current.submitting = false
       }
-      pending.current = null
-      setEmailFlow(null)
-      resetResend()
-      resetDeadline()
-      dispatch({ type: 'reset' })
-    } catch (error) {
-      if (pending.current !== current) return
-      const failure = AuthOperationError.from(error)
-      if (failure.code === 'AUTH_CANCELLED') {
-        cancel()
-        return
-      }
-      if (
-        input.method === 'email' &&
-        [
-          'EMAIL_VERIFICATION_LOCKED',
-          'AUTH_FLOW_INVALID',
-          'ACCOUNT_SECURITY_STATE_CHANGED',
-        ].includes(failure.code ?? '')
-      ) {
-        resetDeadline()
-      }
-      dispatch({ type: 'error', error: failure.message })
-    } finally {
-      current.submitting = false
-    }
-  }, [cancel, state, emailValid, resetResend, resetDeadline])
+    },
+    [cancel, state, emailValid, resetResend, resetDeadline]
+  )
 
   const retry = useCallback(() => {
     if (pending.current && state.phase === 'error') {

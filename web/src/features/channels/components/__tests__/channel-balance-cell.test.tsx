@@ -27,6 +27,7 @@ import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { TaskPluginOption } from '../../api'
+import { CHANNEL_TYPE_TASK_PLUGIN } from '../../constants'
 import { channelSchema, type ChannelBalanceDetail } from '../../types'
 import { BalanceCell } from '../channels-columns'
 import { ChannelsProvider } from '../channels-provider'
@@ -45,7 +46,7 @@ function pluginChannel(
   return channelSchema.parse({
     id: 5,
     name: 'Plugin channel',
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     key: '',
     status: 1,
     created_time: 1,

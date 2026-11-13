@@ -80,6 +80,9 @@ describe('model pricing entry', () => {
     const channelModel = { ...model, id: 0, model_name: 'channel-only' }
     let storedPrice = 1.5
     const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/pricing') {
+        return { data: { success: true, data: [], vendors: [] } }
+      }
       if (url === '/api/option/model_pricing') {
         return {
           data: {
@@ -131,7 +134,10 @@ describe('model pricing entry', () => {
           {
             model_name: 'channel-only',
             expected_version: 'v1',
-            pricing: { ModelPrice: 0, 'billing_setting.billing_mode': 'ratio' },
+            pricing: {
+              ModelPrice: 0,
+              'billing_setting.billing_mode': 'per-request',
+            },
             reset: false,
           },
         ],
@@ -157,6 +163,9 @@ describe('model pricing entry', () => {
       }
     )
     vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/pricing') {
+        return { data: { success: true, data: [], vendors: [] } }
+      }
       if (url === '/api/models/7') return detail
       if (url === '/api/option/model_pricing') {
         return {
@@ -242,6 +251,9 @@ describe('model pricing entry', () => {
       matched_models: ['example-concrete'],
     }
     const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/pricing') {
+        return { data: { success: true, data: [], vendors: [] } }
+      }
       if (url === '/api/models/7') {
         return { data: { success: true, data: matchedModel } }
       }
@@ -624,7 +636,10 @@ describe('metadata editing', () => {
           {
             model_name: 'example-model',
             expected_version: 'v1',
-            pricing: { ModelPrice: 0, 'billing_setting.billing_mode': 'ratio' },
+            pricing: {
+              ModelPrice: 0,
+              'billing_setting.billing_mode': 'per-request',
+            },
             reset: false,
           },
         ],
@@ -647,7 +662,10 @@ describe('metadata editing', () => {
           {
             model_name: 'example-model',
             expected_version: 'v2',
-            pricing: { ModelPrice: 0, 'billing_setting.billing_mode': 'ratio' },
+            pricing: {
+              ModelPrice: 0,
+              'billing_setting.billing_mode': 'per-request',
+            },
             reset: false,
           },
         ],

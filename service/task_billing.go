@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -25,7 +26,7 @@ import (
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
 	tokenName := c.GetString("token_name")
-	logContent := fmt.Sprintf("操作 %s", info.Action)
+	logContent := []*common.Message{common.NewMessage("Action {{action}}", map[string]any{"action": info.Action})}
 	taskBillingMode := billing_setting.GetTaskBillingMode(
 		info.OriginModelName,
 		common.StringsContains(constant.TaskPricePatches, info.OriginModelName),
@@ -35,7 +36,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	}
 	// 任务按次计费时不展示时长、分辨率等倍率，避免日志与实际计费单位混淆。
 	if taskBillingMode == billing_setting.BillingModePerRequest {
-		logContent = fmt.Sprintf("%s，按次计费", logContent)
+		logContent = append(logContent, common.NewMessage("Billed per request"))
 	} else {
 		var contents []string
 		if otherRatios := info.PriceData.OtherRatios(); len(otherRatios) > 0 {

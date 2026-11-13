@@ -198,7 +198,7 @@ func SaveTeamPayoutAccount(c *gin.Context) {
 		teamAPIError(c, err)
 		return
 	}
-	model.RecordLog(c.GetInt("id"), model.LogTypeSystem, "Team payout account updated")
+	model.RecordLog(c.GetInt("id"), model.LogTypeSystem, common.NewMessage("Team payout account updated"))
 	common.ApiSuccess(c, account)
 }
 
@@ -263,7 +263,7 @@ func AdminReadTeamWithdrawal(c *gin.Context) {
 		teamAPIError(c, err)
 		return
 	}
-	model.RecordLog(c.GetInt("id"), model.LogTypeSystem, fmt.Sprintf("Team withdrawal payout details accessed: %d", id))
+	model.RecordLog(c.GetInt("id"), model.LogTypeSystem, common.NewMessage(fmt.Sprintf("Team withdrawal payout details accessed: %d", id)))
 	common.ApiSuccess(c, withdrawal)
 }
 

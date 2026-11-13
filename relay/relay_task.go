@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -279,6 +280,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	exprStr, overridden, exists := billing_setting.ResolveTaskBillingExpr(pluginKey, modelName, info.UpstreamModelName)
 	useTiered := exists || billing_setting.GetBillingMode(modelName) == billing_setting.BillingModeTieredExpr
+	// A plugin that also relays the model charges its tasks with the model-level
+	// price; other task plugins use their configured task price expression.
+	relaysModel := pinnedPlugin.Plugin != nil && pinnedPlugin.Plugin.Meta.RelaysModel(modelName)
+	if exists && !billing_setting.TaskPriceExpr(exprStr, overridden, relaysModel) {
+		err = errors.New(i18n.T(c, i18n.MsgRelayTaskPriceNotConfigured, map[string]any{"Model": modelName, "Plugin": pluginKey}))
+		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest, common.UpstreamAddresses(c)...)
+	}
 	info.TaskBillingPrice = nil
 	if useTiered {
 		provider, supported := adaptor.(channel.TaskUsageFactsProvider)
@@ -838,27 +846,28 @@ func taskModel2Dto(task *model.Task, includeRequestBody bool) *dto.TaskDto {
 	// Keep provider mapping internal; task APIs expose only the site's model name.
 	properties.UpstreamModelName = ""
 	result := &dto.TaskDto{
-		ID:         task.ID,
-		CreatedAt:  task.CreatedAt,
-		UpdatedAt:  task.UpdatedAt,
-		TaskID:     task.TaskID,
-		Platform:   string(task.Platform),
-		UserId:     task.UserId,
-		Group:      task.Group,
-		ChannelId:  task.ChannelId,
-		Quota:      task.Quota,
-		Action:     constant.NormalizeTaskAction(task.Action),
-		Status:     string(task.Status),
-		FailReason: failReason,
-		ResultURL:  resultURL,
-		SubmitTime: task.SubmitTime,
-		StartTime:  task.StartTime,
-		FinishTime: task.FinishTime,
-		Progress:   task.Progress,
-		Properties: properties,
-		Username:   task.Username,
-		Data:       taskData,
-		ModelName:  modelName,
+		ID:              task.ID,
+		CreatedAt:       task.CreatedAt,
+		UpdatedAt:       task.UpdatedAt,
+		TaskID:          task.TaskID,
+		Platform:        string(task.Platform),
+		UserId:          task.UserId,
+		Group:           task.Group,
+		ChannelId:       task.ChannelId,
+		Quota:           task.Quota,
+		Action:          constant.NormalizeTaskAction(task.Action),
+		Status:          string(task.Status),
+		FailReason:      failReason,
+		ResultURL:       resultURL,
+		ResultDiscarded: task.PrivateData.ResultDiscarded,
+		SubmitTime:      task.SubmitTime,
+		StartTime:       task.StartTime,
+		FinishTime:      task.FinishTime,
+		Progress:        task.Progress,
+		Properties:      properties,
+		Username:        task.Username,
+		Data:            taskData,
+		ModelName:       modelName,
 	}
 	if includeRequestBody {
 		result.RequestBody = task.RequestBody

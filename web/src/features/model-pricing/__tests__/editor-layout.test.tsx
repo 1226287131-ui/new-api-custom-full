@@ -136,7 +136,7 @@ it.each([
   }
 )
 
-it.each(['none', 'standard', 'claude_ttl'] as const)(
+it.each(['none', 'standard', 'claude_ttl', 'openai_ttl'] as const)(
   'uses the %s cache profile consistently in current billing and draft previews',
   async (mode) => {
     const cacheWriteMode = mode

@@ -2,6 +2,7 @@ package model
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func TestCustomUpgradePreservesStoredConfiguration(t *testing.T) {
 	dsn := os.Getenv("SQL_DSN")
 	require.True(t, dsn == "local" || strings.Contains(dsn, "127.0.0.1:"), "only isolated loopback databases are allowed")
 	logDSN := os.Getenv("LOG_SQL_DSN")
-	require.True(t, logDSN == "" || strings.Contains(logDSN, "127.0.0.1:"), "only isolated loopback log databases are allowed")
+	require.True(t, logDSN == "local" || strings.Contains(logDSN, "127.0.0.1:"), "a separate isolated loopback log database is required")
 	savedDB, savedLogDB := DB, LOG_DB
 	savedMainType, savedLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	savedSQLitePath := common.SQLitePath
@@ -43,12 +44,18 @@ func TestCustomUpgradePreservesStoredConfiguration(t *testing.T) {
 	})
 	if dsn == "local" {
 		common.SQLitePath = os.Getenv("NEWAPI_UPGRADE_SQLITE")
-		require.NotEmpty(t, common.SQLitePath)
+		require.True(t, filepath.IsAbs(common.SQLitePath))
 	}
 	common.IsMasterNode = true
 	common.MemoryCacheEnabled = false
 	common.RedisEnabled = false
 	require.NoError(t, InitDB())
+	if logDSN == "local" {
+		logPath := os.Getenv("NEWAPI_UPGRADE_LOG_SQLITE")
+		require.True(t, filepath.IsAbs(logPath))
+		require.NotEqual(t, common.SQLitePath, logPath)
+		common.SQLitePath = logPath
+	}
 	require.NoError(t, InitLogDB())
 
 	channelSettings := `{"openai_video_endpoint":"/v1/video/generations","openai_video_profile":"seedance-2.5","minimax_video_prompt_enhance":true,"video_cache_proxy_enabled":true,"upstream_egress_proxy_enabled":true}`

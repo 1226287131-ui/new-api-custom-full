@@ -28,6 +28,7 @@ import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { TaskPluginOption } from '../../api'
+import { CHANNEL_TYPE_TASK_PLUGIN } from '../../constants'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelsProvider } from '../channels-provider'
 import { DataTableRowActions } from '../data-table-row-actions'
@@ -63,20 +64,20 @@ test.each([
   { name: 'a built-in channel', type: 1, plugin: '', shown: true },
   {
     name: 'a plugin that reports one',
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     plugin: 'with-balance',
     shown: true,
   },
   {
     name: 'a plugin that does not',
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     plugin: 'no-balance',
     shown: false,
   },
   {
     // Without the bind permission the plugin is unknown; the server answers.
     name: 'a plugin, to an admin who cannot read plugins',
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     plugin: 'no-balance',
     admin: true,
     shown: true,

@@ -100,7 +100,12 @@ beforeEach(() => {
     data: {
       success: true,
       data: {
-        scope: config?.params.scope,
+        scope:
+          config?.params &&
+          typeof config.params === 'object' &&
+          'scope' in config.params
+            ? config.params.scope
+            : undefined,
         methods: [{ method: '2fa', available: true }],
         oauth_providers: [],
         password_encryption_enabled: false,

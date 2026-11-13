@@ -60,12 +60,16 @@ const NOTIFICATION_ICONS: Record<NotifyType, typeof Mail> = {
 interface NotificationTabProps {
   profile: UserProfile | null
   onUpdate: () => void
+  quotaRemindEnabled: boolean
+  quotaRemindThreshold: number
   mediaDeliveryNodeEnabled?: boolean
 }
 
 export function NotificationTab({
   profile,
   onUpdate,
+  quotaRemindEnabled,
+  quotaRemindThreshold,
   mediaDeliveryNodeEnabled = false,
 }: NotificationTabProps) {
   const { t } = useTranslation()
@@ -439,15 +443,15 @@ export function NotificationTab({
           <div className='space-y-1'>
             <Label>{t('Image and video delivery')}</Label>
             <p className='text-muted-foreground text-xs sm:text-sm'>
-              {t(
-                'Choose the delivery node for new cached images and videos.'
-              )}
+              {t('Choose the delivery node for new cached images and videos.')}
             </p>
           </div>
           <ToggleGroup
             value={[settings.media_delivery_node]}
             onValueChange={(value) => {
-              const nextValue = value[0]
+              const nextValue = value.find(
+                (node) => node !== settings.media_delivery_node
+              )
               if (nextValue === 'us' || nextValue === 'hk') {
                 updateField('media_delivery_node', nextValue)
               }
@@ -460,13 +464,13 @@ export function NotificationTab({
           >
             <ToggleGroupItem
               value='us'
-              className='h-auto min-h-10 min-w-0 whitespace-normal px-3'
+              className='h-auto min-h-10 min-w-0 px-3 whitespace-normal'
             >
               {t('US Direct')}
             </ToggleGroupItem>
             <ToggleGroupItem
               value='hk'
-              className='h-auto min-h-10 min-w-0 whitespace-normal px-3'
+              className='h-auto min-h-10 min-w-0 px-3 whitespace-normal'
             >
               {t('Hong Kong Node')}
             </ToggleGroupItem>

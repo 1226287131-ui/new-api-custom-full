@@ -61,6 +61,8 @@ export function Profile() {
                   profile={profile}
                   loading={loading}
                   onProfileUpdate={refreshProfile}
+                  quotaRemindEnabled={quotaRemindEnabled}
+                  quotaRemindThreshold={quotaRemindThreshold}
                   mediaDeliveryNodeEnabled={
                     status?.media_delivery_node_enabled === true
                   }

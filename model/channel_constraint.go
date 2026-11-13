@@ -126,7 +126,23 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		// plugins cannot execute this endpoint unless their relay routes do.
 		return relayChannel || pluginChannel
 	case dto.FilterResponsesWebSocket:
-		return (ch.Type == constant.ChannelTypeOpenAI || ch.Type == constant.ChannelTypeCodex) && ch.GetSetting().ResponsesWebSocketEnabled
+		setting := ch.GetSetting()
+		if !setting.ResponsesWebSocketEnabled {
+			return false
+		}
+		switch ch.Type {
+		case constant.ChannelTypeOpenAI, constant.ChannelTypeCodex, constant.ChannelTypeAzure, constant.ChannelTypeNewAPI, constant.ChannelTypeSub2API:
+			return true
+		case constant.ChannelTypeTaskPlugin:
+			plugin, ok := jsplugin.DefaultRegistry.Get(setting.TaskPluginKey)
+			return ok && plugin.Meta.ServesResponsesWebSocket(modelName)
+		default:
+			if constant.IsAdvancedCustomChannel(ch.Type) {
+				route, ok := ch.GetOtherSettings().AdvancedCustom.MatchPathForModel("/v1/responses", modelName)
+				return ok && route.IsNative()
+			}
+			return false
+		}
 	case dto.FilterLegacyVideo:
 		return constant.IsVideoTaskChannelType(ch.Type)
 	default:

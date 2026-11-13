@@ -847,7 +847,10 @@ it('applies bulk changes only to existing selections, allows row overrides and s
         {
           model_name: 'a',
           expected_version: 'empty',
-          pricing: { 'billing_setting.billing_mode': 'ratio', ModelPrice: 1 },
+          pricing: {
+            'billing_setting.billing_mode': 'per-request',
+            ModelPrice: 1,
+          },
         },
         {
           model_name: 'b',
@@ -862,7 +865,10 @@ it('applies bulk changes only to existing selections, allows row overrides and s
         {
           model_name: 'c',
           expected_version: 'empty',
-          pricing: { 'billing_setting.billing_mode': 'ratio', ModelPrice: 21 },
+          pricing: {
+            'billing_setting.billing_mode': 'per-request',
+            ModelPrice: 21,
+          },
         },
       ]),
     })
@@ -1209,15 +1215,13 @@ it('disables both batch shortcuts when the configured exchange rate becomes inva
     })
   )
   await act(async () =>
-    useSystemConfigStore
-      .getState()
-      .setConfig({
-        currency: {
-          ...DEFAULT_CURRENCY_CONFIG,
-          quotaDisplayType: 'CNY',
-          usdExchangeRate: 0,
-        },
-      })
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 0,
+      },
+    })
   )
   expect(
     screen.getByRole('button', { name: /Multiply by exchange rate/ })

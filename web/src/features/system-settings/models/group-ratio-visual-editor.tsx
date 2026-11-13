@@ -83,7 +83,14 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
 import { safeJsonParse } from '../utils/json-parser'
+import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
 import { GroupUserRatioDialog } from './group-user-ratio-dialog'
+
+export type GroupSettingsSection =
+  | 'pricing'
+  | 'overrides'
+  | 'visibility'
+  | 'auto'
 
 type GroupRatioVisualEditorProps = {
   section: GroupSettingsSection

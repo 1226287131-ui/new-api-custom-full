@@ -205,7 +205,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		}
 		selectGroup = groups[0]
 		for _, group := range groups {
-			channel, err = model.GetRandomSatisfiedChannel(group, param.ModelName, param.GetRetry(), filters)
+			channel, err = model.GetRandomSatisfiedChannel(group, param.ModelName, max(param.GetRetry()-affinityRetryOffset, 0), filters)
 			if err != nil {
 				return nil, group, err
 			}
@@ -361,11 +361,17 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 							break
 						}
 					}
-				} else if model.IsChannelEnabledForGroupModel(usingGroup, modelName, preferred.Id) {
-					channel = preferred
-					selectGroup = usingGroup
-					affinityUsable = true
-					MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+				} else {
+					for _, group := range model.ParseTokenGroups(usingGroup) {
+						if !model.IsChannelEnabledForGroupModel(group, modelName, preferred.Id) {
+							continue
+						}
+						channel = preferred
+						selectGroup = group
+						affinityUsable = true
+						MarkChannelAffinityUsed(c, group, preferred.Id)
+						break
+					}
 				}
 			}
 			if !affinityUsable && !ShouldKeepChannelAffinityOnChannelDisabled() {

@@ -283,6 +283,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
+	info.ObserveResponseModel(simpleResponse.Model)
 
 	// Some OpenAI-compatible image gateways return an Images API payload even
 	// when the request was sent to chat/completions. Normalize that payload

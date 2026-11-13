@@ -491,11 +491,6 @@ it('starts ordinary image pricing per returned image and keeps the plugin image 
   const price = screen.getByRole('textbox', { name: 'Price per image' })
   await user.clear(price)
   await user.type(price, '0.02')
-  expect(
-    within(screen.getByRole('tabpanel', { name: 'Default price' })).getByRole(
-      'tablist'
-    )
-  ).toHaveClass('flex-wrap')
   const ordinary = screen.getByRole('tab', { name: 'Default price' })
   await user.click(ordinary)
   await user.keyboard('{ArrowRight}{Enter}')

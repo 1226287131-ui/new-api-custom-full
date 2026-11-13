@@ -115,7 +115,7 @@ export function parseTaskResult() { return {}; }
 			assert.Equal(t, 0.2, selection.Price)
 			_, _, err = billing_setting.ResolveTaskBillingPrice("merge-video", "720p")
 			assert.Error(t, err, "a missing configured tier must not fall back to another price")
-			expression, configured := billing_setting.ResolveTaskBillingExpr(pluginKey, "merge-video", "")
+			expression, _, configured := billing_setting.ResolveTaskBillingExpr(pluginKey, "merge-video", "")
 			assert.True(t, configured)
 			assert.Equal(t, `tier("video", u("seconds") * 0.1)`, expression)
 			assert.Equal(t, 0.5, billing_setting.ScheduledDiscountMultiplier("merge-video", time.Date(2026, 9, 15, 15, 0, 0, 0, time.UTC)))

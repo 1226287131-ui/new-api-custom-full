@@ -348,7 +348,7 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	return requestURL, pluginruntime.ValidateRequestURL(requestURL, info.ChannelBaseUrl, a.plugin.Meta.AllowedHosts)
 }
 
-func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
+func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
 	if a.submit == nil {
 		return fmt.Errorf("plugin submit request was not built")
 	}
@@ -360,7 +360,13 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, _ *r
 	if a.submit.BodyType == "multipart" {
 		req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	}
-	applyTaskCredential(a.credential, &url.URL{}, req.Header)
+	applyTaskCredential(a.credential, req.URL, req.Header)
+	if err := channel.ApplyHeaderOverride(info, c, req); err != nil {
+		return err
+	}
+	if err := a.SignUpstreamRequest(c, info, req.Method, req.URL, req.Header); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1304,19 +1310,18 @@ func (a *TaskAdaptor) BuildContentRequest(ctx context.Context, task *model.Task,
 	if err != nil {
 		return nil, err
 	}
-	ctx["upstreamTaskId"] = task.GetUpstreamTaskID()
-	ctx["artifactKey"] = artifactKey
-	ctx["baseUrl"] = a.info.ChannelBaseUrl
-	ctx["clientRequest"] = jsonValue(clientRequest)
-	proxy := service.ResolveChannelProxy(a.info.ChannelSetting)
-	auth, err := resolveAuth(a.plugin.Meta.Auth, a.info.ApiKey, proxy)
+	hookContext["upstreamTaskId"] = task.GetUpstreamTaskID()
+	hookContext["artifactKey"] = artifactKey
+	hookContext["baseUrl"] = a.info.ChannelBaseUrl
+	hookContext["clientRequest"] = jsonValue(clientRequest)
+	key, err := a.taskCredentialLine(ctx, a.info.ApiKey, task)
 	if err != nil {
 		return nil, err
 	}
-	if err = a.applyUpstreamCredentials(hookContext, a.info.ChannelType, key, a.info.ChannelSetting.Proxy); err != nil {
+	if err = a.applyUpstreamCredentials(hookContext, a.info.ChannelType, key, service.ResolveChannelProxy(a.info.ChannelSetting)); err != nil {
 		return nil, err
 	}
-	fetchContext := pluginruntime.WithFetcher(ctx, a.hookFetcher(a.info.ChannelBaseUrl, a.info.ChannelSetting.Proxy))
+	fetchContext := pluginruntime.WithFetcher(ctx, a.hookFetcher(a.info.ChannelBaseUrl, service.ResolveChannelProxy(a.info.ChannelSetting)))
 	descriptor, err := a.requestDescriptor(fetchContext, "buildContentRequest", hookContext)
 	if err != nil {
 		return nil, err
@@ -1517,7 +1522,7 @@ func (a *TaskAdaptor) queryCredentials() (key, baseURL, proxy string) {
 	if key == "" {
 		key = a.info.ApiKey
 	}
-	return key, a.info.ChannelBaseUrl, a.info.ChannelSetting.Proxy
+	return key, a.info.ChannelBaseUrl, service.ResolveChannelProxy(a.info.ChannelSetting)
 }
 
 // channelType is the executing channel's type when polling or content
@@ -1590,7 +1595,15 @@ func (a *TaskAdaptor) applyChannelContext(ctx map[string]any, channelType int) {
 	if a.info == nil || !a.info.HasChannelMeta() || a.info.ChannelId == 0 || channelType == constant.ChannelTypeNewAPI {
 		return
 	}
-	return a.info.ApiKey, a.info.ChannelBaseUrl, service.ResolveChannelProxy(a.info.ChannelSetting)
+	channel, err := model.CacheGetChannel(a.info.ChannelId)
+	if err != nil {
+		return
+	}
+	if channelType == constant.ChannelTypeTaskPlugin {
+		ctx["config"] = pluginruntime.RawJSON(a.plugin.ChannelConfigFor(channel.GetOtherSettings().PluginConfig))
+		return
+	}
+	ctx["channelOther"] = channel.Other
 }
 
 func hookHTTPResponse(resp *http.Response) map[string]any {
@@ -1728,7 +1741,7 @@ func (a *TaskAdaptor) buildSubmit(c *gin.Context, info *relaycommon.RelayInfo) (
 	// costs nothing; requests that start vendor work stay the descriptor.
 	fetchContext := c.Request.Context()
 	if info.HasChannelMeta() {
-		fetchContext = pluginruntime.WithFetcher(fetchContext, a.hookFetcher(info.ChannelBaseUrl, info.ChannelSetting.Proxy))
+		fetchContext = pluginruntime.WithFetcher(fetchContext, a.hookFetcher(info.ChannelBaseUrl, service.ResolveChannelProxy(info.ChannelSetting)))
 	}
 	descriptor, err := a.requestDescriptor(fetchContext, "buildSubmitRequest", a.submitContext(c, info))
 	if err != nil {
@@ -1919,13 +1932,7 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 	ctx["baseUrl"] = info.ChannelBaseUrl
 	ctx["userSetting"] = info.UserSetting
 	proxy := service.ResolveChannelProxy(info.ChannelSetting)
-	if auth, err := resolveAuth(a.plugin.Meta.Auth, info.ApiKey, proxy); err == nil {
-		ctx["auth"] = auth
-		ctx["authHeader"] = auth["authHeader"]
-		if a.plugin.Meta.Auth.Type == "" || a.plugin.Meta.Auth.Type == "none" || a.plugin.Meta.Auth.Type == "api_key" {
-			ctx["apiKey"] = info.ApiKey
-		}
-	} else {
+	if err := a.applyUpstreamCredentials(ctx, info.ChannelType, info.ApiKey, proxy); err != nil {
 		ctx["authError"] = err.Error()
 	}
 	return ctx

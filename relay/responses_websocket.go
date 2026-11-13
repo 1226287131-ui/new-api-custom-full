@@ -929,6 +929,58 @@ func (s *responsesWSSession) closeForPolicy(reason string) {
 	s.shutdown(websocket.ClosePolicyViolation, reason)
 }
 
+func dialResponsesWebSocketUpstream(c *gin.Context, adaptor relaychannel.Adaptor, info *relaycommon.RelayInfo) (*websocket.Conn, *types.NewAPIError) {
+	fullRequestURL, err := adaptor.GetRequestURL(info)
+	if err != nil {
+		return nil, types.NewError(fmt.Errorf("get request url failed: %w", err), types.ErrorCodeDoRequestFailed)
+	}
+	fullRequestURL = toWebSocketURL(fullRequestURL)
+
+	targetHeader := http.Header{}
+	if err := adaptor.SetupRequestHeader(c, &targetHeader, info); err != nil {
+		return nil, types.NewError(fmt.Errorf("setup request header failed: %w", err), types.ErrorCodeDoRequestFailed)
+	}
+	headerOverride, err := relaychannel.ResolveHeaderOverride(info, c)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeChannelHeaderOverrideInvalid)
+	}
+	for key, value := range headerOverride {
+		targetHeader.Set(key, value)
+	}
+
+	dialer := *websocket.DefaultDialer
+	if proxy := service.ResolveChannelProxy(info.ChannelSetting); proxy != "" {
+		proxyURL, _, proxyErr := common.ParseProxyURLRuntime(proxy)
+		if proxyErr != nil {
+			return nil, types.NewError(proxyErr, types.ErrorCodeDoRequestFailed)
+		}
+		dialer.Proxy = http.ProxyURL(proxyURL)
+	}
+	targetConn, resp, err := dialer.DialContext(c.Request.Context(), fullRequestURL, targetHeader)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if resp != nil {
+			statusCode = resp.StatusCode
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+		}
+		return nil, types.NewErrorWithStatusCode(fmt.Errorf("dial failed to %s: %w", relaycommon.SanitizeURLForLog(fullRequestURL), err), types.ErrorCodeDoRequestFailed, statusCode)
+	}
+	return targetConn, nil
+}
+
+func toWebSocketURL(raw string) string {
+	switch {
+	case strings.HasPrefix(raw, "https://"):
+		return "wss://" + strings.TrimPrefix(raw, "https://")
+	case strings.HasPrefix(raw, "http://"):
+		return "ws://" + strings.TrimPrefix(raw, "http://")
+	default:
+		return raw
+	}
+}
+
 // Stream identity belongs to the WebSocket envelope. For the legacy wrapped
 // input, the top-level field takes precedence over response.stream_id.
 func parseResponsesWSEnvelope(message []byte) (responsesWSCreateEvent, string, error) {
@@ -1021,33 +1073,9 @@ func buildResponsesWSCreateEvent(jsonData []byte, generate common.RawMessage, st
 	if len(generate) > 0 {
 		keys = append(keys, "generate")
 	}
-	return common.Marshal(event)
-}
-
-func dialResponsesWebSocketUpstream(c *gin.Context, adaptor relaychannel.Adaptor, info *relaycommon.RelayInfo) (*websocket.Conn, *types.NewAPIError) {
-	fullRequestURL, err := adaptor.GetRequestURL(info)
-	if err != nil {
-		return nil, types.NewError(fmt.Errorf("get request url failed: %w", err), types.ErrorCodeDoRequestFailed)
-	}
-	fullRequestURL = toWebSocketURL(fullRequestURL)
-
-	targetHeader := http.Header{}
-	if err := adaptor.SetupRequestHeader(c, &targetHeader, info); err != nil {
-		return nil, types.NewError(fmt.Errorf("setup request header failed: %w", err), types.ErrorCodeDoRequestFailed)
-	}
-	headerOverride, err := relaychannel.ResolveHeaderOverride(info, c)
-	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeChannelHeaderOverrideInvalid)
-	}
-	for key, value := range headerOverride {
-		targetHeader.Set(key, value)
-	}
-
-	dialer := *websocket.DefaultDialer
-	if proxy := service.ResolveChannelProxy(info.ChannelSetting); proxy != "" {
-		proxyURL, _, proxyErr := common.ParseProxyURLRuntime(proxy)
-		if proxyErr != nil {
-			return nil, types.NewError(proxyErr, types.ErrorCodeDoRequestFailed)
+	for _, key := range keys {
+		if err := relaycommon.DeleteJSONMember(event, key); err != nil {
+			return nil, err
 		}
 	}
 	if err := event.Set("type", responsesWSEventTypeResponseCreate); err != nil {

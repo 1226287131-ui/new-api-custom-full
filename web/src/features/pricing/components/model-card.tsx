@@ -38,6 +38,7 @@ import {
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
 import { isTokenBasedModel } from '../lib/model-helpers'
+import { withBasePricing } from '../lib/plugin-pricing'
 import {
   formatPrice,
   formatRequestPrice,
@@ -51,9 +52,9 @@ import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, PriceType, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
+import { ModelTaskSuccessRate } from './model-task-success-rate'
 import { ResolutionPriceCell } from './resolution-price-cell'
 import { ScheduledDiscountNotice } from './scheduled-discount-notice'
-import { ModelTaskSuccessRate } from './model-task-success-rate'
 
 export interface ModelCardProps {
   model: PricingModel

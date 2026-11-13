@@ -148,6 +148,8 @@ export function CommonLogMobileCard<TData>(props: {
           <div className='min-w-0 flex-[1_1_10rem]'>
             <ModelBadge
               modelName={model.name}
+              actualModel={model.actualModel}
+              responseModel={model.responseModel}
               wrapText
               onInspect={() => setSelectedField('model')}
             />
@@ -349,6 +351,9 @@ export function CommonLogMobileCard<TData>(props: {
             <p className='bg-muted rounded-lg p-4 text-base [overflow-wrap:anywhere] whitespace-pre-wrap'>
               {activeField.value}
             </p>
+            {selectedField === 'model' && model.responseModel && (
+              <ResponseModelDetails observation={model.responseModel} />
+            )}
             {selectedField === 'channel' && channelCell && (
               <div>
                 {flexRender(

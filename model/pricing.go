@@ -54,6 +54,9 @@ type Pricing struct {
 	BillingUsageSchema     map[string]jsplugin.UsageFieldSchema     `json:"billing_usage_schema,omitempty"`
 	BillingUsageExamples   []jsplugin.UsageExample                  `json:"billing_usage_examples,omitempty"`
 	PricingVersion         string                                   `json:"pricing_version,omitempty"`
+	// OrdinaryPricing reports that requests outside plugin variants still
+	// pay the model-level price: relayed chat requests or ordinary channels.
+	OrdinaryPricing bool `json:"ordinary_pricing,omitempty"`
 }
 
 type PricingVendor struct {
@@ -254,6 +257,8 @@ func updatePricing() {
 
 	modelGroupsMap := make(map[string]*types.Set[string])
 	taskModels := make(map[string]bool)
+	pluginGeneration := jsplugin.DefaultRegistry.Generation()
+	ordinaryChannelModels := make(map[string]bool)
 
 	for _, ability := range enableAbilities {
 		groups, ok := modelGroupsMap[ability.Model]
@@ -273,6 +278,12 @@ func updatePricing() {
 			taskModels[ability.Model] = true
 		case constant.ChannelTypeGemini, constant.ChannelTypeVertexAi:
 			taskModels[ability.Model] = taskModels[ability.Model] || strings.HasPrefix(strings.ToLower(ability.Model), "veo-")
+		}
+		if ability.ChannelType != constant.ChannelTypeTaskPlugin && !ordinaryChannelModels[ability.Model] {
+			plugin, claimed := pluginGeneration.GetByChannelType(ability.ChannelType)
+			if !claimed || !slices.Contains(pluginGeneration.PluginsByModel(ability.Model), plugin) {
+				ordinaryChannelModels[ability.Model] = true
+			}
 		}
 	}
 

@@ -18,31 +18,42 @@ import (
 )
 
 const (
-	VerificationMethodTwoFA               = "2fa"
-	VerificationMethodPasskey             = "passkey"
-	VerificationMethodPassword            = "password"
-	VerificationMethodOAuth               = "oauth"
-	VerificationMethodSession             = "session"
-	VerificationMethodEmail               = "email"
-	VerificationScopeChannelKeyRead       = "channel.key.read"
-	VerificationScopePasskeyRegister      = "passkey.register"
-	VerificationScopePasskeyDelete        = "passkey.delete"
-	VerificationScopeTwoFASetup           = "2fa.setup"
-	VerificationScopeTwoFADisable         = "2fa.disable"
-	VerificationScopeTwoFABackupCodes     = "2fa.backup_codes.regenerate"
-	VerificationScopeLogin                = "auth.login"
-	VerificationScopeAccessTokenGenerate  = "access_token.generate"
-	VerificationScopeAccessTokenRevoke    = "access_token.revoke"
-	VerificationScopeAccountBind          = "account.binding.bind"
-	VerificationScopeAccountUnbind        = "account.binding.unbind"
-	VerificationScopePasswordSet          = "account.password.set"
-	VerificationScopePasswordChange       = "account.password.change"
-	VerificationScopeAccountDelete        = "account.delete"
-	VerificationScopeTeamPayoutWrite      = "team.payout.write"
-	VerificationScopeTeamWithdrawalWrite  = "team.withdrawal.write"
-	VerificationScopeTeamWithdrawalReview = "team.withdrawal.review"
-	VerificationScopeTeamWithdrawalRead   = "team.withdrawal.read"
-	VerificationScopeTeamReferralWrite    = "team.referral.write"
+	VerificationMethodTwoFA              = "2fa"
+	VerificationMethodPasskey            = "passkey"
+	VerificationMethodPassword           = "password"
+	VerificationMethodOAuth              = "oauth"
+	VerificationMethodSession            = "session"
+	VerificationMethodEmail              = "email"
+	VerificationScopeChannelKeyRead      = "channel.key.read"
+	VerificationScopePasskeyRegister     = "passkey.register"
+	VerificationScopePasskeyDelete       = "passkey.delete"
+	VerificationScopeTwoFASetup          = "2fa.setup"
+	VerificationScopeTwoFADisable        = "2fa.disable"
+	VerificationScopeTwoFABackupCodes    = "2fa.backup_codes.regenerate"
+	VerificationScopeLogin               = "auth.login"
+	VerificationScopeAccessTokenGenerate = "access_token.generate"
+	VerificationScopeAccessTokenRevoke   = "access_token.revoke"
+	VerificationScopeAccessTokenUpdate   = "access_token.update"
+	VerificationScopeAccountBind         = "account.binding.bind"
+	VerificationScopeAccountUnbind       = "account.binding.unbind"
+	VerificationScopePasswordSet         = "account.password.set"
+	VerificationScopePasswordChange      = "account.password.change"
+	VerificationScopeAccountDelete       = "account.delete"
+	// Administrative step-up scopes bind the managed user into the proof so a
+	// proof issued for one account cannot be replayed against another.
+	VerificationScopeAdminUserCreate       = "admin.user.create"
+	VerificationScopeAdminUserUpdate       = "admin.user.update"
+	VerificationScopeAdminUserDelete       = "admin.user.delete"
+	VerificationScopeAdminUserManage       = "admin.user.manage"
+	VerificationScopeAdminUserPasskeyReset = "admin.user.passkey.reset"
+	VerificationScopeAdminUserTwoFADisable = "admin.user.2fa.disable"
+	VerificationScopeAdminUserBindingClear = "admin.user.binding.clear"
+	verificationScopeAdminUserPrefix       = "admin.user."
+	VerificationScopeTeamPayoutWrite       = "team.payout.write"
+	VerificationScopeTeamWithdrawalWrite   = "team.withdrawal.write"
+	VerificationScopeTeamWithdrawalReview  = "team.withdrawal.review"
+	VerificationScopeTeamWithdrawalRead    = "team.withdrawal.read"
+	VerificationScopeTeamReferralWrite     = "team.referral.write"
 )
 
 // adminUserManageActions are the ManageUser actions that change a user's
@@ -77,6 +88,68 @@ type AccountBindingContext struct {
 
 type AccountUnbindingContext struct {
 	ProviderID int `json:"provider_id"`
+}
+
+type AdminUserContext struct {
+	UserID int `json:"user_id"`
+}
+
+type AdminUserManageContext struct {
+	UserID int    `json:"user_id"`
+	Action string `json:"action"`
+}
+
+// AdminUserBindingContext names exactly one binding: a built-in binding type
+// or a custom OAuth provider ID.
+type AdminUserBindingContext struct {
+	UserID      int    `json:"user_id"`
+	BindingType string `json:"binding_type,omitempty"`
+	ProviderID  int    `json:"provider_id,omitempty"`
+}
+
+type AdminUserCreateContext struct {
+	Role int `json:"role"`
+}
+
+// AccessTokenGenerateContext binds a creation proof to the exact grant.
+type AccessTokenGenerateContext struct {
+	Scopes    []string `json:"scopes"`
+	ExpiresAt int64    `json:"expires_at"`
+}
+
+// AccessTokenUpdateContext binds a grant change to one token and the exact new grant.
+type AccessTokenUpdateContext struct {
+	TokenID int      `json:"token_id"`
+	Scopes  []string `json:"scopes"`
+}
+
+// AccessTokenRevokeContext names exactly one token: a scoped token ID or the legacy token.
+type AccessTokenRevokeContext struct {
+	TokenID int  `json:"token_id,omitempty"`
+	Legacy  bool `json:"legacy,omitempty"`
+}
+
+const (
+	maxAccessTokenContextScopes   = 128
+	maxAccessTokenContextScopeLen = 64
+)
+
+// NormalizeAccessTokenScopeList trims, de-duplicates and sorts scope keys.
+// Grantability is checked against the scope catalog by the caller.
+func NormalizeAccessTokenScopeList(scopes []string) ([]string, bool) {
+	if len(scopes) == 0 || len(scopes) > maxAccessTokenContextScopes {
+		return nil, false
+	}
+	normalized := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" || len(scope) > maxAccessTokenContextScopeLen {
+			return nil, false
+		}
+		normalized = append(normalized, scope)
+	}
+	slices.Sort(normalized)
+	return slices.Compact(normalized), true
 }
 
 type TeamReferralWriteContext struct {
@@ -234,7 +307,6 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 		normalized = context
 	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
-		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeTeamWithdrawalWrite,
 		VerificationScopeTeamWithdrawalReview, VerificationScopeTeamWithdrawalRead,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete:
@@ -364,8 +436,14 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	if scope == VerificationScopeChannelKeyRead && state.Role != common.RoleRootUser {
 		return nil, ErrVerificationForbidden
 	}
+	if strings.HasPrefix(scope, verificationScopeAdminUserPrefix) && state.Role < common.RoleAdminUser {
+		return nil, ErrVerificationForbidden
+	}
 	if (scope == VerificationScopeTeamWithdrawalReview || scope == VerificationScopeTeamWithdrawalRead || scope == VerificationScopeTeamReferralWrite) && state.Role < common.RoleAdminUser {
 		return nil, ErrVerificationForbidden
+	}
+	if err := requireAccessTokenVerificationScope(identity, scope); err != nil {
+		return nil, err
 	}
 	methods, err := securityVerificationPolicy(scope, *state)
 	if err != nil {

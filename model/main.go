@@ -344,6 +344,7 @@ func migrateDB() error {
 		&Token{},
 		&User{},
 		&UserSession{},
+		&UserAccessToken{},
 		&AuthFlow{},
 		&ExternalIdentityClaim{},
 		&PasskeyCredential{},

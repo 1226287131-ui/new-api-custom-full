@@ -34,6 +34,8 @@ interface ProfileSettingsCardProps {
   profile: UserProfile | null
   loading: boolean
   onProfileUpdate: () => void
+  quotaRemindEnabled: boolean
+  quotaRemindThreshold: number
   mediaDeliveryNodeEnabled?: boolean
 }
 
@@ -41,6 +43,8 @@ export function ProfileSettingsCard({
   profile,
   loading,
   onProfileUpdate,
+  quotaRemindEnabled,
+  quotaRemindThreshold,
   mediaDeliveryNodeEnabled = false,
 }: ProfileSettingsCardProps) {
   const { t } = useTranslation()
@@ -72,6 +76,8 @@ export function ProfileSettingsCard({
       <NotificationTab
         profile={profile}
         onUpdate={onProfileUpdate}
+        quotaRemindEnabled={quotaRemindEnabled}
+        quotaRemindThreshold={quotaRemindThreshold}
         mediaDeliveryNodeEnabled={mediaDeliveryNodeEnabled}
       />
     </TitledCard>

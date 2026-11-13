@@ -205,22 +205,34 @@ describe('user settings saves across profile and security', () => {
 
   it('shows the delivery selector only when enabled and saves the selected node', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({
-      data: { success: true, data: { ...profile, setting: JSON.stringify(settings) } },
+      data: {
+        success: true,
+        data: { ...profile, setting: JSON.stringify(settings) },
+      },
     })
     const put = vi
       .spyOn(api, 'put')
       .mockResolvedValue({ data: { success: true } })
 
     const { rerender } = render(
-      <NotificationTab profile={profile} onUpdate={vi.fn()} />
+      <NotificationTab
+        profile={{ ...profile, setting: JSON.stringify(settings) }}
+        onUpdate={vi.fn()}
+        quotaRemindEnabled={false}
+        quotaRemindThreshold={0}
+      />
     )
-    expect(screen.queryByRole('button', { name: 'Hong Kong Node' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Hong Kong Node' })
+    ).not.toBeInTheDocument()
 
     rerender(
       <NotificationTab
-        profile={profile}
+        profile={{ ...profile, setting: JSON.stringify(settings) }}
         onUpdate={vi.fn()}
         mediaDeliveryNodeEnabled
+        quotaRemindEnabled={false}
+        quotaRemindThreshold={0}
       />
     )
     fireEvent.click(screen.getByRole('button', { name: 'Hong Kong Node' }))
@@ -236,9 +248,14 @@ describe('user settings saves across profile and security', () => {
   it('defaults an unset delivery node to US Direct', () => {
     render(
       <NotificationTab
-        profile={{ ...profile, setting: JSON.stringify({ notify_type: 'email' }) }}
+        profile={{
+          ...profile,
+          setting: JSON.stringify({ notify_type: 'email' }),
+        }}
         onUpdate={vi.fn()}
         mediaDeliveryNodeEnabled
+        quotaRemindEnabled={false}
+        quotaRemindThreshold={0}
       />
     )
     expect(screen.getByRole('button', { name: 'US Direct' })).toHaveAttribute(

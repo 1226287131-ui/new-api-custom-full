@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -24,13 +25,19 @@ import { assert, expect, test } from 'vitest'
 import { GroupRatioVisualEditor } from '../group-ratio-visual-editor'
 
 function PricingFixture() {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      })
+  )
   const [settings, setSettings] = useState<Record<string, string>>({
     GroupRatio: '{"default":1}',
     TopupGroupRatio: '{}',
     UserUsableGroups: '{}',
   })
   return (
-    <>
+    <QueryClientProvider client={client}>
       <GroupRatioVisualEditor
         section='pricing'
         onSectionChange={() => {}}
@@ -47,7 +54,7 @@ function PricingFixture() {
         }
       />
       <output aria-label='Saved ratios'>{JSON.stringify(settings)}</output>
-    </>
+    </QueryClientProvider>
   )
 }
 

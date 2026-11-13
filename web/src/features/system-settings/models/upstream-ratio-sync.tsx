@@ -157,12 +157,16 @@ export function UpstreamRatioSync() {
   const adjustedPrices = useMemo(
     () =>
       Object.fromEntries(
-        Object.entries(selectedSources).flatMap(([name, source]) => {
-          const values = prices[name]?.upstreams[source]
-          return values ? [[name, { ...values }]] : []
-        })
-      ) as Record<string, PricingSyncValues>,
-    [selectedSources, prices]
+        Object.entries(selections).map(([model, entry]) => [
+          model,
+          adjustSyncPrice(
+            prices[model]?.upstreams[entry.source] ?? {},
+            entry.adjustment,
+            rate
+          ),
+        ])
+      ),
+    [selections, prices, rate]
   )
   const hasAdjustmentErrors = Object.values(adjustedPrices).some(
     (result) => result.error

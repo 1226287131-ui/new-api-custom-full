@@ -186,7 +186,7 @@ func TestSubmittedCredentialsAreRejected(t *testing.T) {
 	setupProviderPluginControllerTest(t, "ctl-forge")
 	forged := pluginCredentialLine(t, "ctl-forge", "forged")
 
-	addBody := fmt.Sprintf(`{"mode":"single","channel":{"type":61,"name":"forge","key":%q,"models":"m","group":"default","base_url":"https://vendor.example","setting":"{\"task_plugin_key\":\"ctl-forge\"}"}}`, forged)
+	addBody := fmt.Sprintf(`{"mode":"single","channel":{"type":%d,"name":"forge","key":%q,"models":"m","group":"default","base_url":"https://vendor.example","setting":"{\"task_plugin_key\":\"ctl-forge\"}"}}`, constant.ChannelTypeTaskPlugin, forged)
 	response, raw := callChannelAPI(t, AddChannel, http.MethodPost, "/api/channel", addBody)
 	assert.False(t, response.Success, raw)
 	assert.Equal(t, "Plugin credentials can only be added by logging in", response.Message)
@@ -599,8 +599,8 @@ func TestProviderChannelManagementDatabaseMatrix(t *testing.T) {
 				return data.IDs
 			}
 			addBody := func(mode, key string) string {
-				return fmt.Sprintf(`{"mode":%q,"channel":{"type":61,"name":"matrix","key":%s,"models":"relay-model","group":"default","base_url":%q,"setting":"{\"task_plugin_key\":\"%s\"}"}}`,
-					mode, key, server.URL, pluginKey)
+				return fmt.Sprintf(`{"mode":%q,"channel":{"type":%d,"name":"matrix","key":%s,"models":"relay-model","group":"default","base_url":%q,"setting":"{\"task_plugin_key\":\"%s\"}"}}`,
+					mode, constant.ChannelTypeTaskPlugin, key, server.URL, pluginKey)
 			}
 
 			response, raw := callChannelAPI(t, AddChannel, http.MethodPost, "/api/channel", addBody("single", "null"))

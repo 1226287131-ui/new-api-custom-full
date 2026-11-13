@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 
@@ -28,6 +29,11 @@ type ChannelSettings struct {
 	PassThroughBodyEnabled     bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt               string `json:"system_prompt,omitempty"`
 	SystemPromptOverride       bool   `json:"system_prompt_override,omitempty"`
+	// TaskExtendPluginKeys lists task plugins a New API channel can serve in
+	// addition to its single TaskPluginKey binding.
+	TaskExtendPluginKeys []string `json:"task_extend_plugin_keys,omitempty"`
+	// RequestPlugins lists request plugin instances bound to this channel.
+	RequestPlugins []string `json:"request_plugins,omitempty"`
 	// OpenAIVideoProfile selects the request contract for channel type 60.
 	// "seedance-2.5" applies the SD2.5 contract independently of model name.
 	OpenAIVideoProfile string `json:"openai_video_profile,omitempty"`
@@ -129,6 +135,30 @@ type ChannelOtherSettings struct {
 	// PluginConfig is the config a type-61 channel gives its plugin, checked
 	// against the plugin's meta.channelConfig when the channel is saved.
 	PluginConfig json.RawMessage `json:"plugin_config,omitempty"`
+}
+
+// BindsTaskPlugin reports whether the channel is bound to a task plugin,
+// either through its single binding or the New API extension list.
+func (s ChannelSettings) BindsTaskPlugin(key string) bool {
+	if key == "" {
+		return false
+	}
+	return s.TaskPluginKey == key || slices.Contains(s.TaskExtendPluginKeys, key)
+}
+
+// TaskPluginBindings returns the sorted, de-duplicated task plugin bindings.
+func (s ChannelSettings) TaskPluginBindings() []string {
+	bindings := make([]string, 0, len(s.TaskExtendPluginKeys)+1)
+	if s.TaskPluginKey != "" {
+		bindings = append(bindings, s.TaskPluginKey)
+	}
+	for _, key := range s.TaskExtendPluginKeys {
+		if key != "" && !slices.Contains(bindings, key) {
+			bindings = append(bindings, key)
+		}
+	}
+	slices.Sort(bindings)
+	return bindings
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

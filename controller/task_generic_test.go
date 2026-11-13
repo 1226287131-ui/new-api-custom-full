@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -435,7 +434,7 @@ func TestPublicVideoProxyCachesPluginVideoAsMP4(t *testing.T) {
 	}}
 	task.SetData(map[string]any{"response": map[string]any{
 		"generateVideoResponse": map[string]any{
-			"generatedVideos": []any{map[string]any{"video": map[string]any{"uri": upstream.URL}}},
+			"generatedSamples": []any{map[string]any{"video": map[string]any{"uri": upstream.URL}}},
 		},
 	}})
 	require.NoError(t, model.DB.Save(task).Error)

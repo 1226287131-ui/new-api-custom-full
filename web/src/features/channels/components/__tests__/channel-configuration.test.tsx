@@ -44,7 +44,9 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import type { TaskPluginOption } from '../../api'
 import {
+  CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OLLAMA,
+  CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
 } from '../../constants'
@@ -459,7 +461,7 @@ test('selecting a plugin opens a prefilled channel and creates its explicit bind
     mode: 'single',
     channel: {
       name: 'Video A',
-      type: 65,
+      type: CHANNEL_TYPE_TASK_PLUGIN,
       key: 'channel-secret',
       models: 'video-a-1',
       base_url: 'https://a.example',
@@ -694,7 +696,7 @@ test('creating a migrated provider uses its plugin binding instead of the legacy
     expect(post).toHaveBeenCalledWith(
       '/api/channel',
       expect.objectContaining({
-        channel: expect.objectContaining({ type: 65 }),
+        channel: expect.objectContaining({ type: CHANNEL_TYPE_TASK_PLUGIN }),
       }),
       expect.anything()
     )
@@ -1067,7 +1069,7 @@ test.each([
         mode,
         channel: expect.objectContaining({
           key: 'first-key\nsecond-key',
-          type: 65,
+          type: CHANNEL_TYPE_TASK_PLUGIN,
         }),
       }),
       expect.anything()
@@ -1493,7 +1495,7 @@ test('editing legacy channels retains the full provider list and saves the origi
 test('opening and reselecting an existing plugin preserves its saved configuration', async () => {
   editingChannel = {
     ...editingChannel,
-    type: 65,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     setting: '{"task_plugin_key":"video-a"}',
     priority: 7,
   }
@@ -1527,7 +1529,7 @@ test('opening and reselecting an existing plugin preserves its saved configurati
 test('an unavailable plugin keeps its identifier and binding when other fields are updated', async () => {
   editingChannel = {
     ...editingChannel,
-    type: 65,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     setting: '{"task_plugin_key":"removed-plugin"}',
   }
   const put = vi
@@ -1700,7 +1702,7 @@ test('request processing configuration does not mark the network category as con
   ).not.toHaveAccessibleName(/Configured/)
 })
 
-test.each([1, 57, 58, 59, 60])(
+test.each([1, 57, 58, CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG])(
   'provider %s marks a saved Responses WebSocket setting in Request & Response and clears the mark when disabled',
   async (type) => {
     editingChannel = {
@@ -1755,7 +1757,7 @@ test.each([
 test('configuration from fields unsupported by the selected provider stays unmarked', async () => {
   editingChannel = {
     ...editingChannel,
-    type: 65,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     setting:
       '{"task_plugin_key":"video-a","force_format":true,"responses_websocket_enabled":true}',
     settings:
@@ -3082,7 +3084,7 @@ test('the header override passthrough template button confirms before filling th
 test('a New API channel binds upstream task plugins and publishes their models', async () => {
   const channel = channelSchema.parse({
     ...editingChannel,
-    type: 60,
+    type: CHANNEL_TYPE_NEW_API,
     base_url: 'https://gateway.example',
     models: 'gpt-5',
     setting: JSON.stringify({ task_extend_plugin_keys: ['video-a'] }),
@@ -3289,7 +3291,10 @@ test('a login plugin saves without a key, then logs in on the new channel', asyn
     '/api/channel',
     expect.objectContaining({
       mode: 'single',
-      channel: expect.objectContaining({ type: 61, key: null }),
+      channel: expect.objectContaining({
+        type: CHANNEL_TYPE_TASK_PLUGIN,
+        key: null,
+      }),
     }),
     expect.anything()
   )
@@ -3316,7 +3321,7 @@ test('editing a login plugin channel lists its credentials and logs in again on 
   pluginOptions = [...plugins, loginPlugin]
   editingChannel = {
     ...editingChannel,
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     setting: '{"task_plugin_key":"acct"}',
   }
   const originalGet = vi.mocked(api.get).getMockImplementation()
@@ -3390,7 +3395,7 @@ test('adding an account to a single-key login channel shows it as a multi-key ch
   pluginOptions = [...plugins, loginPlugin]
   editingChannel = {
     ...editingChannel,
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     setting: '{"task_plugin_key":"acct"}',
   }
   let credentials = [firstAccount]
@@ -3474,7 +3479,7 @@ test.each([
   pluginOptions = [...plugins, loginPlugin]
   editingChannel = {
     ...editingChannel,
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     setting: '{"task_plugin_key":"acct"}',
     channel_info: {
       ...editingChannel.channel_info,
@@ -3510,7 +3515,7 @@ test('a login plugin picked while editing waits for the save before logging in',
   pluginOptions = [...plugins, loginPlugin]
   editingChannel = {
     ...editingChannel,
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     setting: '{"task_plugin_key":"video-a"}',
   }
   const post = vi.spyOn(api, 'post')
@@ -3587,7 +3592,7 @@ test('a provider plugin channel fetches its models through the plugin', async ()
   expect(post).toHaveBeenCalledWith(
     '/api/channel/fetch_models',
     expect.objectContaining({
-      type: 61,
+      type: CHANNEL_TYPE_TASK_PLUGIN,
       task_plugin_key: 'acct',
       key: 'sk-draft',
     }),
@@ -3609,7 +3614,7 @@ test('a login plugin channel fetches models once it is saved', async () => {
 
   editingChannel = {
     ...editingChannel,
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     setting: '{"task_plugin_key":"acct"}',
   }
   render(<ConfigurationHarness currentRow={editingChannel} />)
@@ -3651,7 +3656,7 @@ test('a plugin channel edits the settings its plugin declares, shows its key for
   ]
   editingChannel = {
     ...editingChannel,
-    type: 61,
+    type: CHANNEL_TYPE_TASK_PLUGIN,
     setting: '{"task_plugin_key":"cloud-x"}',
     settings: '{"plugin_config":{"upload_url":"https://saved-upload.example"}}',
   }
@@ -3704,7 +3709,7 @@ test.each([true, false])(
     ]
     editingChannel = {
       ...editingChannel,
-      type: 61,
+      type: CHANNEL_TYPE_TASK_PLUGIN,
       setting:
         '{"task_plugin_key":"relay-x","responses_websocket_enabled":true}',
       settings: '{"allow_service_tier":true}',

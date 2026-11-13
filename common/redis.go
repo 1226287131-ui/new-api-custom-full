@@ -207,9 +207,15 @@ func RedisHGetObj(key string, obj any) error {
 			case reflect.String:
 				fieldValue.SetString(value)
 			case reflect.Int, reflect.Int64:
-				intValue, err := strconv.ParseInt(value, 10, 64)
+				intValue, err := strconv.ParseInt(value, 10, fieldValue.Type().Bits())
 				if err != nil {
 					return fmt.Errorf("failed to parse int field %s: %w", fieldName, err)
+				}
+				// Redis integer commands reject non-canonical values such as 01
+				// and -0. Reject them here too so quota caches can recover before
+				// an otherwise valid read breaks the next atomic debit.
+				if strconv.FormatInt(intValue, 10) != value {
+					return fmt.Errorf("non-canonical int field %s", fieldName)
 				}
 				fieldValue.SetInt(intValue)
 			case reflect.Bool:

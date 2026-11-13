@@ -169,6 +169,7 @@ export interface UpdateUserSettingsRequest {
   accept_unset_model_ratio_model?: boolean
   record_ip_log?: boolean
   upstream_model_update_notify_enabled?: boolean
+  channel_notify_enabled?: boolean
   media_delivery_node?: 'us' | 'hk'
 }
 

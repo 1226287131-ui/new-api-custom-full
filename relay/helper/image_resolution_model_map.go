@@ -30,7 +30,7 @@ func ImageResolutionRoutingModel(c *gin.Context, publicModel string) (string, er
 	if err != nil {
 		return "", err
 	}
-	input, err := ResolveIncomingBillingExprRequestInput(c, nil)
+	input, err := ResolveIncomingBillingExprRequestInput(c, nil, true)
 	if err != nil {
 		return "", err
 	}

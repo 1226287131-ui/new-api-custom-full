@@ -70,10 +70,7 @@ import {
   shouldLoadTaskArtifacts,
 } from '../lib/task-artifacts'
 import type { TaskArtifact, TaskArtifactType, TaskLog } from '../types'
-import {
-  AudioPreviewDialog,
-  type AudioClip,
-} from './dialogs/audio-preview-dialog'
+import { AudioPreviewDialog } from './dialogs/audio-preview-dialog'
 import { VideoPreviewDialog } from './dialogs/video-preview-dialog'
 
 function artifactIcon(type: TaskArtifactType) {
