@@ -218,6 +218,21 @@ export function useTaskLogsColumns(
         },
         meta: { mobileTitle: true },
       },
+      {
+        accessorKey: 'model_name',
+        header: t('Model'),
+        cell: ({ row }) => {
+          const modelName = row.original.model_name
+          if (!modelName) {
+            return <span className='text-muted-foreground/60 text-xs'>-</span>
+          }
+          return (
+            <span className='truncate text-xs' title={modelName}>
+              {modelName}
+            </span>
+          )
+        },
+      },
       createDurationColumn<TaskLog>({
         submitTimeKey: 'submit_time',
         finishTimeKey: 'finish_time',

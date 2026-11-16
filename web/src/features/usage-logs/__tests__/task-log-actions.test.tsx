@@ -27,6 +27,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useTaskLogsColumns } from '../components/columns/task-logs-columns'
+import { UsageLogsMobileList } from '../components/usage-logs-mobile-card'
 import { UsageLogsProvider } from '../components/usage-logs-provider'
 import type { TaskLog } from '../types'
 
@@ -53,13 +54,20 @@ const task: TaskLog = {
   request_body_complete: true,
 }
 
-function TaskActionsTable(props: { log: TaskLog; isAdmin?: boolean }) {
+function TaskActionsTable(props: {
+  log: TaskLog
+  isAdmin?: boolean
+  mobile?: boolean
+}) {
   const columns = useTaskLogsColumns(props.isAdmin ?? false, false)
   const table = useReactTable({
     columns,
     data: [props.log],
     getCoreRowModel: getCoreRowModel(),
   })
+  if (props.mobile) {
+    return <UsageLogsMobileList table={table} logCategory='task' />
+  }
   return (
     <table>
       <thead>
@@ -120,17 +128,38 @@ afterEach(() => {
   }
 })
 
-function renderTask(log: TaskLog = task, isAdmin = false) {
+function renderTask(log: TaskLog = task, isAdmin = false, mobile = false) {
   return render(
     <QueryClientProvider client={queryClient}>
       <UsageLogsProvider>
-        <TaskActionsTable log={log} isAdmin={isAdmin} />
+        <TaskActionsTable log={log} isAdmin={isAdmin} mobile={mobile} />
       </UsageLogsProvider>
     </QueryClientProvider>
   )
 }
 
 describe('task log actions', () => {
+  it.each([false, true])('shows the task model (admin=%s)', (isAdmin) => {
+    renderTask(task, isAdmin)
+    expect(
+      screen.getByRole('columnheader', { name: 'Model' })
+    ).toBeInTheDocument()
+    expect(screen.getByTitle('video-model')).toHaveTextContent('video-model')
+  })
+
+  it('shows a placeholder when the task model is unavailable', () => {
+    renderTask({ ...task, model_name: '' })
+    const headers = screen.getAllByRole('columnheader')
+    const index = headers.findIndex((header) => header.textContent === 'Model')
+    expect(index).toBeGreaterThanOrEqual(0)
+    expect(screen.getAllByRole('row')[1].children[index]).toHaveTextContent('-')
+  })
+
+  it('shows the task model in the mobile summary', () => {
+    renderTask(task, false, true)
+    expect(screen.getByText('Model')).toBeVisible()
+    expect(screen.getByTitle('video-model')).toHaveTextContent('video-model')
+  })
   it('places the admin plugin column last, immediately after details', () => {
     renderTask(task, true)
     const headers = screen.getAllByRole('columnheader')
